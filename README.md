@@ -52,6 +52,75 @@ Destroy the VM:
 isotty down
 ```
 
+## Getting Started
+
+Current implementation status:
+
+* GCP VM backend
+* project sync using Mutagen
+* `one-way-safe` and `two-way-safe`
+
+Prerequisites:
+
+* Go
+* `gcloud`
+* `mutagen`
+* authenticated `gcloud` access to a GCP project
+
+Build:
+
+```bash
+go build -o ./bin/isotty ./cmd/isotty
+```
+
+Check dependencies:
+
+```bash
+./bin/isotty version
+```
+
+Set the GCP zone if needed:
+
+```bash
+export ISOTTY_GCP_ZONE=us-central1-f
+```
+
+Start an environment for the current directory:
+
+```bash
+./bin/isotty up
+```
+
+Check sync and environment status:
+
+```bash
+./bin/isotty status
+```
+
+Attach to the environment:
+
+```bash
+./bin/isotty attach
+```
+
+Inside the environment, the synced project is available at:
+
+```bash
+/workspace
+```
+
+Destroy the environment:
+
+```bash
+./bin/isotty down
+```
+
+IsoTTY stores local state under:
+
+```text
+~/.isotty
+```
+
 ## Sync Model
 
 IsoTTY supports two sync modes.
