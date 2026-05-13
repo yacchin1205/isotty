@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-func createInstance(cfg Config, instanceName string) error {
+func createInstance(cfg Config, instanceName string, debug bool) error {
 	labels := fmt.Sprintf("app=isotty,project_hash=%s,backend=vm", cfg.ProjectHash)
-	return RunInteractiveCommand("", os.Environ(), "gcloud",
+	return RunCommand("", os.Environ(), debug, "gcloud",
 		"compute", "instances", "create", instanceName,
 		"--quiet",
 		"--project", cfg.GCPProjectID,
@@ -59,7 +59,7 @@ func waitForSSH(state State) error {
 	return fmt.Errorf("wait for SSH: %w", lastErr)
 }
 
-func bootstrapWorkspace(state State) error {
+func bootstrapWorkspace(state State, debug bool) error {
 	commandParts := []string{
 		"set -euo pipefail",
 		"sudo mkdir -p /workspace",
@@ -73,7 +73,7 @@ func bootstrapWorkspace(state State) error {
 		)
 	}
 	command := strings.Join(commandParts, " && ")
-	return RunInteractiveCommand("", os.Environ(), "gcloud",
+	return RunCommand("", os.Environ(), debug, "gcloud",
 		"compute", "ssh", state.InstanceName,
 		"--project", state.GCPProjectID,
 		"--zone", state.Zone,
@@ -89,11 +89,11 @@ func shellJoin(values []string) string {
 	return strings.Join(quoted, " ")
 }
 
-func refreshSSHConfig(state State) error {
+func refreshSSHConfig(state State, debug bool) error {
 	if err := os.MkdirAll(filepath.Dir(state.SSHConfigPath), 0o755); err != nil {
 		return fmt.Errorf("create ssh config directory: %w", err)
 	}
-	return RunInteractiveCommand("", os.Environ(), "gcloud",
+	return RunCommand("", os.Environ(), debug, "gcloud",
 		"compute", "config-ssh",
 		"--quiet",
 		"--project", state.GCPProjectID,

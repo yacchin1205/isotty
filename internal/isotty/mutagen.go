@@ -24,12 +24,12 @@ var defaultIgnores = []string{
 	".venv/",
 }
 
-func recreateMutagenSession(state State) error {
+func recreateMutagenSession(state State, debug bool) error {
 	if err := terminateMutagenSession(state); err != nil {
 		return err
 	}
 
-	if err := RunInteractiveCommand("", state.MutagenEnv(), "mutagen", buildMutagenCreateArgs(state)...); err != nil {
+	if err := RunCommand("", state.MutagenEnv(), debug, "mutagen", buildMutagenCreateArgs(state)...); err != nil {
 		return err
 	}
 	return flushMutagenSession(state)

@@ -79,6 +79,12 @@ Check dependencies:
 ./bin/isotty version
 ```
 
+Show raw `gcloud` and `mutagen` command output:
+
+```bash
+./bin/isotty --debug up
+```
+
 Set the GCP zone if needed:
 
 ```bash

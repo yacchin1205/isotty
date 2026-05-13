@@ -27,6 +27,7 @@ var supportedSyncModes = map[string]struct{}{
 type App struct {
 	stdout io.Writer
 	stderr io.Writer
+	debug  bool
 }
 
 func NewApp() *App {
@@ -40,6 +41,14 @@ func (a *App) Run(args []string) error {
 	if len(args) == 0 {
 		a.printUsage()
 		return nil
+	}
+	if args[0] == "--debug" {
+		a.debug = true
+		args = args[1:]
+		if len(args) == 0 {
+			a.printUsage()
+			return nil
+		}
 	}
 
 	switch args[0] {
@@ -63,11 +72,11 @@ func (a *App) Run(args []string) error {
 
 func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "Usage:")
-	fmt.Fprintln(a.stdout, "  isotty up [PATH] [--sync one-way-safe|two-way-safe]")
-	fmt.Fprintln(a.stdout, "  isotty attach")
-	fmt.Fprintln(a.stdout, "  isotty down")
-	fmt.Fprintln(a.stdout, "  isotty status")
-	fmt.Fprintln(a.stdout, "  isotty version")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] attach")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] down")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] status")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] version")
 }
 
 func (a *App) runUp(args []string) error {
@@ -140,6 +149,7 @@ func (a *App) runAttach(args []string) error {
 		return err
 	}
 
+	a.phase("Attaching to %s", state.InstanceName)
 	return RunInteractiveCommand("", os.Environ(), "gcloud",
 		"compute", "ssh", state.InstanceName,
 		"--project", state.GCPProjectID,
@@ -167,7 +177,9 @@ func (a *App) runDown(args []string) error {
 		return err
 	}
 
-	if err := terminateMutagenSession(state); err != nil {
+	if err := a.runPhase("Stopping sync session", func() error {
+		return terminateMutagenSession(state)
+	}); err != nil {
 		return fmt.Errorf("terminate sync session: %w", err)
 	}
 
@@ -176,17 +188,21 @@ func (a *App) runDown(args []string) error {
 		return fmt.Errorf("check instance: %w", err)
 	}
 	if exists {
-		if err := RunInteractiveCommand("", os.Environ(), "gcloud",
-			"compute", "instances", "delete", state.InstanceName,
-			"--quiet",
-			"--project", state.GCPProjectID,
-			"--zone", state.Zone,
-		); err != nil {
+		if err := a.runPhase("Deleting VM %s", func() error {
+			return RunCommand("", os.Environ(), a.debug, "gcloud",
+				"compute", "instances", "delete", state.InstanceName,
+				"--quiet",
+				"--project", state.GCPProjectID,
+				"--zone", state.Zone,
+			)
+		}, state.InstanceName); err != nil {
 			return fmt.Errorf("delete instance: %w", err)
 		}
 	}
 
-	if err := DeleteState(state.ProjectHash); err != nil {
+	if err := a.runPhase("Removing local state", func() error {
+		return DeleteState(state.ProjectHash)
+	}); err != nil {
 		return fmt.Errorf("remove state: %w", err)
 	}
 
@@ -282,31 +298,82 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		return State{}, fmt.Errorf("check instance: %w", err)
 	}
 	if !exists {
-		if err := createInstance(cfg, state.InstanceName); err != nil {
+		if err := a.runPhase("Creating VM %s", func() error {
+			return createInstance(cfg, state.InstanceName, a.debug)
+		}, state.InstanceName); err != nil {
+			return State{}, err
+		}
+	} else {
+		a.phase("Reusing VM %s", state.InstanceName)
+	}
+
+	if err := a.runPhase("Waiting for SSH", func() error {
+		return waitForSSH(state)
+	}); err != nil {
+		return State{}, err
+	}
+	if len(state.AptPackages) > 0 {
+		if err := a.runPhase("Bootstrapping workspace and installing packages", func() error {
+			return bootstrapWorkspace(state, a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	} else {
+		if err := a.runPhase("Bootstrapping workspace", func() error {
+			return bootstrapWorkspace(state, a.debug)
+		}); err != nil {
 			return State{}, err
 		}
 	}
-
-	if err := waitForSSH(state); err != nil {
+	if err := a.runPhase("Refreshing SSH config", func() error {
+		return refreshSSHConfig(state, a.debug)
+	}); err != nil {
 		return State{}, err
 	}
-	if err := bootstrapWorkspace(state); err != nil {
+	if err := a.runPhase("Preparing SSH wrappers", func() error {
+		return ensureSSHWrappers(state)
+	}); err != nil {
 		return State{}, err
 	}
-	if err := refreshSSHConfig(state); err != nil {
+	if err := a.runPhase("Starting sync session", func() error {
+		return recreateMutagenSession(state, a.debug)
+	}); err != nil {
 		return State{}, err
 	}
-	if err := ensureSSHWrappers(state); err != nil {
-		return State{}, err
-	}
-	if err := recreateMutagenSession(state); err != nil {
-		return State{}, err
-	}
-	if err := SaveState(state); err != nil {
+	if err := a.runPhase("Saving local state", func() error {
+		return SaveState(state)
+	}); err != nil {
 		return State{}, fmt.Errorf("save state: %w", err)
 	}
 
 	return state, nil
+}
+
+func (a *App) phase(format string, args ...any) {
+	if a.debug {
+		return
+	}
+	fmt.Fprintf(a.stdout, "==> "+format+"\n", args...)
+}
+
+func (a *App) runPhase(format string, fn func() error, args ...any) error {
+	if a.debug {
+		return fn()
+	}
+	label := fmt.Sprintf(format, args...)
+	if !a.isTTY() {
+		a.phase("%s", label)
+		return fn()
+	}
+	s := newSpinner(a.stdout, label)
+	s.start()
+	err := fn()
+	if err != nil {
+		s.stopFailure()
+		return err
+	}
+	s.stopSuccess()
+	return nil
 }
 
 func validateSyncMode(mode string) error {
