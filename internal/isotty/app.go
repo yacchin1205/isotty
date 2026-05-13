@@ -56,6 +56,8 @@ func (a *App) Run(args []string) error {
 		return a.runUp(args[1:])
 	case "attach":
 		return a.runAttach(args[1:])
+	case "forward":
+		return a.runForward(args[1:])
 	case "down":
 		return a.runDown(args[1:])
 	case "status":
@@ -75,6 +77,9 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] attach")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] down")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] forward add <name> --local-port <port> --remote-port <port>")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] forward list")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] forward remove <name>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] status")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] version")
 }
@@ -149,12 +154,28 @@ func (a *App) runAttach(args []string) error {
 		return err
 	}
 
-	a.phase("Attaching to %s", state.InstanceName)
-	return RunInteractiveCommand("", os.Environ(), "gcloud",
+	forwardCfg, err := LoadForwardConfig(projectPath)
+	if err != nil {
+		return err
+	}
+
+	sshArgs := []string{
 		"compute", "ssh", state.InstanceName,
 		"--project", state.GCPProjectID,
 		"--zone", state.Zone,
-	)
+	}
+	names := SortedForwardNames(forwardCfg)
+	for _, name := range names {
+		forward := forwardCfg.Forwards[name]
+		sshArgs = append(sshArgs, "--ssh-flag", fmt.Sprintf("-L 127.0.0.1:%d:127.0.0.1:%d", forward.LocalPort, forward.RemotePort))
+	}
+
+	if len(names) > 0 {
+		a.phase("Attaching to %s with %d forwards", state.InstanceName, len(names))
+	} else {
+		a.phase("Attaching to %s", state.InstanceName)
+	}
+	return RunInteractiveCommand("", os.Environ(), "gcloud", sshArgs...)
 }
 
 func (a *App) runDown(args []string) error {
@@ -265,6 +286,109 @@ func (a *App) runStatus(args []string) error {
 		return fmt.Errorf("query mutagen session: %w", err)
 	}
 	fmt.Fprint(a.stdout, output)
+	return nil
+}
+
+func (a *App) runForward(args []string) error {
+	if len(args) == 0 {
+		return errors.New("forward requires a subcommand: add, list, or remove")
+	}
+
+	switch args[0] {
+	case "add":
+		return a.runForwardAdd(args[1:])
+	case "list":
+		return a.runForwardList(args[1:])
+	case "remove":
+		return a.runForwardRemove(args[1:])
+	default:
+		return fmt.Errorf("unknown forward subcommand %q", args[0])
+	}
+}
+
+func (a *App) runForwardAdd(args []string) error {
+	if len(args) == 0 {
+		return errors.New("forward add requires a name")
+	}
+	name := args[0]
+
+	fs := flag.NewFlagSet("forward add", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	localPort := fs.Int("local-port", 0, "local port")
+	remotePort := fs.Int("remote-port", 0, "remote port")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("forward add accepts exactly one name")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+
+	forward := Forward{LocalPort: *localPort, RemotePort: *remotePort}
+	if err := AddForward(projectPath, name, forward); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(a.stdout, "Added forward %s (%d -> %d)\n", name, forward.LocalPort, forward.RemotePort)
+	return nil
+}
+
+func (a *App) runForwardList(args []string) error {
+	fs := flag.NewFlagSet("forward list", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("forward list does not accept arguments")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+
+	cfg, err := LoadForwardConfig(projectPath)
+	if err != nil {
+		return err
+	}
+	names := SortedForwardNames(cfg)
+	if len(names) == 0 {
+		fmt.Fprintln(a.stdout, "No forwards configured.")
+		return nil
+	}
+	for _, name := range names {
+		forward := cfg.Forwards[name]
+		fmt.Fprintf(a.stdout, "%s: localhost:%d -> remote:%d\n", name, forward.LocalPort, forward.RemotePort)
+	}
+	return nil
+}
+
+func (a *App) runForwardRemove(args []string) error {
+	fs := flag.NewFlagSet("forward remove", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("forward remove requires a name")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+
+	name := fs.Arg(0)
+	if err := RemoveForward(projectPath, name); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(a.stdout, "Removed forward %s\n", name)
 	return nil
 }
 

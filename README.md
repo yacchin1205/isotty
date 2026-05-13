@@ -59,6 +59,7 @@ Current implementation status:
 * GCP VM backend
 * project sync using Mutagen
 * `one-way-safe` and `two-way-safe`
+* project-local port forwards during `attach`
 
 Prerequisites:
 
@@ -102,6 +103,19 @@ Example:
 ```text
 ripgrep
 jq
+```
+
+Configure local port forwards:
+
+```bash
+./bin/isotty forward add web --local-port 8080 --remote-port 8080
+./bin/isotty forward list
+```
+
+Forward definitions are stored in:
+
+```text
+./.isotty/forward.yaml
 ```
 
 Start an environment for the current directory:
