@@ -1,6 +1,7 @@
 package isotty
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -16,6 +17,7 @@ type Config struct {
 	GCPProjectID string
 	Zone         string
 	HomeDir      string
+	AptPackages  []string
 }
 
 func LoadConfig(projectPath string) (Config, error) {
@@ -37,6 +39,10 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("resolve GCP zone: %w", err)
 	}
+	aptPackages, err := loadAptPackages(projectPath)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		ProjectPath:  projectPath,
@@ -44,6 +50,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		GCPProjectID: projectID,
 		Zone:         zone,
 		HomeDir:      homeDir,
+		AptPackages:  aptPackages,
 	}, nil
 }
 
@@ -78,4 +85,35 @@ func resolveSetting(envKey string, fallbackCommand []string) (string, error) {
 		return "", fmt.Errorf("%s is not set and gcloud returned no value", envKey)
 	}
 	return value, nil
+}
+
+func loadAptPackages(projectPath string) ([]string, error) {
+	configPath := filepath.Join(projectPath, ".isotty", "apt.txt")
+	file, err := os.Open(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("open %s: %w", configPath, err)
+	}
+	defer file.Close()
+
+	var packages []string
+	seen := map[string]struct{}{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if _, ok := seen[line]; ok {
+			continue
+		}
+		seen[line] = struct{}{}
+		packages = append(packages, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read %s: %w", configPath, err)
+	}
+	return packages, nil
 }

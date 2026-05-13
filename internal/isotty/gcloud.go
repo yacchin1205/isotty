@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -59,13 +60,33 @@ func waitForSSH(state State) error {
 }
 
 func bootstrapWorkspace(state State) error {
-	command := "sudo mkdir -p /workspace && sudo chown \"$USER\":\"$(id -gn)\" /workspace"
+	commandParts := []string{
+		"set -euo pipefail",
+		"sudo mkdir -p /workspace",
+		"sudo chown \"$USER\":\"$(id -gn)\" /workspace",
+	}
+	if len(state.AptPackages) > 0 {
+		commandParts = append(commandParts,
+			"export DEBIAN_FRONTEND=noninteractive",
+			"sudo apt-get update",
+			fmt.Sprintf("sudo apt-get install -y %s", shellJoin(state.AptPackages)),
+		)
+	}
+	command := strings.Join(commandParts, " && ")
 	return RunInteractiveCommand("", os.Environ(), "gcloud",
 		"compute", "ssh", state.InstanceName,
 		"--project", state.GCPProjectID,
 		"--zone", state.Zone,
 		"--command", command,
 	)
+}
+
+func shellJoin(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, strconv.Quote(value))
+	}
+	return strings.Join(quoted, " ")
 }
 
 func refreshSSHConfig(state State) error {

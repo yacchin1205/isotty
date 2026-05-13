@@ -85,6 +85,19 @@ Set the GCP zone if needed:
 export ISOTTY_GCP_ZONE=us-central1-f
 ```
 
+Optional VM bootstrap packages:
+
+```text
+./.isotty/apt.txt
+```
+
+Example:
+
+```text
+ripgrep
+jq
+```
+
 Start an environment for the current directory:
 
 ```bash

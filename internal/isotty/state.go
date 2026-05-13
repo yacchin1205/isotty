@@ -10,19 +10,20 @@ import (
 )
 
 type State struct {
-	ProjectPath          string `json:"project_path"`
-	ProjectHash          string `json:"project_hash"`
-	Backend              string `json:"backend"`
-	GCPProjectID         string `json:"gcp_project_id"`
-	Zone                 string `json:"zone"`
-	InstanceName         string `json:"instance_name"`
-	SessionName          string `json:"session_name"`
-	SyncMode             string `json:"sync_mode"`
-	RemoteWorkspacePath  string `json:"remote_workspace_path"`
-	MutagenDataDirectory string `json:"mutagen_data_directory"`
-	SSHConfigPath        string `json:"ssh_config_path"`
-	SSHWrapperDir        string `json:"ssh_wrapper_dir"`
-	CreatedAt            string `json:"created_at"`
+	ProjectPath          string   `json:"project_path"`
+	ProjectHash          string   `json:"project_hash"`
+	Backend              string   `json:"backend"`
+	GCPProjectID         string   `json:"gcp_project_id"`
+	Zone                 string   `json:"zone"`
+	InstanceName         string   `json:"instance_name"`
+	SessionName          string   `json:"session_name"`
+	SyncMode             string   `json:"sync_mode"`
+	RemoteWorkspacePath  string   `json:"remote_workspace_path"`
+	MutagenDataDirectory string   `json:"mutagen_data_directory"`
+	SSHConfigPath        string   `json:"ssh_config_path"`
+	SSHWrapperDir        string   `json:"ssh_wrapper_dir"`
+	AptPackages          []string `json:"apt_packages,omitempty"`
+	CreatedAt            string   `json:"created_at"`
 }
 
 func NewState(cfg Config, syncMode string) State {
@@ -39,6 +40,7 @@ func NewState(cfg Config, syncMode string) State {
 		MutagenDataDirectory: filepath.Join(cfg.HomeDir, "mutagen"),
 		SSHConfigPath:        filepath.Join(cfg.HomeDir, "ssh", "config"),
 		SSHWrapperDir:        filepath.Join(cfg.HomeDir, "ssh", "bin"),
+		AptPackages:          append([]string(nil), cfg.AptPackages...),
 		CreatedAt:            time.Now().UTC().Format(time.RFC3339),
 	}
 }

@@ -1,6 +1,7 @@
 package isotty
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -27,5 +28,28 @@ func TestValidateSyncMode(t *testing.T) {
 	}
 	if err := validateSyncMode("two-way-resolved"); err == nil {
 		t.Fatal("unexpected validation success for unsupported mode")
+	}
+}
+
+func TestLoadAptPackages(t *testing.T) {
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, ".isotty")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	content := "# comment\nripgrep\n\njq\nripgrep\n"
+	if err := os.WriteFile(filepath.Join(configDir, "apt.txt"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write apt.txt: %v", err)
+	}
+
+	packages, err := loadAptPackages(projectDir)
+	if err != nil {
+		t.Fatalf("loadAptPackages() error = %v", err)
+	}
+	if len(packages) != 2 {
+		t.Fatalf("len(packages) = %d, want 2", len(packages))
+	}
+	if packages[0] != "ripgrep" || packages[1] != "jq" {
+		t.Fatalf("packages = %v, want [ripgrep jq]", packages)
 	}
 }
