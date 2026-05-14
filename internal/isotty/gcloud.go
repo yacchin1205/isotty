@@ -16,10 +16,10 @@ func createInstance(cfg Config, instanceName string, debug bool) error {
 		"--quiet",
 		"--project", cfg.GCPProjectID,
 		"--zone", cfg.Zone,
-		"--machine-type", defaultMachineType,
-		"--boot-disk-size", defaultDiskSize,
-		"--image-family", defaultImageFamily,
-		"--image-project", defaultImageProject,
+		"--machine-type", cfg.MachineType,
+		"--boot-disk-size", cfg.BootDiskSize,
+		"--image-family", cfg.ImageFamily,
+		"--image-project", cfg.ImageProject,
 		"--labels", labels,
 	)
 }

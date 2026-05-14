@@ -7,22 +7,24 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 const (
-	defaultSyncMode      = "one-way-safe"
-	developmentSyncMode  = "two-way-safe"
-	defaultMachineType   = "e2-standard-4"
-	defaultDiskSize      = "50GB"
-	defaultImageProject  = "ubuntu-os-cloud"
-	defaultImageFamily   = "ubuntu-2404-lts-amd64"
-	defaultWorkspacePath = "/workspace"
+	defaultSyncMode        = "two-way-safe"
+	oneWaySafeSyncMode     = "one-way-safe"
+	twoWaySafeSyncMode     = "two-way-safe"
+	defaultGCPMachineType  = "e2-standard-4"
+	defaultGCPDiskSize     = "50GB"
+	defaultGCPImageProject = "ubuntu-os-cloud"
+	defaultGCPImageFamily  = "ubuntu-2404-lts-amd64"
+	defaultWorkspacePath   = "/workspace"
 )
 
 var supportedSyncModes = map[string]struct{}{
-	defaultSyncMode:     {},
-	developmentSyncMode: {},
+	oneWaySafeSyncMode: {},
+	twoWaySafeSyncMode: {},
 }
 
 type App struct {
@@ -89,6 +91,8 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt add <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt remove <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt list")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime gcp show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime gcp set [--machine-type <type>] [--boot-disk-size <size>] [--image-family <family>] [--image-project <project>]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime node set <major>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime node show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime agent add <name>...")
@@ -416,6 +420,8 @@ func (a *App) runRuntime(args []string) error {
 	switch args[0] {
 	case "apt":
 		return a.runRuntimeApt(args[1:])
+	case "gcp":
+		return a.runRuntimeGCP(args[1:])
 	case "node":
 		return a.runRuntimeNode(args[1:])
 	case "agent":
@@ -423,6 +429,88 @@ func (a *App) runRuntime(args []string) error {
 	default:
 		return fmt.Errorf("unknown runtime subcommand %q", args[0])
 	}
+}
+
+func (a *App) runRuntimeGCP(args []string) error {
+	if len(args) == 0 {
+		return errors.New("runtime gcp requires a subcommand: show or set")
+	}
+
+	switch args[0] {
+	case "show":
+		return a.runRuntimeGCPShow(args[1:])
+	case "set":
+		return a.runRuntimeGCPSet(args[1:])
+	default:
+		return fmt.Errorf("unknown runtime gcp subcommand %q", args[0])
+	}
+}
+
+func (a *App) runRuntimeGCPShow(args []string) error {
+	fs := flag.NewFlagSet("runtime gcp show", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("runtime gcp show does not accept arguments")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	cfg, err := RuntimeGCPVMConfig(projectPath)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "machine_type: %s\n", *cfg.MachineType)
+	fmt.Fprintf(a.stdout, "boot_disk_size: %s\n", *cfg.BootDiskSize)
+	fmt.Fprintf(a.stdout, "image_family: %s\n", *cfg.ImageFamily)
+	fmt.Fprintf(a.stdout, "image_project: %s\n", *cfg.ImageProject)
+	return nil
+}
+
+func (a *App) runRuntimeGCPSet(args []string) error {
+	fs := flag.NewFlagSet("runtime gcp set", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	machineType := fs.String("machine-type", "", "GCP machine type")
+	bootDiskSize := fs.String("boot-disk-size", "", "GCP boot disk size")
+	imageFamily := fs.String("image-family", "", "GCP image family")
+	imageProject := fs.String("image-project", "", "GCP image project")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("runtime gcp set does not accept positional arguments")
+	}
+
+	updates := gcpVMConfig{}
+	if flagProvided(args, "--machine-type") {
+		updates.MachineType = machineType
+	}
+	if flagProvided(args, "--boot-disk-size") {
+		updates.BootDiskSize = bootDiskSize
+	}
+	if flagProvided(args, "--image-family") {
+		updates.ImageFamily = imageFamily
+	}
+	if flagProvided(args, "--image-project") {
+		updates.ImageProject = imageProject
+	}
+	if updates.MachineType == nil && updates.BootDiskSize == nil && updates.ImageFamily == nil && updates.ImageProject == nil {
+		return errors.New("runtime gcp set requires at least one flag")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	if err := SetRuntimeGCPVMConfig(projectPath, updates); err != nil {
+		return err
+	}
+	fmt.Fprintln(a.stdout, "Updated GCP VM config")
+	return nil
 }
 
 func (a *App) runRuntimeApt(args []string) error {
@@ -903,4 +991,16 @@ func validateSyncMode(mode string) error {
 		return nil
 	}
 	return fmt.Errorf("unsupported sync mode %q", mode)
+}
+
+func flagProvided(args []string, name string) bool {
+	for i := 0; i < len(args); i++ {
+		if args[i] == name {
+			return true
+		}
+		if len(args[i]) > len(name) && strings.HasPrefix(args[i], name+"=") {
+			return true
+		}
+	}
+	return false
 }

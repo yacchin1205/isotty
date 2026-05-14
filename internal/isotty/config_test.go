@@ -23,8 +23,8 @@ func TestValidateSyncMode(t *testing.T) {
 	if err := validateSyncMode(defaultSyncMode); err != nil {
 		t.Fatalf("default mode should be valid: %v", err)
 	}
-	if err := validateSyncMode(developmentSyncMode); err != nil {
-		t.Fatalf("development mode should be valid: %v", err)
+	if err := validateSyncMode(oneWaySafeSyncMode); err != nil {
+		t.Fatalf("one-way-safe mode should be valid: %v", err)
 	}
 	if err := validateSyncMode("two-way-resolved"); err == nil {
 		t.Fatal("unexpected validation success for unsupported mode")
@@ -142,5 +142,85 @@ func TestLoadAgentsFailsOnUnsupportedAgent(t *testing.T) {
 	_, err := loadAgents(projectDir)
 	if err == nil {
 		t.Fatal("loadAgents() should fail on unsupported agent")
+	}
+}
+
+func TestLoadVMConfig(t *testing.T) {
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, ".isotty")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	content := "provider: gcp\ngcp:\n  machine_type: e2-standard-8\n  boot_disk_size: 200GB\n  image_family: ubuntu-2404-lts-amd64\n  image_project: ubuntu-os-cloud\n"
+	if err := os.WriteFile(filepath.Join(configDir, "vm.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write vm.yaml: %v", err)
+	}
+
+	cfg, err := loadVMConfig(projectDir)
+	if err != nil {
+		t.Fatalf("loadVMConfig() error = %v", err)
+	}
+	if cfg.MachineType == nil || *cfg.MachineType != "e2-standard-8" {
+		t.Fatalf("MachineType = %v, want e2-standard-8", cfg.MachineType)
+	}
+	if cfg.BootDiskSize == nil || *cfg.BootDiskSize != "200GB" {
+		t.Fatalf("BootDiskSize = %v, want 200GB", cfg.BootDiskSize)
+	}
+	if cfg.ImageFamily == nil || *cfg.ImageFamily != "ubuntu-2404-lts-amd64" {
+		t.Fatalf("ImageFamily = %v", cfg.ImageFamily)
+	}
+	if cfg.ImageProject == nil || *cfg.ImageProject != "ubuntu-os-cloud" {
+		t.Fatalf("ImageProject = %v", cfg.ImageProject)
+	}
+}
+
+func TestLoadVMConfigFailsOnEmptyMachineType(t *testing.T) {
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, ".isotty")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	content := "gcp:\n  machine_type: \"\"\n"
+	if err := os.WriteFile(filepath.Join(configDir, "vm.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write vm.yaml: %v", err)
+	}
+
+	_, err := loadVMConfig(projectDir)
+	if err == nil {
+		t.Fatal("loadVMConfig() should fail on empty gcp.machine_type")
+	}
+}
+
+func TestLoadVMConfigFailsOnEmptyProvider(t *testing.T) {
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, ".isotty")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	content := "provider: \"\"\n"
+	if err := os.WriteFile(filepath.Join(configDir, "vm.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write vm.yaml: %v", err)
+	}
+
+	_, err := loadVMConfig(projectDir)
+	if err == nil {
+		t.Fatal("loadVMConfig() should fail on empty provider")
+	}
+}
+
+func TestLoadVMConfigFailsOnUnsupportedProvider(t *testing.T) {
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, ".isotty")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	content := "provider: aws\n"
+	if err := os.WriteFile(filepath.Join(configDir, "vm.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write vm.yaml: %v", err)
+	}
+
+	_, err := loadVMConfig(projectDir)
+	if err == nil {
+		t.Fatal("loadVMConfig() should fail on unsupported provider")
 	}
 }

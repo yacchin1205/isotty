@@ -9,6 +9,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"sigs.k8s.io/yaml"
 )
 
 func ListRuntimeAptPackages(projectPath string) ([]string, error) {
@@ -142,6 +144,30 @@ func RemoveRuntimeAgents(projectPath string, agents []string) error {
 	return saveAgents(projectPath, next)
 }
 
+func RuntimeGCPVMConfig(projectPath string) (gcpVMConfig, error) {
+	return loadVMConfig(projectPath)
+}
+
+func SetRuntimeGCPVMConfig(projectPath string, updates gcpVMConfig) error {
+	current, err := loadVMConfig(projectPath)
+	if err != nil {
+		return err
+	}
+	if updates.MachineType != nil {
+		current.MachineType = updates.MachineType
+	}
+	if updates.BootDiskSize != nil {
+		current.BootDiskSize = updates.BootDiskSize
+	}
+	if updates.ImageFamily != nil {
+		current.ImageFamily = updates.ImageFamily
+	}
+	if updates.ImageProject != nil {
+		current.ImageProject = updates.ImageProject
+	}
+	return saveVMConfig(projectPath, current)
+}
+
 func saveAptPackages(projectPath string, packages []string) error {
 	var buffer bytes.Buffer
 	for _, pkg := range packages {
@@ -183,6 +209,21 @@ func saveAgents(projectPath string, agents []string) error {
 		return fmt.Errorf("create agent config directory: %w", err)
 	}
 	return os.WriteFile(path, buffer.Bytes(), 0o644)
+}
+
+func saveVMConfig(projectPath string, cfg gcpVMConfig) error {
+	data, err := yaml.Marshal(vmConfig{
+		Provider: stringPointer("gcp"),
+		GCP:      cfg,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal vm config: %w", err)
+	}
+	path := vmConfigPath(projectPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create vm config directory: %w", err)
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 func validateRuntimeAgent(agent string) error {

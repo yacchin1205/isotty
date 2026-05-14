@@ -46,7 +46,26 @@ Current defaults:
 
 * Ubuntu LTS
 * machine type: `e2-standard-4`
+* boot disk size: `50GB`
 * workspace path: `/workspace`
+
+Project-local VM shape can be configured with:
+
+```text
+./.isotty/vm.yaml
+```
+
+Example:
+
+```yaml
+provider: gcp
+
+gcp:
+  machine_type: e2-standard-8
+  boot_disk_size: 200GB
+  image_family: ubuntu-2404-lts-amd64
+  image_project: ubuntu-os-cloud
+```
 
 ## Bootstrap
 

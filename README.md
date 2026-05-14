@@ -115,6 +115,31 @@ Optional agent install config:
 ./.isotty/agent.yaml
 ```
 
+Optional GCP VM shape:
+
+```text
+./.isotty/vm.yaml
+```
+
+Example:
+
+```yaml
+provider: gcp
+
+gcp:
+  machine_type: e2-standard-8
+  boot_disk_size: 200GB
+  image_family: ubuntu-2404-lts-amd64
+  image_project: ubuntu-os-cloud
+```
+
+Or update it from the CLI:
+
+```bash
+isotty runtime gcp show
+isotty runtime gcp set --machine-type e2-standard-8 --boot-disk-size 200GB
+```
+
 ## Sync Modes
 
 Default:
@@ -123,10 +148,10 @@ Default:
 ./bin/isotty up
 ```
 
-Two-way development mode:
+One-way mode:
 
 ```bash
-./bin/isotty up --sync two-way-safe
+./bin/isotty up --sync one-way-safe
 ```
 
 ## Local State

@@ -46,7 +46,7 @@ func TestMutagenLabelSelector(t *testing.T) {
 	}
 
 	got := state.MutagenLabelSelector()
-	want := "app=isotty,project_hash=abc12345def0,backend=gcp-vm,sync_mode=one-way-safe"
+	want := "app=isotty,project_hash=abc12345def0,backend=gcp-vm,sync_mode=two-way-safe"
 	if got != want {
 		t.Fatalf("MutagenLabelSelector() = %q, want %q", got, want)
 	}

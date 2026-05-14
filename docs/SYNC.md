@@ -50,13 +50,13 @@ IsoTTY owns the lifecycle:
 
 Default:
 
-* `one-way-safe`
+* `two-way-safe`
 
 Optional:
 
-* `two-way-safe`
+* `one-way-safe`
 
-`one-way-safe` is the default because it keeps remote execution from freely writing back to the local machine.
+`two-way-safe` is the default because it avoids silent unsynchronized data loss while still preserving the normal local-edit / remote-run workflow.
 
 ## Workspace
 
