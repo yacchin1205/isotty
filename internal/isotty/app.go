@@ -771,6 +771,7 @@ func (a *App) printDependencyVersion(name string, args []string) error {
 
 func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	state := NewState(cfg, syncMode)
+	created := false
 
 	exists, err := gcloudInstanceExists(cfg.GCPProjectID, cfg.Zone, state.InstanceName)
 	if err != nil {
@@ -782,6 +783,7 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		}, state.InstanceName); err != nil {
 			return State{}, err
 		}
+		created = true
 	} else {
 		a.phase("Reusing VM %s", state.InstanceName)
 	}
@@ -791,10 +793,14 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	}); err != nil {
 		return State{}, err
 	}
-	if err := a.runPhase(bootstrapLabel(state), func() error {
-		return bootstrapWorkspace(state, a.debug)
-	}); err != nil {
-		return State{}, err
+	if created {
+		if err := a.runPhase(bootstrapLabel(state), func() error {
+			return bootstrapWorkspace(state, a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	} else {
+		a.phase("Skipping bootstrap for existing VM %s", state.InstanceName)
 	}
 	if err := a.runPhase("Refreshing SSH config", func() error {
 		return refreshSSHConfig(state, a.debug)
