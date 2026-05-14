@@ -130,6 +130,13 @@ Check sync and environment status:
 ./bin/isotty status
 ```
 
+View audit logs:
+
+```bash
+./bin/isotty audit logs
+./bin/isotty audit logs -f
+```
+
 Attach to the environment:
 
 ```bash

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const (
@@ -58,6 +59,8 @@ func (a *App) Run(args []string) error {
 		return a.runAttach(args[1:])
 	case "forward":
 		return a.runForward(args[1:])
+	case "audit":
+		return a.runAudit(args[1:])
 	case "down":
 		return a.runDown(args[1:])
 	case "status":
@@ -77,6 +80,7 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] attach")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] down")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] audit logs [-f]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward add <name> --local-port <port> --remote-port <port>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward list")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward remove <name>")
@@ -134,6 +138,51 @@ func (a *App) runUp(args []string) error {
 	return nil
 }
 
+func (a *App) runAudit(args []string) error {
+	if len(args) == 0 {
+		return errors.New("audit requires a subcommand: logs")
+	}
+
+	switch args[0] {
+	case "logs":
+		return a.runAuditLogs(args[1:])
+	default:
+		return fmt.Errorf("unknown audit subcommand %q", args[0])
+	}
+}
+
+func (a *App) runAuditLogs(args []string) error {
+	fs := flag.NewFlagSet("audit logs", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	follow := fs.Bool("f", false, "follow logs")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("audit logs does not accept positional arguments")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	state, err := LoadStateForProject(projectPath)
+	if err != nil {
+		return err
+	}
+
+	if *follow {
+		return a.followAuditLogs(state)
+	}
+
+	events, err := queryAuditLogs(state, "boot")
+	if err != nil {
+		return err
+	}
+	a.printAuditEvents(events)
+	return nil
+}
+
 func (a *App) runAttach(args []string) error {
 	fs := flag.NewFlagSet("attach", flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
@@ -175,7 +224,35 @@ func (a *App) runAttach(args []string) error {
 	} else {
 		a.phase("Attaching to %s", state.InstanceName)
 	}
-	return RunInteractiveCommand("", os.Environ(), "gcloud", sshArgs...)
+
+	startEvent, err := newAttachVMEvent(state, "attach-start", len(names), "")
+	if err != nil {
+		return err
+	}
+	if err := recordVMEvent(state, startEvent, a.debug); err != nil {
+		return fmt.Errorf("record attach-start event: %w", err)
+	}
+
+	attachErr := RunInteractiveCommand("", os.Environ(), "gcloud", sshArgs...)
+
+	result := "ok"
+	if attachErr != nil {
+		result = attachErr.Error()
+	}
+	endEvent, err := newAttachVMEvent(state, "attach-end", len(names), result)
+	if err != nil {
+		if attachErr != nil {
+			return fmt.Errorf("attach session failed: %v; resolve attach-end event context: %w", attachErr, err)
+		}
+		return err
+	}
+	if err := recordVMEvent(state, endEvent, a.debug); err != nil {
+		if attachErr != nil {
+			return fmt.Errorf("attach session failed: %v; record attach-end event: %w", attachErr, err)
+		}
+		return fmt.Errorf("record attach-end event: %w", err)
+	}
+	return attachErr
 }
 
 func (a *App) runDown(args []string) error {
@@ -459,6 +536,11 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	}); err != nil {
 		return State{}, err
 	}
+	if err := a.runPhase("Configuring audit", func() error {
+		return configureAudit(state, a.debug)
+	}); err != nil {
+		return State{}, err
+	}
 	if err := a.runPhase("Starting sync session", func() error {
 		return recreateMutagenSession(state, a.debug)
 	}); err != nil {
@@ -498,6 +580,46 @@ func (a *App) runPhase(format string, fn func() error, args ...any) error {
 	}
 	s.stopSuccess()
 	return nil
+}
+
+func (a *App) followAuditLogs(state State) error {
+	seen := map[string]struct{}{}
+	for {
+		events, err := queryAuditLogs(state, "recent")
+		if err != nil {
+			return err
+		}
+		for _, event := range events {
+			if _, ok := seen[event.EventID]; ok {
+				continue
+			}
+			seen[event.EventID] = struct{}{}
+			a.printAuditEvent(event)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func (a *App) printAuditEvents(events []AuditEvent) {
+	for _, event := range events {
+		a.printAuditEvent(event)
+	}
+}
+
+func (a *App) printAuditEvent(event AuditEvent) {
+	timestamp := event.Time.Format(time.RFC3339)
+	switch event.Kind {
+	case "exec":
+		fmt.Fprintf(a.stdout, "%s exec %s\n", timestamp, event.Command)
+	case "connect":
+		if event.Address != "" {
+			fmt.Fprintf(a.stdout, "%s connect %s\n", timestamp, event.Address)
+			return
+		}
+		fmt.Fprintf(a.stdout, "%s connect %s\n", timestamp, event.Executable)
+	default:
+		fmt.Fprintf(a.stdout, "%s %s\n", timestamp, event.RawSummary())
+	}
 }
 
 func validateSyncMode(mode string) error {
