@@ -656,9 +656,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	state := NewState(cfg, syncMode)
 	created := false
 	gcpConfig := cfg.VM.GCP
+	_, stateErr := LoadStateForProject(cfg.ProjectPath)
+	hasState := stateErr == nil
+	if stateErr != nil && !IsStateNotFoundError(stateErr) {
+		return State{}, stateErr
+	}
 	exists, err := vmcfg.GCPInstanceExists(cfg.GCPProjectID, cfg.Zone, state.InstanceName)
 	if err != nil {
 		return State{}, fmt.Errorf("check instance: %w", err)
+	}
+	if !hasState && exists {
+		return State{}, fmt.Errorf("instance %s already exists but no local IsoTTY state was found; use `isotty attach --target <id>` or remove the VM explicitly", state.InstanceName)
 	}
 	if !exists {
 		if err := a.runPhase("Creating VM %s", func() error {
