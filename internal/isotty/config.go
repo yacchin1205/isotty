@@ -8,7 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
+
+	"sigs.k8s.io/yaml"
 )
 
 type Config struct {
@@ -18,7 +22,15 @@ type Config struct {
 	Zone         string
 	HomeDir      string
 	AptPackages  []string
+	NodeVersion  string
+	Agents       []string
 }
+
+type agentConfig struct {
+	Agents map[string]map[string]any `json:"agents"`
+}
+
+var nodeMajorVersionPattern = regexp.MustCompile(`^[0-9]+$`)
 
 func LoadConfig(projectPath string) (Config, error) {
 	projectHash := hashProjectPath(projectPath)
@@ -43,6 +55,14 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	nodeVersion, err := loadNodeVersion(projectPath)
+	if err != nil {
+		return Config{}, err
+	}
+	agents, err := loadAgents(projectPath)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		ProjectPath:  projectPath,
@@ -51,6 +71,8 @@ func LoadConfig(projectPath string) (Config, error) {
 		Zone:         zone,
 		HomeDir:      homeDir,
 		AptPackages:  aptPackages,
+		NodeVersion:  nodeVersion,
+		Agents:       agents,
 	}, nil
 }
 
@@ -88,7 +110,7 @@ func resolveSetting(envKey string, fallbackCommand []string) (string, error) {
 }
 
 func loadAptPackages(projectPath string) ([]string, error) {
-	configPath := filepath.Join(projectPath, ".isotty", "apt.txt")
+	configPath := aptPackagesPath(projectPath)
 	file, err := os.Open(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -116,4 +138,67 @@ func loadAptPackages(projectPath string) ([]string, error) {
 		return nil, fmt.Errorf("read %s: %w", configPath, err)
 	}
 	return packages, nil
+}
+
+func loadNodeVersion(projectPath string) (string, error) {
+	configPath := nodeVersionPath(projectPath)
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read %s: %w", configPath, err)
+	}
+
+	value := strings.TrimSpace(string(data))
+	if value == "" {
+		return "", fmt.Errorf("%s is empty", configPath)
+	}
+	if !nodeMajorVersionPattern.MatchString(value) {
+		return "", fmt.Errorf("%s must contain only a Node.js major version, got %q", configPath, value)
+	}
+	return value, nil
+}
+
+func loadAgents(projectPath string) ([]string, error) {
+	configPath := agentConfigPath(projectPath)
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", configPath, err)
+	}
+
+	var cfg agentConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", configPath, err)
+	}
+	if len(cfg.Agents) == 0 {
+		return nil, fmt.Errorf("%s does not define any agents", configPath)
+	}
+
+	agents := make([]string, 0, len(cfg.Agents))
+	for name := range cfg.Agents {
+		switch name {
+		case "codex", "claude":
+			agents = append(agents, name)
+		default:
+			return nil, fmt.Errorf("%s contains unsupported agent %q", configPath, name)
+		}
+	}
+	sort.Strings(agents)
+	return agents, nil
+}
+
+func aptPackagesPath(projectPath string) string {
+	return filepath.Join(projectPath, ".isotty", "apt.txt")
+}
+
+func nodeVersionPath(projectPath string) string {
+	return filepath.Join(projectPath, ".isotty", "node.txt")
+}
+
+func agentConfigPath(projectPath string) string {
+	return filepath.Join(projectPath, ".isotty", "agent.yaml")
 }

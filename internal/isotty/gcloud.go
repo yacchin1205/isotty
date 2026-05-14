@@ -62,15 +62,25 @@ func waitForSSH(state State) error {
 func bootstrapWorkspace(state State, debug bool) error {
 	commandParts := []string{
 		"set -euo pipefail",
+		"export DEBIAN_FRONTEND=noninteractive",
 		"sudo mkdir -p /workspace",
 		"sudo chown \"$USER\":\"$(id -gn)\" /workspace",
 	}
+	if len(state.AptPackages) > 0 || needsNodeRuntime(state) {
+		commandParts = append(commandParts, "sudo apt-get update")
+	}
 	if len(state.AptPackages) > 0 {
-		commandParts = append(commandParts,
-			"export DEBIAN_FRONTEND=noninteractive",
-			"sudo apt-get update",
-			fmt.Sprintf("sudo apt-get install -y %s", shellJoin(state.AptPackages)),
-		)
+		commandParts = append(commandParts, fmt.Sprintf("sudo apt-get install -y %s", shellJoin(state.AptPackages)))
+	}
+	if needsNodeRuntime(state) {
+		commandParts = append(commandParts, buildNodeInstallScript(state))
+	}
+	if len(state.Agents) > 0 {
+		agentCommand, err := buildAgentInstallScript(state)
+		if err != nil {
+			return err
+		}
+		commandParts = append(commandParts, agentCommand)
 	}
 	command := strings.Join(commandParts, " && ")
 	return RunCommand("", os.Environ(), debug, "gcloud",

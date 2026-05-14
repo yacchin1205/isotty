@@ -23,6 +23,8 @@ type State struct {
 	SSHConfigPath        string   `json:"ssh_config_path"`
 	SSHWrapperDir        string   `json:"ssh_wrapper_dir"`
 	AptPackages          []string `json:"apt_packages,omitempty"`
+	NodeVersion          string   `json:"node_version,omitempty"`
+	Agents               []string `json:"agents,omitempty"`
 	CreatedAt            string   `json:"created_at"`
 }
 
@@ -41,6 +43,8 @@ func NewState(cfg Config, syncMode string) State {
 		SSHConfigPath:        filepath.Join(cfg.HomeDir, "ssh", "config"),
 		SSHWrapperDir:        filepath.Join(cfg.HomeDir, "ssh", "bin"),
 		AptPackages:          append([]string(nil), cfg.AptPackages...),
+		NodeVersion:          cfg.NodeVersion,
+		Agents:               append([]string(nil), cfg.Agents...),
 		CreatedAt:            time.Now().UTC().Format(time.RFC3339),
 	}
 }

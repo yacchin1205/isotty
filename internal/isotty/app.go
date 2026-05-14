@@ -59,6 +59,8 @@ func (a *App) Run(args []string) error {
 		return a.runAttach(args[1:])
 	case "forward":
 		return a.runForward(args[1:])
+	case "runtime":
+		return a.runRuntime(args[1:])
 	case "audit":
 		return a.runAudit(args[1:])
 	case "down":
@@ -84,6 +86,14 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward add <name> --local-port <port> --remote-port <port>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward list")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward remove <name>")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt add <package>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt remove <package>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt list")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime node set <major>")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime node show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime agent add <name>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime agent remove <name>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime agent list")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] status")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] version")
 }
@@ -383,6 +393,259 @@ func (a *App) runForward(args []string) error {
 	}
 }
 
+func (a *App) runRuntime(args []string) error {
+	if len(args) == 0 {
+		return errors.New("runtime requires a subcommand: apt, node, or agent")
+	}
+
+	switch args[0] {
+	case "apt":
+		return a.runRuntimeApt(args[1:])
+	case "node":
+		return a.runRuntimeNode(args[1:])
+	case "agent":
+		return a.runRuntimeAgent(args[1:])
+	default:
+		return fmt.Errorf("unknown runtime subcommand %q", args[0])
+	}
+}
+
+func (a *App) runRuntimeApt(args []string) error {
+	if len(args) == 0 {
+		return errors.New("runtime apt requires a subcommand: add, remove, or list")
+	}
+
+	switch args[0] {
+	case "add":
+		return a.runRuntimeAptAdd(args[1:])
+	case "remove":
+		return a.runRuntimeAptRemove(args[1:])
+	case "list":
+		return a.runRuntimeAptList(args[1:])
+	default:
+		return fmt.Errorf("unknown runtime apt subcommand %q", args[0])
+	}
+}
+
+func (a *App) runRuntimeAptAdd(args []string) error {
+	fs := flag.NewFlagSet("runtime apt add", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return errors.New("runtime apt add requires at least one package")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	if err := AddRuntimeAptPackages(projectPath, fs.Args()); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "Added %d apt package(s)\n", len(fs.Args()))
+	return nil
+}
+
+func (a *App) runRuntimeAptRemove(args []string) error {
+	fs := flag.NewFlagSet("runtime apt remove", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return errors.New("runtime apt remove requires at least one package")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	if err := RemoveRuntimeAptPackages(projectPath, fs.Args()); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "Removed %d apt package(s)\n", len(fs.Args()))
+	return nil
+}
+
+func (a *App) runRuntimeAptList(args []string) error {
+	fs := flag.NewFlagSet("runtime apt list", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("runtime apt list does not accept arguments")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	packages, err := ListRuntimeAptPackages(projectPath)
+	if err != nil {
+		return err
+	}
+	if len(packages) == 0 {
+		fmt.Fprintln(a.stdout, "No apt packages configured.")
+		return nil
+	}
+	for _, pkg := range packages {
+		fmt.Fprintln(a.stdout, pkg)
+	}
+	return nil
+}
+
+func (a *App) runRuntimeNode(args []string) error {
+	if len(args) == 0 {
+		return errors.New("runtime node requires a subcommand: set or show")
+	}
+
+	switch args[0] {
+	case "set":
+		return a.runRuntimeNodeSet(args[1:])
+	case "show":
+		return a.runRuntimeNodeShow(args[1:])
+	default:
+		return fmt.Errorf("unknown runtime node subcommand %q", args[0])
+	}
+}
+
+func (a *App) runRuntimeNodeSet(args []string) error {
+	fs := flag.NewFlagSet("runtime node set", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("runtime node set requires exactly one major version")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	if err := SetRuntimeNodeVersion(projectPath, fs.Arg(0)); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "Set Node.js major version to %s\n", fs.Arg(0))
+	return nil
+}
+
+func (a *App) runRuntimeNodeShow(args []string) error {
+	fs := flag.NewFlagSet("runtime node show", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("runtime node show does not accept arguments")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	version, err := RuntimeNodeVersion(projectPath)
+	if err != nil {
+		return err
+	}
+	if version == "" {
+		fmt.Fprintln(a.stdout, "No Node.js version configured.")
+		return nil
+	}
+	fmt.Fprintln(a.stdout, version)
+	return nil
+}
+
+func (a *App) runRuntimeAgent(args []string) error {
+	if len(args) == 0 {
+		return errors.New("runtime agent requires a subcommand: add, remove, or list")
+	}
+
+	switch args[0] {
+	case "add":
+		return a.runRuntimeAgentAdd(args[1:])
+	case "remove":
+		return a.runRuntimeAgentRemove(args[1:])
+	case "list":
+		return a.runRuntimeAgentList(args[1:])
+	default:
+		return fmt.Errorf("unknown runtime agent subcommand %q", args[0])
+	}
+}
+
+func (a *App) runRuntimeAgentAdd(args []string) error {
+	fs := flag.NewFlagSet("runtime agent add", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return errors.New("runtime agent add requires at least one agent")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	if err := AddRuntimeAgents(projectPath, fs.Args()); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "Added %d agent(s)\n", len(fs.Args()))
+	return nil
+}
+
+func (a *App) runRuntimeAgentRemove(args []string) error {
+	fs := flag.NewFlagSet("runtime agent remove", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return errors.New("runtime agent remove requires at least one agent")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	if err := RemoveRuntimeAgents(projectPath, fs.Args()); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "Removed %d agent(s)\n", len(fs.Args()))
+	return nil
+}
+
+func (a *App) runRuntimeAgentList(args []string) error {
+	fs := flag.NewFlagSet("runtime agent list", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("runtime agent list does not accept arguments")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	agents, err := ListRuntimeAgents(projectPath)
+	if err != nil {
+		return err
+	}
+	if len(agents) == 0 {
+		fmt.Fprintln(a.stdout, "No agents configured.")
+		return nil
+	}
+	for _, agent := range agents {
+		fmt.Fprintln(a.stdout, agent)
+	}
+	return nil
+}
+
 func (a *App) runForwardAdd(args []string) error {
 	if len(args) == 0 {
 		return errors.New("forward add requires a name")
@@ -513,18 +776,10 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	}); err != nil {
 		return State{}, err
 	}
-	if len(state.AptPackages) > 0 {
-		if err := a.runPhase("Bootstrapping workspace and installing packages", func() error {
-			return bootstrapWorkspace(state, a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	} else {
-		if err := a.runPhase("Bootstrapping workspace", func() error {
-			return bootstrapWorkspace(state, a.debug)
-		}); err != nil {
-			return State{}, err
-		}
+	if err := a.runPhase(bootstrapLabel(state), func() error {
+		return bootstrapWorkspace(state, a.debug)
+	}); err != nil {
+		return State{}, err
 	}
 	if err := a.runPhase("Refreshing SSH config", func() error {
 		return refreshSSHConfig(state, a.debug)

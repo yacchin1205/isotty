@@ -16,10 +16,18 @@ The goal is to preserve a normal terminal workflow while moving execution across
 * `mutagen`
 * authenticated `gcloud` access to a GCP project
 
-## Install From Source
+## Install
+
+Download a release binary from GitHub Releases and place it somewhere on your `PATH`:
+
+* https://github.com/yacchin1205/isotty/releases
+
+For example:
 
 ```bash
-go build -o ./bin/isotty ./cmd/isotty
+curl -LO https://github.com/yacchin1205/isotty/releases/download/v2026.5.0/isotty_2026.5.0_darwin_arm64
+mv isotty_2026.5.0_darwin_arm64 /usr/local/bin/isotty
+chmod +x /usr/local/bin/isotty
 ```
 
 ## Quick Start
@@ -91,6 +99,21 @@ Stored in:
 ./.isotty/forward.yaml
 ```
 
+Optional Node.js runtime version:
+
+```text
+./.isotty/node.txt
+```
+
+Put only a Node.js major version in this file, for example `22`.
+Node.js is installed from the NodeSource apt repository when `node.txt` is present.
+
+Optional agent install config:
+
+```text
+./.isotty/agent.yaml
+```
+
 ## Sync Modes
 
 Default:
@@ -119,4 +142,5 @@ IsoTTY stores local state under:
 * [Sync design](docs/SYNC.md)
 * [Forward design](docs/FORWARD.md)
 * [Audit design](docs/AUDIT.md)
+* [Agent design](docs/AGENT.md)
 * [Contributing](CONTRIBUTING.md)

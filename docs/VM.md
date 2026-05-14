@@ -57,6 +57,8 @@ Bootstrap sets up:
 * `/workspace`
 * correct ownership for the login user
 * project-defined packages from `./.isotty/apt.txt`
+* optional Node.js runtime from `./.isotty/node.txt` via NodeSource apt packages
+* optional agent CLIs from `./.isotty/agent.yaml`
 * audit support required by IsoTTY
 
 ## Local State
