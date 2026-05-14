@@ -41,19 +41,20 @@ export ISOTTY_GCP_ZONE=us-central1-f
 Create an environment for the current project:
 
 ```bash
-./bin/isotty up
-```
-
-Attach:
-
-```bash
-./bin/isotty attach
+isotty up
 ```
 
 Inside the VM:
 
 ```bash
-cd /workspace
+pwd
+# /workspace
+```
+
+Prepare the environment without attaching:
+
+```bash
+isotty up --no-attach
 ```
 
 Destroy the environment:

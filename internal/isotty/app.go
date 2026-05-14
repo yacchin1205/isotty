@@ -79,7 +79,7 @@ func (a *App) Run(args []string) error {
 
 func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "Usage:")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe] [--no-attach]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] attach")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] down")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] audit logs [-f]")
@@ -103,6 +103,7 @@ func (a *App) runUp(args []string) error {
 	fs.SetOutput(a.stderr)
 
 	syncMode := fs.String("sync", defaultSyncMode, "synchronization mode")
+	noAttach := fs.Bool("no-attach", false, "do not attach after preparing the environment")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -145,7 +146,10 @@ func (a *App) runUp(args []string) error {
 	fmt.Fprintf(a.stdout, "Project: %s\n", state.GCPProjectID)
 	fmt.Fprintf(a.stdout, "Zone: %s\n", state.Zone)
 	fmt.Fprintf(a.stdout, "Sync mode: %s\n", state.SyncMode)
-	return nil
+	if *noAttach {
+		return nil
+	}
+	return a.attachToState(projectPath, state)
 }
 
 func (a *App) runAudit(args []string) error {
@@ -213,21 +217,17 @@ func (a *App) runAttach(args []string) error {
 		return err
 	}
 
+	return a.attachToState(projectPath, state)
+}
+
+func (a *App) attachToState(projectPath string, state State) error {
 	forwardCfg, err := LoadForwardConfig(projectPath)
 	if err != nil {
 		return err
 	}
 
-	sshArgs := []string{
-		"compute", "ssh", state.InstanceName,
-		"--project", state.GCPProjectID,
-		"--zone", state.Zone,
-	}
+	sshArgs := buildAttachSSHArgs(state, forwardCfg)
 	names := SortedForwardNames(forwardCfg)
-	for _, name := range names {
-		forward := forwardCfg.Forwards[name]
-		sshArgs = append(sshArgs, "--ssh-flag", fmt.Sprintf("-L 127.0.0.1:%d:127.0.0.1:%d", forward.LocalPort, forward.RemotePort))
-	}
 
 	if len(names) > 0 {
 		a.phase("Attaching to %s with %d forwards", state.InstanceName, len(names))
@@ -263,6 +263,21 @@ func (a *App) runAttach(args []string) error {
 		return fmt.Errorf("record attach-end event: %w", err)
 	}
 	return attachErr
+}
+
+func buildAttachSSHArgs(state State, forwardCfg ForwardConfig) []string {
+	sshArgs := []string{
+		"compute", "ssh", state.InstanceName,
+		"--project", state.GCPProjectID,
+		"--zone", state.Zone,
+		"--ssh-flag=-t",
+	}
+	for _, name := range SortedForwardNames(forwardCfg) {
+		forward := forwardCfg.Forwards[name]
+		sshArgs = append(sshArgs, fmt.Sprintf("--ssh-flag=-L 127.0.0.1:%d:127.0.0.1:%d", forward.LocalPort, forward.RemotePort))
+	}
+	sshArgs = append(sshArgs, "--command", fmt.Sprintf("cd %s && exec ${SHELL:-/bin/bash} -l", defaultWorkspacePath))
+	return sshArgs
 }
 
 func (a *App) runDown(args []string) error {
