@@ -6,7 +6,6 @@ The first IsoTTY backend is a disposable GCP VM created with `gcloud`.
 
 ```bash
 isotty up
-isotty attach
 isotty down
 ```
 
@@ -67,6 +66,13 @@ gcp:
   image_project: ubuntu-os-cloud
 ```
 
+Or update it from the CLI:
+
+```bash
+isotty vm gcp show
+isotty vm gcp set --machine-type e2-standard-8 --boot-disk-size 200GB
+```
+
 ## Bootstrap
 
 After VM creation, IsoTTY waits for SSH and bootstraps over SSH.
@@ -85,11 +91,12 @@ Bootstrap sets up:
 ## Local State
 
 IsoTTY keeps local VM state under:
-It is written early enough that `isotty down` can still clean up after a failed `up`.
 
 ```text
 ~/.isotty
 ```
+
+It is written early enough that `isotty down` can still clean up after a failed `up`.
 
 The stored state includes:
 

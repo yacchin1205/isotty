@@ -3,6 +3,7 @@ package isotty
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -104,7 +105,7 @@ func ensureSSHWrappers(state State) error {
 }
 
 func requirePath(name string) (string, error) {
-	path, err := execLookPath(name)
+	path, err := exec.LookPath(name)
 	if err != nil {
 		return "", fmt.Errorf("%s is required but was not found in PATH", name)
 	}

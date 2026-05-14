@@ -1,11 +1,11 @@
-package isotty
+package runtimecfg
 
 import (
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"regexp"
 	"sort"
 	"strconv"
@@ -22,6 +22,7 @@ var (
 const (
 	auditExecKey    = "isotty-exec"
 	auditConnectKey = "isotty-connect"
+	vmEventLogPath  = "/var/log/isotty/events.jsonl"
 )
 
 var auditPackages = []string{"auditd"}
@@ -68,7 +69,13 @@ type VMEventRecord struct {
 	Result         string `json:"result,omitempty"`
 }
 
-func configureAudit(state State, debug bool) error {
+type RemoteTarget struct {
+	Run      func(command string, debug bool) error
+	Capture  func(command string) (string, error)
+	ExitCode func(err error) int
+}
+
+func ConfigureAudit(target RemoteTarget, debug bool) error {
 	command := strings.Join([]string{
 		"set -euo pipefail",
 		"export DEBIAN_FRONTEND=noninteractive",
@@ -79,30 +86,15 @@ func configureAudit(state State, debug bool) error {
 		"sudo augenrules --load",
 		"sudo systemctl restart auditd",
 	}, " && ")
-	return RunCommand("", os.Environ(), debug, "gcloud",
-		"compute", "ssh", state.InstanceName,
-		"--project", state.GCPProjectID,
-		"--zone", state.Zone,
-		"--command", command,
-	)
+	return target.Run(command, debug)
 }
 
-func auditRules() string {
-	lines := []string{
-		fmt.Sprintf("-a always,exit -F arch=b64 -S execve -k %s", auditExecKey),
-		fmt.Sprintf("-a always,exit -F arch=b32 -S execve -k %s", auditExecKey),
-		fmt.Sprintf("-a always,exit -F arch=b64 -S connect -k %s", auditConnectKey),
-		fmt.Sprintf("-a always,exit -F arch=b32 -S connect -k %s", auditConnectKey),
-	}
-	return strings.Join(lines, "\n")
-}
-
-func queryAuditLogs(state State, start string) ([]AuditEvent, error) {
-	execOutput, err := queryAuditKey(state, auditExecKey, start)
+func QueryAuditLogs(target RemoteTarget, start string) ([]AuditEvent, error) {
+	execOutput, err := queryAuditKey(target, auditExecKey, start)
 	if err != nil {
 		return nil, err
 	}
-	connectOutput, err := queryAuditKey(state, auditConnectKey, start)
+	connectOutput, err := queryAuditKey(target, auditConnectKey, start)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +108,7 @@ func queryAuditLogs(state State, start string) ([]AuditEvent, error) {
 		return nil, fmt.Errorf("parse connect audit events: %w", err)
 	}
 
-	vmEvents, err := queryVMEvents(state)
+	vmEvents, err := queryVMEvents(target)
 	if err != nil {
 		return nil, fmt.Errorf("query isotty VM events: %w", err)
 	}
@@ -132,38 +124,69 @@ func queryAuditLogs(state State, start string) ([]AuditEvent, error) {
 	return events, nil
 }
 
-func queryAuditKey(state State, key, start string) (string, error) {
-	output, err := CaptureCommand("", os.Environ(), "gcloud",
-		"compute", "ssh", state.InstanceName,
-		"--project", state.GCPProjectID,
-		"--zone", state.Zone,
-		"--command", fmt.Sprintf("sudo ausearch --input-logs -i --start %s --key %s", start, key),
+func NewAttachVMEvent(projectHash, eventType string, forwardCount int, result string) (VMEventRecord, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return VMEventRecord{}, fmt.Errorf("resolve client hostname: %w", err)
+	}
+	currentUser, err := user.Current()
+	if err != nil {
+		return VMEventRecord{}, fmt.Errorf("resolve client user: %w", err)
+	}
+
+	return VMEventRecord{
+		Type:           eventType,
+		ClientHostname: hostname,
+		ClientUser:     currentUser.Username,
+		ProjectHash:    projectHash,
+		ForwardCount:   forwardCount,
+		Result:         result,
+	}, nil
+}
+
+func RecordVMEvent(target RemoteTarget, record VMEventRecord, debug bool) error {
+	data, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("marshal VM event: %w", err)
+	}
+
+	script := `import datetime, json, os, sys; path = sys.argv[1]; entry = json.loads(sys.argv[2]); entry["time"] = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"); os.makedirs(os.path.dirname(path), exist_ok=True); handle = open(path, "a", encoding="utf-8"); handle.write(json.dumps(entry, separators=(",", ":")) + "\n"); handle.close()`
+
+	command := fmt.Sprintf(
+		"sudo python3 -c %s %s %s",
+		shellJoin([]string{script}),
+		shellJoin([]string{vmEventLogPath}),
+		shellJoin([]string{string(data)}),
 	)
+	return target.Run(command, debug)
+}
+
+func auditRules() string {
+	lines := []string{
+		fmt.Sprintf("-a always,exit -F arch=b64 -S execve -k %s", auditExecKey),
+		fmt.Sprintf("-a always,exit -F arch=b32 -S execve -k %s", auditExecKey),
+		fmt.Sprintf("-a always,exit -F arch=b64 -S connect -k %s", auditConnectKey),
+		fmt.Sprintf("-a always,exit -F arch=b32 -S connect -k %s", auditConnectKey),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func queryAuditKey(target RemoteTarget, key, start string) (string, error) {
+	output, err := target.Capture(fmt.Sprintf("sudo ausearch --input-logs -i --start %s --key %s", start, key))
 	if err == nil {
 		return output, nil
 	}
-	var commandErr *CommandError
-	if errors.As(err, &commandErr) {
-		if ExitCode(commandErr.Err) == 1 && strings.Contains(commandErr.Stdout, "<no matches>") {
-			return "", nil
-		}
-		if ExitCode(commandErr.Err) == 1 && strings.Contains(commandErr.Stderr, "<no matches>") {
-			return "", nil
-		}
+	if target.ExitCode(err) == 1 && strings.Contains(err.Error(), "<no matches>") {
+		return "", nil
 	}
 	return "", err
 }
 
-func queryVMEvents(state State) ([]AuditEvent, error) {
-	output, err := CaptureCommand("", os.Environ(), "gcloud",
-		"compute", "ssh", state.InstanceName,
-		"--project", state.GCPProjectID,
-		"--zone", state.Zone,
-		"--command", `sudo python3 -c 'import os,sys; path=sys.argv[1]; 
+func queryVMEvents(target RemoteTarget) ([]AuditEvent, error) {
+	output, err := target.Capture(`sudo python3 -c 'import os,sys; path=sys.argv[1]; 
 if os.path.exists(path):
     with open(path, "r", encoding="utf-8") as handle:
-        sys.stdout.write(handle.read())' /var/log/isotty/events.jsonl`,
-	)
+        sys.stdout.write(handle.read())' /var/log/isotty/events.jsonl`)
 	if err != nil {
 		return nil, err
 	}

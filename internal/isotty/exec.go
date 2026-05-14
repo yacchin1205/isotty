@@ -16,19 +16,15 @@ func requireExecutable(name string) error {
 	return nil
 }
 
-func RunInteractiveCommand(dir string, env []string, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
 func RunCommand(dir string, env []string, debug bool, name string, args ...string) error {
 	if debug {
-		return RunInteractiveCommand(dir, env, name, args...)
+		cmd := exec.Command(name, args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
 	}
 
 	var stdout bytes.Buffer

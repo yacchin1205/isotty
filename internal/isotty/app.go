@@ -6,20 +6,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
+
+	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
+	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
 
 const (
-	defaultSyncMode        = "two-way-safe"
-	oneWaySafeSyncMode     = "one-way-safe"
-	twoWaySafeSyncMode     = "two-way-safe"
-	defaultGCPMachineType  = "e2-standard-4"
-	defaultGCPDiskSize     = "50GB"
-	defaultGCPImageProject = "ubuntu-os-cloud"
-	defaultGCPImageFamily  = "ubuntu-2404-lts-amd64"
-	defaultWorkspacePath   = "/workspace"
+	defaultSyncMode      = "two-way-safe"
+	oneWaySafeSyncMode   = "one-way-safe"
+	twoWaySafeSyncMode   = "two-way-safe"
+	defaultWorkspacePath = "/workspace"
 )
 
 var supportedSyncModes = map[string]struct{}{
@@ -63,6 +62,8 @@ func (a *App) Run(args []string) error {
 		return a.runForward(args[1:])
 	case "runtime":
 		return a.runRuntime(args[1:])
+	case "vm":
+		return a.runVM(args[1:])
 	case "audit":
 		return a.runAudit(args[1:])
 	case "down":
@@ -91,8 +92,6 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt add <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt remove <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt list")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime gcp show")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime gcp set [--machine-type <type>] [--boot-disk-size <size>] [--image-family <family>] [--image-project <project>]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime service enable <name>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime service disable <name>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime service list")
@@ -102,6 +101,8 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime agent add <name>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime agent remove <name>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime agent list")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] vm gcp show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] vm gcp set [--machine-type <type>] [--boot-disk-size <size>] [--image-family <family>] [--image-project <project>]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] status")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] version")
 }
@@ -197,7 +198,7 @@ func (a *App) runAuditLogs(args []string) error {
 		return a.followAuditLogs(state)
 	}
 
-	events, err := queryAuditLogs(state, "boot")
+	events, err := runtimecfg.QueryAuditLogs(a.auditTarget(state), "boot")
 	if err != nil {
 		return err
 	}
@@ -243,28 +244,28 @@ func (a *App) attachToState(projectPath string, state State) error {
 		a.phase("Attaching to %s", state.InstanceName)
 	}
 
-	startEvent, err := newAttachVMEvent(state, "attach-start", len(names), "")
+	startEvent, err := runtimecfg.NewAttachVMEvent(state.ProjectHash, "attach-start", len(names), "")
 	if err != nil {
 		return err
 	}
-	if err := recordVMEvent(state, startEvent, a.debug); err != nil {
+	if err := runtimecfg.RecordVMEvent(a.auditTarget(state), startEvent, a.debug); err != nil {
 		return fmt.Errorf("record attach-start event: %w", err)
 	}
 
-	attachErr := RunInteractiveCommand("", os.Environ(), "gcloud", sshArgs...)
+	attachErr := vmcfg.RunGCPInteractiveSSH(sshArgs...)
 
 	result := "ok"
 	if attachErr != nil {
 		result = attachErr.Error()
 	}
-	endEvent, err := newAttachVMEvent(state, "attach-end", len(names), result)
+	endEvent, err := runtimecfg.NewAttachVMEvent(state.ProjectHash, "attach-end", len(names), result)
 	if err != nil {
 		if attachErr != nil {
 			return fmt.Errorf("attach session failed: %v; resolve attach-end event context: %w", attachErr, err)
 		}
 		return err
 	}
-	if err := recordVMEvent(state, endEvent, a.debug); err != nil {
+	if err := runtimecfg.RecordVMEvent(a.auditTarget(state), endEvent, a.debug); err != nil {
 		if attachErr != nil {
 			return fmt.Errorf("attach session failed: %v; record attach-end event: %w", attachErr, err)
 		}
@@ -314,18 +315,17 @@ func (a *App) runDown(args []string) error {
 		return fmt.Errorf("terminate sync session: %w", err)
 	}
 
-	exists, err := gcloudInstanceExists(state.GCPProjectID, state.Zone, state.InstanceName)
+	exists, err := vmcfg.GCPInstanceExists(state.GCPProjectID, state.Zone, state.InstanceName)
 	if err != nil {
 		return fmt.Errorf("check instance: %w", err)
 	}
 	if exists {
 		if err := a.runPhase("Deleting VM %s", func() error {
-			return RunCommand("", os.Environ(), a.debug, "gcloud",
-				"compute", "instances", "delete", state.InstanceName,
-				"--quiet",
-				"--project", state.GCPProjectID,
-				"--zone", state.Zone,
-			)
+			return vmcfg.DeleteGCPInstance(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, a.debug)
 		}, state.InstanceName); err != nil {
 			return fmt.Errorf("delete instance: %w", err)
 		}
@@ -418,461 +418,46 @@ func (a *App) runForward(args []string) error {
 
 func (a *App) runRuntime(args []string) error {
 	if len(args) == 0 {
-		return errors.New("runtime requires a subcommand: apt, gcp, service, post-install, node, or agent")
+		return errors.New("runtime requires a subcommand: apt, service, post-install, node, or agent")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
 	}
 
 	switch args[0] {
 	case "apt":
-		return a.runRuntimeApt(args[1:])
-	case "gcp":
-		return a.runRuntimeGCP(args[1:])
+		return runtimecfg.RunApt(projectPath, args[1:], a.stdout, a.stderr)
 	case "service":
-		return a.runRuntimeService(args[1:])
+		return runtimecfg.RunService(projectPath, args[1:], a.stdout, a.stderr)
 	case "post-install":
-		return a.runRuntimePostInstall(args[1:])
+		return runtimecfg.RunPostInstall(projectPath, args[1:], a.stdout, a.stderr)
 	case "node":
-		return a.runRuntimeNode(args[1:])
+		return runtimecfg.RunNode(projectPath, args[1:], a.stdout, a.stderr)
 	case "agent":
-		return a.runRuntimeAgent(args[1:])
+		return runtimecfg.RunAgent(projectPath, args[1:], a.stdout, a.stderr)
 	default:
 		return fmt.Errorf("unknown runtime subcommand %q", args[0])
 	}
 }
 
-func (a *App) runRuntimeService(args []string) error {
+func (a *App) runVM(args []string) error {
 	if len(args) == 0 {
-		return errors.New("runtime service requires a subcommand: enable, disable, or list")
+		return errors.New("vm requires a subcommand: gcp")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
 	}
 
 	switch args[0] {
-	case "enable":
-		return a.runRuntimeServiceEnable(args[1:])
-	case "disable":
-		return a.runRuntimeServiceDisable(args[1:])
-	case "list":
-		return a.runRuntimeServiceList(args[1:])
+	case "gcp":
+		return vmcfg.RunGCP(projectPath, args[1:], a.stdout, a.stderr)
 	default:
-		return fmt.Errorf("unknown runtime service subcommand %q", args[0])
+		return fmt.Errorf("unknown vm subcommand %q", args[0])
 	}
-}
-
-func (a *App) runRuntimeServiceEnable(args []string) error {
-	fs := flag.NewFlagSet("runtime service enable", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() == 0 {
-		return errors.New("runtime service enable requires at least one service")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	if err := AddRuntimeServices(projectPath, fs.Args()); err != nil {
-		return err
-	}
-	fmt.Fprintf(a.stdout, "Enabled %d service(s)\n", len(fs.Args()))
-	return nil
-}
-
-func (a *App) runRuntimeServiceDisable(args []string) error {
-	fs := flag.NewFlagSet("runtime service disable", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() == 0 {
-		return errors.New("runtime service disable requires at least one service")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	if err := RemoveRuntimeServices(projectPath, fs.Args()); err != nil {
-		return err
-	}
-	fmt.Fprintf(a.stdout, "Disabled %d service(s)\n", len(fs.Args()))
-	return nil
-}
-
-func (a *App) runRuntimeServiceList(args []string) error {
-	fs := flag.NewFlagSet("runtime service list", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("runtime service list does not accept arguments")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	services, err := ListRuntimeServices(projectPath)
-	if err != nil {
-		return err
-	}
-	if len(services) == 0 {
-		fmt.Fprintln(a.stdout, "No services configured.")
-		return nil
-	}
-	for _, service := range services {
-		fmt.Fprintln(a.stdout, service)
-	}
-	return nil
-}
-
-func (a *App) runRuntimePostInstall(args []string) error {
-	if len(args) == 0 {
-		return errors.New("runtime post-install requires a subcommand: path")
-	}
-
-	switch args[0] {
-	case "path":
-		return a.runRuntimePostInstallPath(args[1:])
-	default:
-		return fmt.Errorf("unknown runtime post-install subcommand %q", args[0])
-	}
-}
-
-func (a *App) runRuntimePostInstallPath(args []string) error {
-	fs := flag.NewFlagSet("runtime post-install path", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("runtime post-install path does not accept arguments")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	fmt.Fprintln(a.stdout, postInstallScriptPath(projectPath))
-	return nil
-}
-
-func (a *App) runRuntimeGCP(args []string) error {
-	if len(args) == 0 {
-		return errors.New("runtime gcp requires a subcommand: show or set")
-	}
-
-	switch args[0] {
-	case "show":
-		return a.runRuntimeGCPShow(args[1:])
-	case "set":
-		return a.runRuntimeGCPSet(args[1:])
-	default:
-		return fmt.Errorf("unknown runtime gcp subcommand %q", args[0])
-	}
-}
-
-func (a *App) runRuntimeGCPShow(args []string) error {
-	fs := flag.NewFlagSet("runtime gcp show", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("runtime gcp show does not accept arguments")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	cfg, err := RuntimeGCPVMConfig(projectPath)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(a.stdout, "machine_type: %s\n", *cfg.MachineType)
-	fmt.Fprintf(a.stdout, "boot_disk_size: %s\n", *cfg.BootDiskSize)
-	fmt.Fprintf(a.stdout, "image_family: %s\n", *cfg.ImageFamily)
-	fmt.Fprintf(a.stdout, "image_project: %s\n", *cfg.ImageProject)
-	return nil
-}
-
-func (a *App) runRuntimeGCPSet(args []string) error {
-	fs := flag.NewFlagSet("runtime gcp set", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	machineType := fs.String("machine-type", "", "GCP machine type")
-	bootDiskSize := fs.String("boot-disk-size", "", "GCP boot disk size")
-	imageFamily := fs.String("image-family", "", "GCP image family")
-	imageProject := fs.String("image-project", "", "GCP image project")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("runtime gcp set does not accept positional arguments")
-	}
-
-	updates := gcpVMConfig{}
-	if flagProvided(args, "--machine-type") {
-		updates.MachineType = machineType
-	}
-	if flagProvided(args, "--boot-disk-size") {
-		updates.BootDiskSize = bootDiskSize
-	}
-	if flagProvided(args, "--image-family") {
-		updates.ImageFamily = imageFamily
-	}
-	if flagProvided(args, "--image-project") {
-		updates.ImageProject = imageProject
-	}
-	if updates.MachineType == nil && updates.BootDiskSize == nil && updates.ImageFamily == nil && updates.ImageProject == nil {
-		return errors.New("runtime gcp set requires at least one flag")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	if err := SetRuntimeGCPVMConfig(projectPath, updates); err != nil {
-		return err
-	}
-	fmt.Fprintln(a.stdout, "Updated GCP VM config")
-	return nil
-}
-
-func (a *App) runRuntimeApt(args []string) error {
-	if len(args) == 0 {
-		return errors.New("runtime apt requires a subcommand: add, remove, or list")
-	}
-
-	switch args[0] {
-	case "add":
-		return a.runRuntimeAptAdd(args[1:])
-	case "remove":
-		return a.runRuntimeAptRemove(args[1:])
-	case "list":
-		return a.runRuntimeAptList(args[1:])
-	default:
-		return fmt.Errorf("unknown runtime apt subcommand %q", args[0])
-	}
-}
-
-func (a *App) runRuntimeAptAdd(args []string) error {
-	fs := flag.NewFlagSet("runtime apt add", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() == 0 {
-		return errors.New("runtime apt add requires at least one package")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	if err := AddRuntimeAptPackages(projectPath, fs.Args()); err != nil {
-		return err
-	}
-	fmt.Fprintf(a.stdout, "Added %d apt package(s)\n", len(fs.Args()))
-	return nil
-}
-
-func (a *App) runRuntimeAptRemove(args []string) error {
-	fs := flag.NewFlagSet("runtime apt remove", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() == 0 {
-		return errors.New("runtime apt remove requires at least one package")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	if err := RemoveRuntimeAptPackages(projectPath, fs.Args()); err != nil {
-		return err
-	}
-	fmt.Fprintf(a.stdout, "Removed %d apt package(s)\n", len(fs.Args()))
-	return nil
-}
-
-func (a *App) runRuntimeAptList(args []string) error {
-	fs := flag.NewFlagSet("runtime apt list", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("runtime apt list does not accept arguments")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	packages, err := ListRuntimeAptPackages(projectPath)
-	if err != nil {
-		return err
-	}
-	if len(packages) == 0 {
-		fmt.Fprintln(a.stdout, "No apt packages configured.")
-		return nil
-	}
-	for _, pkg := range packages {
-		fmt.Fprintln(a.stdout, pkg)
-	}
-	return nil
-}
-
-func (a *App) runRuntimeNode(args []string) error {
-	if len(args) == 0 {
-		return errors.New("runtime node requires a subcommand: set or show")
-	}
-
-	switch args[0] {
-	case "set":
-		return a.runRuntimeNodeSet(args[1:])
-	case "show":
-		return a.runRuntimeNodeShow(args[1:])
-	default:
-		return fmt.Errorf("unknown runtime node subcommand %q", args[0])
-	}
-}
-
-func (a *App) runRuntimeNodeSet(args []string) error {
-	fs := flag.NewFlagSet("runtime node set", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return errors.New("runtime node set requires exactly one major version")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	if err := SetRuntimeNodeVersion(projectPath, fs.Arg(0)); err != nil {
-		return err
-	}
-	fmt.Fprintf(a.stdout, "Set Node.js major version to %s\n", fs.Arg(0))
-	return nil
-}
-
-func (a *App) runRuntimeNodeShow(args []string) error {
-	fs := flag.NewFlagSet("runtime node show", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("runtime node show does not accept arguments")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	version, err := RuntimeNodeVersion(projectPath)
-	if err != nil {
-		return err
-	}
-	if version == "" {
-		fmt.Fprintln(a.stdout, "No Node.js version configured.")
-		return nil
-	}
-	fmt.Fprintln(a.stdout, version)
-	return nil
-}
-
-func (a *App) runRuntimeAgent(args []string) error {
-	if len(args) == 0 {
-		return errors.New("runtime agent requires a subcommand: add, remove, or list")
-	}
-
-	switch args[0] {
-	case "add":
-		return a.runRuntimeAgentAdd(args[1:])
-	case "remove":
-		return a.runRuntimeAgentRemove(args[1:])
-	case "list":
-		return a.runRuntimeAgentList(args[1:])
-	default:
-		return fmt.Errorf("unknown runtime agent subcommand %q", args[0])
-	}
-}
-
-func (a *App) runRuntimeAgentAdd(args []string) error {
-	fs := flag.NewFlagSet("runtime agent add", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() == 0 {
-		return errors.New("runtime agent add requires at least one agent")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	if err := AddRuntimeAgents(projectPath, fs.Args()); err != nil {
-		return err
-	}
-	fmt.Fprintf(a.stdout, "Added %d agent(s)\n", len(fs.Args()))
-	return nil
-}
-
-func (a *App) runRuntimeAgentRemove(args []string) error {
-	fs := flag.NewFlagSet("runtime agent remove", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() == 0 {
-		return errors.New("runtime agent remove requires at least one agent")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	if err := RemoveRuntimeAgents(projectPath, fs.Args()); err != nil {
-		return err
-	}
-	fmt.Fprintf(a.stdout, "Removed %d agent(s)\n", len(fs.Args()))
-	return nil
-}
-
-func (a *App) runRuntimeAgentList(args []string) error {
-	fs := flag.NewFlagSet("runtime agent list", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("runtime agent list does not accept arguments")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	agents, err := ListRuntimeAgents(projectPath)
-	if err != nil {
-		return err
-	}
-	if len(agents) == 0 {
-		fmt.Fprintln(a.stdout, "No agents configured.")
-		return nil
-	}
-	for _, agent := range agents {
-		fmt.Fprintln(a.stdout, agent)
-	}
-	return nil
 }
 
 func (a *App) runForwardAdd(args []string) error {
@@ -962,7 +547,7 @@ func (a *App) runForwardRemove(args []string) error {
 }
 
 func (a *App) printDependencyVersion(name string, args []string) error {
-	path, err := execLookPath(name)
+	path, err := exec.LookPath(name)
 	if err != nil {
 		fmt.Fprintf(a.stdout, "%s: not found\n", name)
 		return nil
@@ -986,14 +571,22 @@ func (a *App) printDependencyVersion(name string, args []string) error {
 func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	state := NewState(cfg, syncMode)
 	created := false
-
-	exists, err := gcloudInstanceExists(cfg.GCPProjectID, cfg.Zone, state.InstanceName)
+	gcpConfig := cfg.VM.GCP
+	exists, err := vmcfg.GCPInstanceExists(cfg.GCPProjectID, cfg.Zone, state.InstanceName)
 	if err != nil {
 		return State{}, fmt.Errorf("check instance: %w", err)
 	}
 	if !exists {
 		if err := a.runPhase("Creating VM %s", func() error {
-			return createInstance(cfg, state.InstanceName, a.debug)
+			return vmcfg.CreateGCPInstance(vmcfg.GCPInstanceSpec{
+				ProjectID:    cfg.GCPProjectID,
+				Zone:         cfg.Zone,
+				ProjectHash:  cfg.ProjectHash,
+				MachineType:  *gcpConfig.MachineType,
+				BootDiskSize: *gcpConfig.BootDiskSize,
+				ImageFamily:  *gcpConfig.ImageFamily,
+				ImageProject: *gcpConfig.ImageProject,
+			}, state.InstanceName, a.debug)
 		}, state.InstanceName); err != nil {
 			return State{}, err
 		}
@@ -1009,13 +602,25 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	}
 
 	if err := a.runPhase("Waiting for SSH", func() error {
-		return waitForSSH(state)
+		return vmcfg.WaitForGCPSSH(vmcfg.GCPConnection{
+			ProjectID:    state.GCPProjectID,
+			Zone:         state.Zone,
+			InstanceName: state.InstanceName,
+		})
 	}); err != nil {
 		return State{}, err
 	}
 	if created {
-		if err := a.runPhase(bootstrapLabel(cfg), func() error {
-			return bootstrapWorkspace(state, cfg, a.debug)
+		command, err := runtimecfg.BootstrapCommand(cfg.Runtime)
+		if err != nil {
+			return State{}, err
+		}
+		if err := a.runPhase(runtimecfg.BootstrapLabel(cfg.Runtime), func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, command, a.debug)
 		}); err != nil {
 			return State{}, err
 		}
@@ -1023,7 +628,12 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		a.phase("Skipping bootstrap for existing VM %s", state.InstanceName)
 	}
 	if err := a.runPhase("Refreshing SSH config", func() error {
-		return refreshSSHConfig(state, a.debug)
+		return vmcfg.RefreshGCPSSHConfig(vmcfg.GCPConnection{
+			ProjectID:     state.GCPProjectID,
+			Zone:          state.Zone,
+			InstanceName:  state.InstanceName,
+			SSHConfigPath: state.SSHConfigPath,
+		}, a.debug)
 	}); err != nil {
 		return State{}, err
 	}
@@ -1033,7 +643,7 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		return State{}, err
 	}
 	if err := a.runPhase("Configuring audit", func() error {
-		return configureAudit(state, a.debug)
+		return runtimecfg.ConfigureAudit(a.auditTarget(state), a.debug)
 	}); err != nil {
 		return State{}, err
 	}
@@ -1043,13 +653,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		return State{}, err
 	}
 	if created {
-		hasPostInstall, err := hasPostInstallScript(state.ProjectPath)
+		hasPostInstall, err := runtimecfg.HasPostInstallScript(state.ProjectPath)
 		if err != nil {
 			return State{}, err
 		}
 		if hasPostInstall {
 			if err := a.runPhase("Running post-install script", func() error {
-				return runPostInstallScript(state, a.debug)
+				return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+					ProjectID:    state.GCPProjectID,
+					Zone:         state.Zone,
+					InstanceName: state.InstanceName,
+				}, runtimecfg.PostInstallCommand(state.RemoteWorkspacePath), a.debug)
 			}); err != nil {
 				return State{}, err
 			}
@@ -1095,7 +709,7 @@ func (a *App) runPhase(format string, fn func() error, args ...any) error {
 func (a *App) followAuditLogs(state State) error {
 	seen := map[string]struct{}{}
 	for {
-		events, err := queryAuditLogs(state, "recent")
+		events, err := runtimecfg.QueryAuditLogs(a.auditTarget(state), "recent")
 		if err != nil {
 			return err
 		}
@@ -1110,13 +724,13 @@ func (a *App) followAuditLogs(state State) error {
 	}
 }
 
-func (a *App) printAuditEvents(events []AuditEvent) {
+func (a *App) printAuditEvents(events []runtimecfg.AuditEvent) {
 	for _, event := range events {
 		a.printAuditEvent(event)
 	}
 }
 
-func (a *App) printAuditEvent(event AuditEvent) {
+func (a *App) printAuditEvent(event runtimecfg.AuditEvent) {
 	timestamp := event.Time.Format(time.RFC3339)
 	switch event.Kind {
 	case "exec":
@@ -1132,21 +746,26 @@ func (a *App) printAuditEvent(event AuditEvent) {
 	}
 }
 
+func (a *App) auditTarget(state State) runtimecfg.RemoteTarget {
+	conn := vmcfg.GCPConnection{
+		ProjectID:    state.GCPProjectID,
+		Zone:         state.Zone,
+		InstanceName: state.InstanceName,
+	}
+	return runtimecfg.RemoteTarget{
+		Run: func(command string, debug bool) error {
+			return vmcfg.RunGCPRemoteCommand(conn, command, debug)
+		},
+		Capture: func(command string) (string, error) {
+			return vmcfg.CaptureGCPRemoteCommand(conn, command)
+		},
+		ExitCode: vmcfg.GCPCommandExitCode,
+	}
+}
+
 func validateSyncMode(mode string) error {
 	if _, ok := supportedSyncModes[mode]; ok {
 		return nil
 	}
 	return fmt.Errorf("unsupported sync mode %q", mode)
-}
-
-func flagProvided(args []string, name string) bool {
-	for i := 0; i < len(args); i++ {
-		if args[i] == name {
-			return true
-		}
-		if len(args[i]) > len(name) && strings.HasPrefix(args[i], name+"=") {
-			return true
-		}
-	}
-	return false
 }

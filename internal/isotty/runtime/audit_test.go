@@ -1,4 +1,4 @@
-package isotty
+package runtimecfg
 
 import (
 	"testing"

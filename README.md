@@ -60,16 +60,16 @@ isotty up --no-attach
 Destroy the environment:
 
 ```bash
-./bin/isotty down
+isotty down
 ```
 
 ## Common Commands
 
 ```bash
-./bin/isotty status
-./bin/isotty audit logs
-./bin/isotty audit logs -f
-./bin/isotty --debug up
+isotty status
+isotty audit logs
+isotty audit logs -f
+isotty --debug up
 ```
 
 ## Project Config
@@ -90,8 +90,8 @@ jq
 Port forwards:
 
 ```bash
-./bin/isotty forward add web --local-port 8080 --remote-port 8080
-./bin/isotty forward list
+isotty forward add web --local-port 8080 --remote-port 8080
+isotty forward list
 ```
 
 Stored in:
@@ -169,8 +169,8 @@ gcp:
 Or update it from the CLI:
 
 ```bash
-isotty runtime gcp show
-isotty runtime gcp set --machine-type e2-standard-8 --boot-disk-size 200GB
+isotty vm gcp show
+isotty vm gcp set --machine-type e2-standard-8 --boot-disk-size 200GB
 ```
 
 ## Sync Modes
@@ -178,13 +178,13 @@ isotty runtime gcp set --machine-type e2-standard-8 --boot-disk-size 200GB
 Default:
 
 ```bash
-./bin/isotty up
+isotty up
 ```
 
 One-way mode:
 
 ```bash
-./bin/isotty up --sync one-way-safe
+isotty up --sync one-way-safe
 ```
 
 ## Local State

@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
+	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
 
 func TestHashProjectPathIsStable(t *testing.T) {
@@ -42,9 +45,9 @@ func TestLoadAptPackages(t *testing.T) {
 		t.Fatalf("write apt.txt: %v", err)
 	}
 
-	packages, err := loadAptPackages(projectDir)
+	packages, err := runtimecfg.ListAptPackages(projectDir)
 	if err != nil {
-		t.Fatalf("loadAptPackages() error = %v", err)
+		t.Fatalf("ListAptPackages() error = %v", err)
 	}
 	if len(packages) != 2 {
 		t.Fatalf("len(packages) = %d, want 2", len(packages))
@@ -64,9 +67,9 @@ func TestLoadNodeVersion(t *testing.T) {
 		t.Fatalf("write node.txt: %v", err)
 	}
 
-	version, err := loadNodeVersion(projectDir)
+	version, err := runtimecfg.NodeVersion(projectDir)
 	if err != nil {
-		t.Fatalf("loadNodeVersion() error = %v", err)
+		t.Fatalf("NodeVersion() error = %v", err)
 	}
 	if version != "22" {
 		t.Fatalf("version = %q, want 22", version)
@@ -83,9 +86,9 @@ func TestLoadNodeVersionFailsOnEmptyFile(t *testing.T) {
 		t.Fatalf("write node.txt: %v", err)
 	}
 
-	_, err := loadNodeVersion(projectDir)
+	_, err := runtimecfg.NodeVersion(projectDir)
 	if err == nil {
-		t.Fatal("loadNodeVersion() should fail on empty node.txt")
+		t.Fatal("NodeVersion() should fail on empty node.txt")
 	}
 }
 
@@ -99,9 +102,9 @@ func TestLoadNodeVersionFailsOnInvalidValue(t *testing.T) {
 		t.Fatalf("write node.txt: %v", err)
 	}
 
-	_, err := loadNodeVersion(projectDir)
+	_, err := runtimecfg.NodeVersion(projectDir)
 	if err == nil {
-		t.Fatal("loadNodeVersion() should fail on invalid node.txt")
+		t.Fatal("NodeVersion() should fail on invalid node.txt")
 	}
 }
 
@@ -116,9 +119,9 @@ func TestLoadAgents(t *testing.T) {
 		t.Fatalf("write agent.yaml: %v", err)
 	}
 
-	agents, err := loadAgents(projectDir)
+	agents, err := runtimecfg.ListAgents(projectDir)
 	if err != nil {
-		t.Fatalf("loadAgents() error = %v", err)
+		t.Fatalf("ListAgents() error = %v", err)
 	}
 	if len(agents) != 2 {
 		t.Fatalf("len(agents) = %d, want 2", len(agents))
@@ -139,9 +142,9 @@ func TestLoadAgentsFailsOnUnsupportedAgent(t *testing.T) {
 		t.Fatalf("write agent.yaml: %v", err)
 	}
 
-	_, err := loadAgents(projectDir)
+	_, err := runtimecfg.ListAgents(projectDir)
 	if err == nil {
-		t.Fatal("loadAgents() should fail on unsupported agent")
+		t.Fatal("ListAgents() should fail on unsupported agent")
 	}
 }
 
@@ -156,9 +159,9 @@ func TestLoadServices(t *testing.T) {
 		t.Fatalf("write service.yaml: %v", err)
 	}
 
-	services, err := loadServices(projectDir)
+	services, err := runtimecfg.ListServices(projectDir)
 	if err != nil {
-		t.Fatalf("loadServices() error = %v", err)
+		t.Fatalf("ListServices() error = %v", err)
 	}
 	if len(services) != 1 || services[0] != "docker" {
 		t.Fatalf("services = %v, want [docker]", services)
@@ -176,9 +179,9 @@ func TestLoadServicesFailsOnUnsupportedService(t *testing.T) {
 		t.Fatalf("write service.yaml: %v", err)
 	}
 
-	_, err := loadServices(projectDir)
+	_, err := runtimecfg.ListServices(projectDir)
 	if err == nil {
-		t.Fatal("loadServices() should fail on unsupported service")
+		t.Fatal("ListServices() should fail on unsupported service")
 	}
 }
 
@@ -193,21 +196,21 @@ func TestLoadVMConfig(t *testing.T) {
 		t.Fatalf("write vm.yaml: %v", err)
 	}
 
-	cfg, err := loadVMConfig(projectDir)
+	cfg, err := vmcfg.Load(projectDir)
 	if err != nil {
-		t.Fatalf("loadVMConfig() error = %v", err)
+		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.MachineType == nil || *cfg.MachineType != "e2-standard-8" {
-		t.Fatalf("MachineType = %v, want e2-standard-8", cfg.MachineType)
+	if cfg.GCP.MachineType == nil || *cfg.GCP.MachineType != "e2-standard-8" {
+		t.Fatalf("MachineType = %v, want e2-standard-8", cfg.GCP.MachineType)
 	}
-	if cfg.BootDiskSize == nil || *cfg.BootDiskSize != "200GB" {
-		t.Fatalf("BootDiskSize = %v, want 200GB", cfg.BootDiskSize)
+	if cfg.GCP.BootDiskSize == nil || *cfg.GCP.BootDiskSize != "200GB" {
+		t.Fatalf("BootDiskSize = %v, want 200GB", cfg.GCP.BootDiskSize)
 	}
-	if cfg.ImageFamily == nil || *cfg.ImageFamily != "ubuntu-2404-lts-amd64" {
-		t.Fatalf("ImageFamily = %v", cfg.ImageFamily)
+	if cfg.GCP.ImageFamily == nil || *cfg.GCP.ImageFamily != "ubuntu-2404-lts-amd64" {
+		t.Fatalf("ImageFamily = %v", cfg.GCP.ImageFamily)
 	}
-	if cfg.ImageProject == nil || *cfg.ImageProject != "ubuntu-os-cloud" {
-		t.Fatalf("ImageProject = %v", cfg.ImageProject)
+	if cfg.GCP.ImageProject == nil || *cfg.GCP.ImageProject != "ubuntu-os-cloud" {
+		t.Fatalf("ImageProject = %v", cfg.GCP.ImageProject)
 	}
 }
 
@@ -217,14 +220,14 @@ func TestLoadVMConfigFailsOnEmptyMachineType(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("create config dir: %v", err)
 	}
-	content := "gcp:\n  machine_type: \"\"\n"
+	content := "provider: gcp\ngcp:\n  machine_type: \"\"\n"
 	if err := os.WriteFile(filepath.Join(configDir, "vm.yaml"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write vm.yaml: %v", err)
 	}
 
-	_, err := loadVMConfig(projectDir)
+	_, err := vmcfg.Load(projectDir)
 	if err == nil {
-		t.Fatal("loadVMConfig() should fail on empty gcp.machine_type")
+		t.Fatal("Load() should fail on empty gcp.machine_type")
 	}
 }
 
@@ -239,9 +242,9 @@ func TestLoadVMConfigFailsOnEmptyProvider(t *testing.T) {
 		t.Fatalf("write vm.yaml: %v", err)
 	}
 
-	_, err := loadVMConfig(projectDir)
+	_, err := vmcfg.Load(projectDir)
 	if err == nil {
-		t.Fatal("loadVMConfig() should fail on empty provider")
+		t.Fatal("Load() should fail on empty provider")
 	}
 }
 
@@ -256,9 +259,9 @@ func TestLoadVMConfigFailsOnUnsupportedProvider(t *testing.T) {
 		t.Fatalf("write vm.yaml: %v", err)
 	}
 
-	_, err := loadVMConfig(projectDir)
+	_, err := vmcfg.Load(projectDir)
 	if err == nil {
-		t.Fatal("loadVMConfig() should fail on unsupported provider")
+		t.Fatal("Load() should fail on unsupported provider")
 	}
 }
 
@@ -273,11 +276,11 @@ func TestHasPostInstallScript(t *testing.T) {
 		t.Fatalf("write post-install.sh: %v", err)
 	}
 
-	ok, err := hasPostInstallScript(projectDir)
+	ok, err := runtimecfg.HasPostInstallScript(projectDir)
 	if err != nil {
-		t.Fatalf("hasPostInstallScript() error = %v", err)
+		t.Fatalf("HasPostInstallScript() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("hasPostInstallScript() = false, want true")
+		t.Fatal("HasPostInstallScript() = false, want true")
 	}
 }

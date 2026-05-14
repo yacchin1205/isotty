@@ -1,18 +1,16 @@
 package isotty
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strings"
 
-	"sigs.k8s.io/yaml"
+	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
+	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
 
 type Config struct {
@@ -21,37 +19,9 @@ type Config struct {
 	GCPProjectID string
 	Zone         string
 	HomeDir      string
-	MachineType  string
-	BootDiskSize string
-	ImageFamily  string
-	ImageProject string
-	AptPackages  []string
-	NodeVersion  string
-	Agents       []string
-	Services     []string
+	Runtime      runtimecfg.RuntimeConfig
+	VM           vmcfg.VMConfig
 }
-
-type agentConfig struct {
-	Agents map[string]map[string]any `json:"agents"`
-}
-
-type serviceConfig struct {
-	Services map[string]map[string]any `json:"services"`
-}
-
-type vmConfig struct {
-	Provider *string     `json:"provider"`
-	GCP      gcpVMConfig `json:"gcp"`
-}
-
-type gcpVMConfig struct {
-	MachineType  *string `json:"machine_type"`
-	BootDiskSize *string `json:"boot_disk_size"`
-	ImageFamily  *string `json:"image_family"`
-	ImageProject *string `json:"image_project"`
-}
-
-var nodeMajorVersionPattern = regexp.MustCompile(`^[0-9]+$`)
 
 func LoadConfig(projectPath string) (Config, error) {
 	projectHash := hashProjectPath(projectPath)
@@ -72,23 +42,12 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("resolve GCP zone: %w", err)
 	}
-	aptPackages, err := loadAptPackages(projectPath)
+
+	runtimeConfig, err := runtimecfg.Load(projectPath)
 	if err != nil {
 		return Config{}, err
 	}
-	nodeVersion, err := loadNodeVersion(projectPath)
-	if err != nil {
-		return Config{}, err
-	}
-	agents, err := loadAgents(projectPath)
-	if err != nil {
-		return Config{}, err
-	}
-	services, err := loadServices(projectPath)
-	if err != nil {
-		return Config{}, err
-	}
-	vmShape, err := loadVMConfig(projectPath)
+	vmConfig, err := vmcfg.Load(projectPath)
 	if err != nil {
 		return Config{}, err
 	}
@@ -99,14 +58,8 @@ func LoadConfig(projectPath string) (Config, error) {
 		GCPProjectID: projectID,
 		Zone:         zone,
 		HomeDir:      homeDir,
-		MachineType:  *vmShape.MachineType,
-		BootDiskSize: *vmShape.BootDiskSize,
-		ImageFamily:  *vmShape.ImageFamily,
-		ImageProject: *vmShape.ImageProject,
-		AptPackages:  aptPackages,
-		NodeVersion:  nodeVersion,
-		Agents:       agents,
-		Services:     services,
+		Runtime:      runtimeConfig,
+		VM:           vmConfig,
 	}, nil
 }
 
@@ -141,208 +94,4 @@ func resolveSetting(envKey string, fallbackCommand []string) (string, error) {
 		return "", fmt.Errorf("%s is not set and gcloud returned no value", envKey)
 	}
 	return value, nil
-}
-
-func loadAptPackages(projectPath string) ([]string, error) {
-	configPath := aptPackagesPath(projectPath)
-	file, err := os.Open(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("open %s: %w", configPath, err)
-	}
-	defer file.Close()
-
-	var packages []string
-	seen := map[string]struct{}{}
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if _, ok := seen[line]; ok {
-			continue
-		}
-		seen[line] = struct{}{}
-		packages = append(packages, line)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read %s: %w", configPath, err)
-	}
-	return packages, nil
-}
-
-func loadNodeVersion(projectPath string) (string, error) {
-	configPath := nodeVersionPath(projectPath)
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", fmt.Errorf("read %s: %w", configPath, err)
-	}
-
-	value := strings.TrimSpace(string(data))
-	if value == "" {
-		return "", fmt.Errorf("%s is empty", configPath)
-	}
-	if !nodeMajorVersionPattern.MatchString(value) {
-		return "", fmt.Errorf("%s must contain only a Node.js major version, got %q", configPath, value)
-	}
-	return value, nil
-}
-
-func loadAgents(projectPath string) ([]string, error) {
-	configPath := agentConfigPath(projectPath)
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read %s: %w", configPath, err)
-	}
-
-	var cfg agentConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", configPath, err)
-	}
-	if len(cfg.Agents) == 0 {
-		return nil, fmt.Errorf("%s does not define any agents", configPath)
-	}
-
-	agents := make([]string, 0, len(cfg.Agents))
-	for name := range cfg.Agents {
-		switch name {
-		case "codex", "claude":
-			agents = append(agents, name)
-		default:
-			return nil, fmt.Errorf("%s contains unsupported agent %q", configPath, name)
-		}
-	}
-	sort.Strings(agents)
-	return agents, nil
-}
-
-func loadServices(projectPath string) ([]string, error) {
-	configPath := serviceConfigPath(projectPath)
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read %s: %w", configPath, err)
-	}
-
-	var cfg serviceConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", configPath, err)
-	}
-	if len(cfg.Services) == 0 {
-		return nil, fmt.Errorf("%s does not define any services", configPath)
-	}
-
-	services := make([]string, 0, len(cfg.Services))
-	for name := range cfg.Services {
-		switch name {
-		case "docker":
-			services = append(services, name)
-		default:
-			return nil, fmt.Errorf("%s contains unsupported service %q", configPath, name)
-		}
-	}
-	sort.Strings(services)
-	return services, nil
-}
-
-func loadVMConfig(projectPath string) (gcpVMConfig, error) {
-	configPath := vmConfigPath(projectPath)
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return gcpVMConfig{
-				MachineType:  stringPointer(defaultGCPMachineType),
-				BootDiskSize: stringPointer(defaultGCPDiskSize),
-				ImageFamily:  stringPointer(defaultGCPImageFamily),
-				ImageProject: stringPointer(defaultGCPImageProject),
-			}, nil
-		}
-		return gcpVMConfig{}, fmt.Errorf("read %s: %w", configPath, err)
-	}
-
-	var cfg vmConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return gcpVMConfig{}, fmt.Errorf("parse %s: %w", configPath, err)
-	}
-	if cfg.Provider == nil {
-		cfg.Provider = stringPointer("gcp")
-	} else if *cfg.Provider == "" {
-		return gcpVMConfig{}, fmt.Errorf("%s contains empty provider", configPath)
-	}
-	if *cfg.Provider != "gcp" {
-		return gcpVMConfig{}, fmt.Errorf("%s contains unsupported provider %q", configPath, *cfg.Provider)
-	}
-	gcp := cfg.GCP
-	if gcp.MachineType == nil {
-		gcp.MachineType = stringPointer(defaultGCPMachineType)
-	} else if *gcp.MachineType == "" {
-		return gcpVMConfig{}, fmt.Errorf("%s contains empty gcp.machine_type", configPath)
-	}
-	if gcp.BootDiskSize == nil {
-		gcp.BootDiskSize = stringPointer(defaultGCPDiskSize)
-	} else if *gcp.BootDiskSize == "" {
-		return gcpVMConfig{}, fmt.Errorf("%s contains empty gcp.boot_disk_size", configPath)
-	}
-	if gcp.ImageFamily == nil {
-		gcp.ImageFamily = stringPointer(defaultGCPImageFamily)
-	} else if *gcp.ImageFamily == "" {
-		return gcpVMConfig{}, fmt.Errorf("%s contains empty gcp.image_family", configPath)
-	}
-	if gcp.ImageProject == nil {
-		gcp.ImageProject = stringPointer(defaultGCPImageProject)
-	} else if *gcp.ImageProject == "" {
-		return gcpVMConfig{}, fmt.Errorf("%s contains empty gcp.image_project", configPath)
-	}
-	return gcp, nil
-}
-
-func stringPointer(value string) *string {
-	return &value
-}
-
-func aptPackagesPath(projectPath string) string {
-	return filepath.Join(projectPath, ".isotty", "apt.txt")
-}
-
-func nodeVersionPath(projectPath string) string {
-	return filepath.Join(projectPath, ".isotty", "node.txt")
-}
-
-func agentConfigPath(projectPath string) string {
-	return filepath.Join(projectPath, ".isotty", "agent.yaml")
-}
-
-func serviceConfigPath(projectPath string) string {
-	return filepath.Join(projectPath, ".isotty", "service.yaml")
-}
-
-func vmConfigPath(projectPath string) string {
-	return filepath.Join(projectPath, ".isotty", "vm.yaml")
-}
-
-func postInstallScriptPath(projectPath string) string {
-	return filepath.Join(projectPath, ".isotty", "post-install.sh")
-}
-
-func hasPostInstallScript(projectPath string) (bool, error) {
-	path := postInstallScriptPath(projectPath)
-	_, err := os.Stat(path)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, fmt.Errorf("stat %s: %w", path, err)
 }
