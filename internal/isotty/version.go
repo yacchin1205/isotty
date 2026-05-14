@@ -2,7 +2,7 @@ package isotty
 
 import "runtime/debug"
 
-const defaultVersion = "dev"
+var defaultVersion = "dev"
 
 func Version() string {
 	if info, ok := debug.ReadBuildInfo(); ok {

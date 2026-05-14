@@ -1,0 +1,41 @@
+version: 2
+
+project_name: isotty
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: isotty
+    main: ./cmd/isotty
+    binary: isotty
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/yazawa/isotty/internal/isotty.defaultVersion={{ .Version }}
+
+archives:
+  - id: binaries
+    ids:
+      - isotty
+    formats:
+      - binary
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  draft: true
+
+changelog:
+  use: git
