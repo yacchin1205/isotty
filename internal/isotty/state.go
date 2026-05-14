@@ -6,47 +6,37 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 type State struct {
-	ProjectPath          string   `json:"project_path"`
-	ProjectHash          string   `json:"project_hash"`
-	Backend              string   `json:"backend"`
-	GCPProjectID         string   `json:"gcp_project_id"`
-	Zone                 string   `json:"zone"`
-	InstanceName         string   `json:"instance_name"`
-	SessionName          string   `json:"session_name"`
-	SyncMode             string   `json:"sync_mode"`
-	RemoteWorkspacePath  string   `json:"remote_workspace_path"`
-	MutagenDataDirectory string   `json:"mutagen_data_directory"`
-	SSHConfigPath        string   `json:"ssh_config_path"`
-	SSHWrapperDir        string   `json:"ssh_wrapper_dir"`
-	AptPackages          []string `json:"apt_packages,omitempty"`
-	NodeVersion          string   `json:"node_version,omitempty"`
-	Agents               []string `json:"agents,omitempty"`
-	CreatedAt            string   `json:"created_at"`
+	ProjectPath        string `json:"project_path"`
+	ProjectHash        string `json:"project_hash"`
+	Backend            string `json:"backend"`
+	GCPProjectID       string `json:"gcp_project_id"`
+	Zone               string `json:"zone"`
+	InstanceName       string `json:"instance_name"`
+	SyncMode           string `json:"sync_mode"`
+	BootstrapCompleted bool   `json:"bootstrap_completed,omitempty"`
+
+	SessionName          string `json:"-"`
+	RemoteWorkspacePath  string `json:"-"`
+	MutagenDataDirectory string `json:"-"`
+	SSHConfigPath        string `json:"-"`
+	SSHWrapperDir        string `json:"-"`
 }
 
 func NewState(cfg Config, syncMode string) State {
-	return State{
-		ProjectPath:          cfg.ProjectPath,
-		ProjectHash:          cfg.ProjectHash,
-		Backend:              "gcp-vm",
-		GCPProjectID:         cfg.GCPProjectID,
-		Zone:                 cfg.Zone,
-		InstanceName:         "isotty-" + cfg.ProjectHash,
-		SessionName:          "isotty-" + cfg.ProjectHash,
-		SyncMode:             syncMode,
-		RemoteWorkspacePath:  defaultWorkspacePath,
-		MutagenDataDirectory: filepath.Join(cfg.HomeDir, "mutagen"),
-		SSHConfigPath:        filepath.Join(cfg.HomeDir, "ssh", "config"),
-		SSHWrapperDir:        filepath.Join(cfg.HomeDir, "ssh", "bin"),
-		AptPackages:          append([]string(nil), cfg.AptPackages...),
-		NodeVersion:          cfg.NodeVersion,
-		Agents:               append([]string(nil), cfg.Agents...),
-		CreatedAt:            time.Now().UTC().Format(time.RFC3339),
+	state := State{
+		ProjectPath:  cfg.ProjectPath,
+		ProjectHash:  cfg.ProjectHash,
+		Backend:      "gcp-vm",
+		GCPProjectID: cfg.GCPProjectID,
+		Zone:         cfg.Zone,
+		InstanceName: "isotty-" + cfg.ProjectHash,
+		SyncMode:     syncMode,
 	}
+	state.populateDerivedFields(cfg.HomeDir)
+	return state
 }
 
 func (s State) RemoteEndpoint() string {
@@ -108,6 +98,11 @@ func LoadStateForProject(projectPath string) (State, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return State{}, err
 	}
+	homeDir, err := isottyHome()
+	if err != nil {
+		return State{}, err
+	}
+	state.populateDerivedFields(homeDir)
 	return state, nil
 }
 
@@ -128,4 +123,12 @@ func stateFilePath(projectHash string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(homeDir, "projects", projectHash+".json"), nil
+}
+
+func (s *State) populateDerivedFields(homeDir string) {
+	s.SessionName = "isotty-" + s.ProjectHash
+	s.RemoteWorkspacePath = defaultWorkspacePath
+	s.MutagenDataDirectory = filepath.Join(homeDir, "mutagen")
+	s.SSHConfigPath = filepath.Join(homeDir, "ssh", "config")
+	s.SSHWrapperDir = filepath.Join(homeDir, "ssh", "bin")
 }

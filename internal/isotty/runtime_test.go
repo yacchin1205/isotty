@@ -123,6 +123,29 @@ func TestRemoveRuntimeAgentsDeletesFileWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestAddAndRemoveRuntimeServices(t *testing.T) {
+	projectDir := t.TempDir()
+
+	if err := AddRuntimeServices(projectDir, []string{"docker"}); err != nil {
+		t.Fatalf("AddRuntimeServices() error = %v", err)
+	}
+
+	services, err := ListRuntimeServices(projectDir)
+	if err != nil {
+		t.Fatalf("ListRuntimeServices() error = %v", err)
+	}
+	if len(services) != 1 || services[0] != "docker" {
+		t.Fatalf("services = %v, want [docker]", services)
+	}
+
+	if err := RemoveRuntimeServices(projectDir, []string{"docker"}); err != nil {
+		t.Fatalf("RemoveRuntimeServices() error = %v", err)
+	}
+	if _, err := os.Stat(serviceConfigPath(projectDir)); !os.IsNotExist(err) {
+		t.Fatalf("service config should be removed, stat err = %v", err)
+	}
+}
+
 func TestRuntimeConfigFilesAreProjectLocal(t *testing.T) {
 	projectDir := t.TempDir()
 	if err := SetRuntimeNodeVersion(projectDir, "22"); err != nil {

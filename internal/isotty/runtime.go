@@ -144,6 +144,60 @@ func RemoveRuntimeAgents(projectPath string, agents []string) error {
 	return saveAgents(projectPath, next)
 }
 
+func ListRuntimeServices(projectPath string) ([]string, error) {
+	return loadServices(projectPath)
+}
+
+func AddRuntimeServices(projectPath string, services []string) error {
+	if len(services) == 0 {
+		return errors.New("at least one service is required")
+	}
+
+	current, err := loadServices(projectPath)
+	if err != nil {
+		return err
+	}
+	for _, service := range services {
+		if err := validateRuntimeService(service); err != nil {
+			return err
+		}
+		if slices.Contains(current, service) {
+			continue
+		}
+		current = append(current, service)
+	}
+	sort.Strings(current)
+	return saveServices(projectPath, current)
+}
+
+func RemoveRuntimeServices(projectPath string, services []string) error {
+	if len(services) == 0 {
+		return errors.New("at least one service is required")
+	}
+
+	current, err := loadServices(projectPath)
+	if err != nil {
+		return err
+	}
+	removeSet := make(map[string]struct{}, len(services))
+	for _, service := range services {
+		if err := validateRuntimeService(service); err != nil {
+			return err
+		}
+		removeSet[service] = struct{}{}
+	}
+
+	next := make([]string, 0, len(current))
+	for _, service := range current {
+		if _, ok := removeSet[service]; ok {
+			continue
+		}
+		next = append(next, service)
+	}
+	sort.Strings(next)
+	return saveServices(projectPath, next)
+}
+
 func RuntimeGCPVMConfig(projectPath string) (gcpVMConfig, error) {
 	return loadVMConfig(projectPath)
 }
@@ -211,6 +265,29 @@ func saveAgents(projectPath string, agents []string) error {
 	return os.WriteFile(path, buffer.Bytes(), 0o644)
 }
 
+func saveServices(projectPath string, services []string) error {
+	path := serviceConfigPath(projectPath)
+	if len(services) == 0 {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+		return nil
+	}
+
+	var buffer bytes.Buffer
+	buffer.WriteString("services:\n")
+	for _, service := range services {
+		buffer.WriteString("  ")
+		buffer.WriteString(service)
+		buffer.WriteString(": {}\n")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create service config directory: %w", err)
+	}
+	return os.WriteFile(path, buffer.Bytes(), 0o644)
+}
+
 func saveVMConfig(projectPath string, cfg gcpVMConfig) error {
 	data, err := yaml.Marshal(vmConfig{
 		Provider: stringPointer("gcp"),
@@ -232,5 +309,14 @@ func validateRuntimeAgent(agent string) error {
 		return nil
 	default:
 		return fmt.Errorf("unsupported agent %q", agent)
+	}
+}
+
+func validateRuntimeService(service string) error {
+	switch service {
+	case "docker":
+		return nil
+	default:
+		return fmt.Errorf("unsupported service %q", service)
 	}
 }

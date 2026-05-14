@@ -145,6 +145,43 @@ func TestLoadAgentsFailsOnUnsupportedAgent(t *testing.T) {
 	}
 }
 
+func TestLoadServices(t *testing.T) {
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, ".isotty")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	content := "services:\n  docker: {}\n"
+	if err := os.WriteFile(filepath.Join(configDir, "service.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write service.yaml: %v", err)
+	}
+
+	services, err := loadServices(projectDir)
+	if err != nil {
+		t.Fatalf("loadServices() error = %v", err)
+	}
+	if len(services) != 1 || services[0] != "docker" {
+		t.Fatalf("services = %v, want [docker]", services)
+	}
+}
+
+func TestLoadServicesFailsOnUnsupportedService(t *testing.T) {
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, ".isotty")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	content := "services:\n  unknown: {}\n"
+	if err := os.WriteFile(filepath.Join(configDir, "service.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write service.yaml: %v", err)
+	}
+
+	_, err := loadServices(projectDir)
+	if err == nil {
+		t.Fatal("loadServices() should fail on unsupported service")
+	}
+}
+
 func TestLoadVMConfig(t *testing.T) {
 	projectDir := t.TempDir()
 	configDir := filepath.Join(projectDir, ".isotty")
@@ -222,5 +259,25 @@ func TestLoadVMConfigFailsOnUnsupportedProvider(t *testing.T) {
 	_, err := loadVMConfig(projectDir)
 	if err == nil {
 		t.Fatal("loadVMConfig() should fail on unsupported provider")
+	}
+}
+
+func TestHasPostInstallScript(t *testing.T) {
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, ".isotty")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	content := "#!/usr/bin/env bash\necho hello\n"
+	if err := os.WriteFile(filepath.Join(configDir, "post-install.sh"), []byte(content), 0o755); err != nil {
+		t.Fatalf("write post-install.sh: %v", err)
+	}
+
+	ok, err := hasPostInstallScript(projectDir)
+	if err != nil {
+		t.Fatalf("hasPostInstallScript() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("hasPostInstallScript() = false, want true")
 	}
 }

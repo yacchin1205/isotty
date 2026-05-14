@@ -93,6 +93,10 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt list")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime gcp show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime gcp set [--machine-type <type>] [--boot-disk-size <size>] [--image-family <family>] [--image-project <project>]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime service enable <name>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime service disable <name>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime service list")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime post-install path")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime node set <major>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime node show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime agent add <name>...")
@@ -414,7 +418,7 @@ func (a *App) runForward(args []string) error {
 
 func (a *App) runRuntime(args []string) error {
 	if len(args) == 0 {
-		return errors.New("runtime requires a subcommand: apt, node, or agent")
+		return errors.New("runtime requires a subcommand: apt, gcp, service, post-install, node, or agent")
 	}
 
 	switch args[0] {
@@ -422,6 +426,10 @@ func (a *App) runRuntime(args []string) error {
 		return a.runRuntimeApt(args[1:])
 	case "gcp":
 		return a.runRuntimeGCP(args[1:])
+	case "service":
+		return a.runRuntimeService(args[1:])
+	case "post-install":
+		return a.runRuntimePostInstall(args[1:])
 	case "node":
 		return a.runRuntimeNode(args[1:])
 	case "agent":
@@ -429,6 +437,124 @@ func (a *App) runRuntime(args []string) error {
 	default:
 		return fmt.Errorf("unknown runtime subcommand %q", args[0])
 	}
+}
+
+func (a *App) runRuntimeService(args []string) error {
+	if len(args) == 0 {
+		return errors.New("runtime service requires a subcommand: enable, disable, or list")
+	}
+
+	switch args[0] {
+	case "enable":
+		return a.runRuntimeServiceEnable(args[1:])
+	case "disable":
+		return a.runRuntimeServiceDisable(args[1:])
+	case "list":
+		return a.runRuntimeServiceList(args[1:])
+	default:
+		return fmt.Errorf("unknown runtime service subcommand %q", args[0])
+	}
+}
+
+func (a *App) runRuntimeServiceEnable(args []string) error {
+	fs := flag.NewFlagSet("runtime service enable", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return errors.New("runtime service enable requires at least one service")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	if err := AddRuntimeServices(projectPath, fs.Args()); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "Enabled %d service(s)\n", len(fs.Args()))
+	return nil
+}
+
+func (a *App) runRuntimeServiceDisable(args []string) error {
+	fs := flag.NewFlagSet("runtime service disable", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return errors.New("runtime service disable requires at least one service")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	if err := RemoveRuntimeServices(projectPath, fs.Args()); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "Disabled %d service(s)\n", len(fs.Args()))
+	return nil
+}
+
+func (a *App) runRuntimeServiceList(args []string) error {
+	fs := flag.NewFlagSet("runtime service list", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("runtime service list does not accept arguments")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	services, err := ListRuntimeServices(projectPath)
+	if err != nil {
+		return err
+	}
+	if len(services) == 0 {
+		fmt.Fprintln(a.stdout, "No services configured.")
+		return nil
+	}
+	for _, service := range services {
+		fmt.Fprintln(a.stdout, service)
+	}
+	return nil
+}
+
+func (a *App) runRuntimePostInstall(args []string) error {
+	if len(args) == 0 {
+		return errors.New("runtime post-install requires a subcommand: path")
+	}
+
+	switch args[0] {
+	case "path":
+		return a.runRuntimePostInstallPath(args[1:])
+	default:
+		return fmt.Errorf("unknown runtime post-install subcommand %q", args[0])
+	}
+}
+
+func (a *App) runRuntimePostInstallPath(args []string) error {
+	fs := flag.NewFlagSet("runtime post-install path", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("runtime post-install path does not accept arguments")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	fmt.Fprintln(a.stdout, postInstallScriptPath(projectPath))
+	return nil
 }
 
 func (a *App) runRuntimeGCP(args []string) error {
@@ -876,14 +1002,20 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		a.phase("Reusing VM %s", state.InstanceName)
 	}
 
+	if err := a.runPhase("Saving local state", func() error {
+		return SaveState(state)
+	}); err != nil {
+		return State{}, fmt.Errorf("save state: %w", err)
+	}
+
 	if err := a.runPhase("Waiting for SSH", func() error {
 		return waitForSSH(state)
 	}); err != nil {
 		return State{}, err
 	}
 	if created {
-		if err := a.runPhase(bootstrapLabel(state), func() error {
-			return bootstrapWorkspace(state, a.debug)
+		if err := a.runPhase(bootstrapLabel(cfg), func() error {
+			return bootstrapWorkspace(state, cfg, a.debug)
 		}); err != nil {
 			return State{}, err
 		}
@@ -910,6 +1042,20 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	}); err != nil {
 		return State{}, err
 	}
+	if created {
+		hasPostInstall, err := hasPostInstallScript(state.ProjectPath)
+		if err != nil {
+			return State{}, err
+		}
+		if hasPostInstall {
+			if err := a.runPhase("Running post-install script", func() error {
+				return runPostInstallScript(state, a.debug)
+			}); err != nil {
+				return State{}, err
+			}
+		}
+	}
+	state.BootstrapCompleted = true
 	if err := a.runPhase("Saving local state", func() error {
 		return SaveState(state)
 	}); err != nil {

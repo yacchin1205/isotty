@@ -115,6 +115,39 @@ Optional agent install config:
 ./.isotty/agent.yaml
 ```
 
+Optional post-install script:
+
+```text
+./.isotty/post-install.sh
+```
+
+If present, it runs in the VM after sync is ready.
+It runs with `sudo`.
+
+```bash
+isotty runtime post-install path
+```
+
+Optional services:
+
+```text
+./.isotty/service.yaml
+```
+
+Example:
+
+```yaml
+services:
+  docker: {}
+```
+
+Or update it from the CLI:
+
+```bash
+isotty runtime service enable docker
+isotty runtime service list
+```
+
 Optional GCP VM shape:
 
 ```text

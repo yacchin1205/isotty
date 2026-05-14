@@ -78,11 +78,14 @@ Bootstrap sets up:
 * project-defined packages from `./.isotty/apt.txt`
 * optional Node.js runtime from `./.isotty/node.txt` via NodeSource apt packages
 * optional agent CLIs from `./.isotty/agent.yaml`
+* optional services from `./.isotty/service.yaml`
+* optional post-install script from `/workspace/.isotty/post-install.sh`, executed with `sudo`
 * audit support required by IsoTTY
 
 ## Local State
 
 IsoTTY keeps local VM state under:
+It is written early enough that `isotty down` can still clean up after a failed `up`.
 
 ```text
 ~/.isotty

@@ -59,30 +59,65 @@ func waitForSSH(state State) error {
 	return fmt.Errorf("wait for SSH: %w", lastErr)
 }
 
-func bootstrapWorkspace(state State, debug bool) error {
+func bootstrapWorkspace(state State, cfg Config, debug bool) error {
 	commandParts := []string{
 		"set -euo pipefail",
 		"export DEBIAN_FRONTEND=noninteractive",
 		"sudo mkdir -p /workspace",
 		"sudo chown \"$USER\":\"$(id -gn)\" /workspace",
 	}
-	if len(state.AptPackages) > 0 || needsNodeRuntime(state) {
+	if len(cfg.AptPackages) > 0 || needsNodeRuntime(cfg) {
 		commandParts = append(commandParts, "sudo apt-get update")
 	}
-	if len(state.AptPackages) > 0 {
-		commandParts = append(commandParts, fmt.Sprintf("sudo apt-get install -y %s", shellJoin(state.AptPackages)))
+	if len(cfg.AptPackages) > 0 {
+		commandParts = append(commandParts, fmt.Sprintf("sudo apt-get install -y %s", shellJoin(cfg.AptPackages)))
 	}
-	if needsNodeRuntime(state) {
-		commandParts = append(commandParts, buildNodeInstallScript(state))
+	if needsNodeRuntime(cfg) {
+		commandParts = append(commandParts, buildNodeInstallScript(cfg))
 	}
-	if len(state.Agents) > 0 {
-		agentCommand, err := buildAgentInstallScript(state)
+	if len(cfg.Agents) > 0 {
+		agentCommand, err := buildAgentInstallScript(cfg)
 		if err != nil {
 			return err
 		}
 		commandParts = append(commandParts, agentCommand)
 	}
+	if len(cfg.Services) > 0 {
+		serviceCommand, err := buildServiceInstallScript(cfg)
+		if err != nil {
+			return err
+		}
+		commandParts = append(commandParts, serviceCommand)
+	}
 	command := strings.Join(commandParts, " && ")
+	return RunCommand("", os.Environ(), debug, "gcloud",
+		"compute", "ssh", state.InstanceName,
+		"--project", state.GCPProjectID,
+		"--zone", state.Zone,
+		"--command", command,
+	)
+}
+
+func buildServiceInstallScript(cfg Config) (string, error) {
+	commands := make([]string, 0, len(cfg.Services))
+	for _, service := range cfg.Services {
+		switch service {
+		case "docker":
+			commands = append(commands,
+				`curl -fsSL https://get.docker.com -o /tmp/get-docker.sh`,
+				`sudo sh /tmp/get-docker.sh`,
+				`sudo systemctl enable --now docker`,
+				`sudo usermod -aG docker "$USER"`,
+			)
+		default:
+			return "", fmt.Errorf("unsupported service %q", service)
+		}
+	}
+	return strings.Join(commands, " && "), nil
+}
+
+func runPostInstallScript(state State, debug bool) error {
+	command := fmt.Sprintf("cd %s && sudo bash ./.isotty/post-install.sh", state.RemoteWorkspacePath)
 	return RunCommand("", os.Environ(), debug, "gcloud",
 		"compute", "ssh", state.InstanceName,
 		"--project", state.GCPProjectID,

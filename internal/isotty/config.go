@@ -28,10 +28,15 @@ type Config struct {
 	AptPackages  []string
 	NodeVersion  string
 	Agents       []string
+	Services     []string
 }
 
 type agentConfig struct {
 	Agents map[string]map[string]any `json:"agents"`
+}
+
+type serviceConfig struct {
+	Services map[string]map[string]any `json:"services"`
 }
 
 type vmConfig struct {
@@ -79,6 +84,10 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	services, err := loadServices(projectPath)
+	if err != nil {
+		return Config{}, err
+	}
 	vmShape, err := loadVMConfig(projectPath)
 	if err != nil {
 		return Config{}, err
@@ -97,6 +106,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		AptPackages:  aptPackages,
 		NodeVersion:  nodeVersion,
 		Agents:       agents,
+		Services:     services,
 	}, nil
 }
 
@@ -215,6 +225,37 @@ func loadAgents(projectPath string) ([]string, error) {
 	return agents, nil
 }
 
+func loadServices(projectPath string) ([]string, error) {
+	configPath := serviceConfigPath(projectPath)
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", configPath, err)
+	}
+
+	var cfg serviceConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", configPath, err)
+	}
+	if len(cfg.Services) == 0 {
+		return nil, fmt.Errorf("%s does not define any services", configPath)
+	}
+
+	services := make([]string, 0, len(cfg.Services))
+	for name := range cfg.Services {
+		switch name {
+		case "docker":
+			services = append(services, name)
+		default:
+			return nil, fmt.Errorf("%s contains unsupported service %q", configPath, name)
+		}
+	}
+	sort.Strings(services)
+	return services, nil
+}
+
 func loadVMConfig(projectPath string) (gcpVMConfig, error) {
 	configPath := vmConfigPath(projectPath)
 	data, err := os.ReadFile(configPath)
@@ -282,6 +323,26 @@ func agentConfigPath(projectPath string) string {
 	return filepath.Join(projectPath, ".isotty", "agent.yaml")
 }
 
+func serviceConfigPath(projectPath string) string {
+	return filepath.Join(projectPath, ".isotty", "service.yaml")
+}
+
 func vmConfigPath(projectPath string) string {
 	return filepath.Join(projectPath, ".isotty", "vm.yaml")
+}
+
+func postInstallScriptPath(projectPath string) string {
+	return filepath.Join(projectPath, ".isotty", "post-install.sh")
+}
+
+func hasPostInstallScript(projectPath string) (bool, error) {
+	path := postInstallScriptPath(projectPath)
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("stat %s: %w", path, err)
 }

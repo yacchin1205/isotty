@@ -12,33 +12,33 @@ var agentPackages = map[string]string{
 	"codex":  "@openai/codex",
 }
 
-func needsNodeRuntime(state State) bool {
-	return state.NodeVersion != "" || len(state.Agents) > 0
+func needsNodeRuntime(cfg Config) bool {
+	return cfg.NodeVersion != "" || len(cfg.Agents) > 0
 }
 
-func resolvedNodeVersion(state State) string {
-	if state.NodeVersion != "" {
-		return state.NodeVersion
+func resolvedNodeVersion(cfg Config) string {
+	if cfg.NodeVersion != "" {
+		return cfg.NodeVersion
 	}
 	return defaultNodeMajorVersion
 }
 
-func buildNodeInstallScript(state State) string {
+func buildNodeInstallScript(cfg Config) string {
 	return fmt.Sprintf(`NODE_MAJOR=%s
 if [ ! -f /etc/apt/sources.list.d/nodesource.list ] || ! grep -q "node_${NODE_MAJOR}\.x" /etc/apt/sources.list.d/nodesource.list; then
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" -o /tmp/nodesource_setup.sh
   sudo -E bash /tmp/nodesource_setup.sh
 fi
-sudo apt-get install -y nodejs`, shellJoin([]string{resolvedNodeVersion(state)}))
+sudo apt-get install -y nodejs`, shellJoin([]string{resolvedNodeVersion(cfg)}))
 }
 
-func buildAgentInstallScript(state State) (string, error) {
-	if len(state.Agents) == 0 {
+func buildAgentInstallScript(cfg Config) (string, error) {
+	if len(cfg.Agents) == 0 {
 		return "", nil
 	}
 
-	packages := make([]string, 0, len(state.Agents))
-	for _, agent := range state.Agents {
+	packages := make([]string, 0, len(cfg.Agents))
+	for _, agent := range cfg.Agents {
 		pkg, ok := agentPackages[agent]
 		if !ok {
 			return "", fmt.Errorf("unsupported agent %q", agent)
@@ -49,15 +49,15 @@ func buildAgentInstallScript(state State) (string, error) {
 	return fmt.Sprintf("sudo env PATH=/usr/local/bin:$PATH npm install -g %s", shellJoin(packages)), nil
 }
 
-func bootstrapLabel(state State) string {
+func bootstrapLabel(cfg Config) string {
 	parts := []string{"Bootstrapping workspace"}
-	if len(state.AptPackages) > 0 {
+	if len(cfg.AptPackages) > 0 {
 		parts = append(parts, "installing packages")
 	}
-	if needsNodeRuntime(state) {
+	if needsNodeRuntime(cfg) {
 		parts = append(parts, "installing Node.js")
 	}
-	if len(state.Agents) > 0 {
+	if len(cfg.Agents) > 0 {
 		parts = append(parts, "installing agents")
 	}
 	return strings.Join(parts, " and ")

@@ -6,11 +6,11 @@ import (
 )
 
 func TestBuildAgentInstallScript(t *testing.T) {
-	state := State{
+	cfg := Config{
 		Agents: []string{"claude", "codex"},
 	}
 
-	command, err := buildAgentInstallScript(state)
+	command, err := buildAgentInstallScript(cfg)
 	if err != nil {
 		t.Fatalf("buildAgentInstallScript() error = %v", err)
 	}
@@ -23,16 +23,16 @@ func TestBuildAgentInstallScript(t *testing.T) {
 }
 
 func TestResolvedNodeVersion(t *testing.T) {
-	if version := resolvedNodeVersion(State{}); version != defaultNodeMajorVersion {
+	if version := resolvedNodeVersion(Config{}); version != defaultNodeMajorVersion {
 		t.Fatalf("version = %q, want %q", version, defaultNodeMajorVersion)
 	}
-	if version := resolvedNodeVersion(State{NodeVersion: "22"}); version != "22" {
+	if version := resolvedNodeVersion(Config{NodeVersion: "22"}); version != "22" {
 		t.Fatalf("version = %q, want 22", version)
 	}
 }
 
 func TestBuildNodeInstallScript(t *testing.T) {
-	script := buildNodeInstallScript(State{NodeVersion: "22"})
+	script := buildNodeInstallScript(Config{NodeVersion: "22"})
 	if !strings.Contains(script, "https://deb.nodesource.com/setup_${NODE_MAJOR}.x") {
 		t.Fatalf("script = %q, want NodeSource setup URL", script)
 	}
