@@ -7,16 +7,21 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	defaultGCPMachineType  = "e2-standard-4"
-	defaultGCPDiskSize     = "50GB"
-	defaultGCPImageProject = "ubuntu-os-cloud"
-	defaultGCPImageFamily  = "ubuntu-2404-lts-amd64"
+	defaultGCPMachineType     = "e2-standard-4"
+	defaultGCPDiskSize        = "50GB"
+	defaultGCPImageProject    = "ubuntu-os-cloud"
+	defaultGCPImageFamily     = "ubuntu-2404-lts-amd64"
+	defaultGCPWorkspacePath   = "/workspace"
+	gcpWorkspaceMetadataKey   = "isotty-workspace-path"
+	gcpProjectHashMetadataKey = "isotty-project-hash"
 )
 
 type GCPConfig struct {
@@ -41,6 +46,12 @@ type GCPConnection struct {
 	Zone          string
 	InstanceName  string
 	SSHConfigPath string
+}
+
+type GCPID struct {
+	ProjectID    string
+	Zone         string
+	InstanceName string
 }
 
 func normalizeGCPVMConfig(cfg VMConfig) (VMConfig, error) {
@@ -89,6 +100,30 @@ func RunGCP(projectPath string, args []string, stdout, stderr io.Writer) error {
 	default:
 		return fmt.Errorf("unknown vm gcp subcommand %q", args[0])
 	}
+}
+
+func FormatGCPID(projectID, zone, instanceName string) string {
+	return strings.Join([]string{"gcp", projectID, zone, instanceName}, ":")
+}
+
+func ParseGCPID(value string) (GCPID, error) {
+	parts := strings.Split(value, ":")
+	if len(parts) != 4 {
+		return GCPID{}, fmt.Errorf("invalid GCP target id %q", value)
+	}
+	if parts[0] != "gcp" {
+		return GCPID{}, fmt.Errorf("unsupported target provider %q", parts[0])
+	}
+	for index, part := range parts[1:] {
+		if part == "" {
+			return GCPID{}, fmt.Errorf("invalid GCP target id %q: empty field at index %d", value, index+1)
+		}
+	}
+	return GCPID{
+		ProjectID:    parts[1],
+		Zone:         parts[2],
+		InstanceName: parts[3],
+	}, nil
 }
 
 var runGcloud = func(debug bool, args ...string) error {
@@ -150,6 +185,13 @@ var gcloudExitCode = func(err error) int {
 
 func CreateGCPInstance(spec GCPInstanceSpec, instanceName string, debug bool) error {
 	labels := fmt.Sprintf("app=isotty,project_hash=%s,backend=vm", spec.ProjectHash)
+	metadata := fmt.Sprintf(
+		"%s=%s,%s=%s",
+		gcpWorkspaceMetadataKey,
+		defaultGCPWorkspacePath,
+		gcpProjectHashMetadataKey,
+		spec.ProjectHash,
+	)
 	return runGcloud(debug,
 		"compute", "instances", "create", instanceName,
 		"--quiet",
@@ -160,6 +202,7 @@ func CreateGCPInstance(spec GCPInstanceSpec, instanceName string, debug bool) er
 		"--image-family", spec.ImageFamily,
 		"--image-project", spec.ImageProject,
 		"--labels", labels,
+		"--metadata", metadata,
 	)
 }
 
@@ -235,6 +278,59 @@ func DeleteGCPInstance(conn GCPConnection, debug bool) error {
 		"--quiet",
 		"--project", conn.ProjectID,
 		"--zone", conn.Zone,
+	)
+}
+
+func GetGCPWorkspacePath(conn GCPConnection) (string, error) {
+	output, err := captureGCPMetadata(conn, gcpWorkspaceMetadataKey)
+	if err != nil {
+		return "", err
+	}
+	workspacePath := strings.TrimSpace(output)
+	if workspacePath == "" {
+		return "", fmt.Errorf("instance %s does not define %s metadata", conn.InstanceName, gcpWorkspaceMetadataKey)
+	}
+	return workspacePath, nil
+}
+
+func GetGCPProjectHash(conn GCPConnection) (string, error) {
+	output, err := captureGCPMetadata(conn, gcpProjectHashMetadataKey)
+	if err != nil {
+		return "", err
+	}
+	projectHash := strings.TrimSpace(output)
+	if projectHash == "" {
+		return "", fmt.Errorf("instance %s does not define %s metadata", conn.InstanceName, gcpProjectHashMetadataKey)
+	}
+	return projectHash, nil
+}
+
+func FetchGCPProjectFile(conn GCPConnection, pathInWorkspace string) ([]byte, error) {
+	cleanPath := path.Clean(pathInWorkspace)
+	if cleanPath == "." || cleanPath == ".." || strings.HasPrefix(cleanPath, "../") || path.IsAbs(cleanPath) {
+		return nil, fmt.Errorf("invalid workspace-relative path %q", pathInWorkspace)
+	}
+	workspacePath, err := GetGCPWorkspacePath(conn)
+	if err != nil {
+		return nil, err
+	}
+	remotePath := path.Join(workspacePath, cleanPath)
+	output, err := CaptureGCPRemoteCommand(conn, "cat "+strconv.Quote(remotePath))
+	if err != nil {
+		if GCPCommandExitCode(err) == 1 && strings.Contains(err.Error(), "No such file or directory") {
+			return nil, os.ErrNotExist
+		}
+		return nil, err
+	}
+	return []byte(output), nil
+}
+
+func captureGCPMetadata(conn GCPConnection, key string) (string, error) {
+	return captureGcloud(
+		"compute", "instances", "describe", conn.InstanceName,
+		"--project", conn.ProjectID,
+		"--zone", conn.Zone,
+		fmt.Sprintf("--format=get(metadata.items.%s)", key),
 	)
 }
 

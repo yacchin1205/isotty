@@ -13,6 +13,8 @@ isotty down
 
 * `up` creates or reuses one VM per project
 * `attach` opens an interactive shell with `gcloud compute ssh`
+* `id` prints a stable VM target id for remote attach
+* `attach --target ...` attaches without local project state
 * `down` deletes the VM and removes local state
 
 ## Identity

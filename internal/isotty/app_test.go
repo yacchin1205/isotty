@@ -3,12 +3,14 @@ package isotty
 import (
 	"strings"
 	"testing"
+
+	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
 
 func TestBuildAttachSSHArgs(t *testing.T) {
-	state := State{
+	conn := vmcfg.GCPConnection{
 		InstanceName: "isotty-abc",
-		GCPProjectID: "demo-project",
+		ProjectID:    "demo-project",
 		Zone:         "us-central1-f",
 	}
 	forwardCfg := ForwardConfig{
@@ -17,7 +19,7 @@ func TestBuildAttachSSHArgs(t *testing.T) {
 		},
 	}
 
-	args := buildAttachSSHArgs(state, forwardCfg)
+	args := buildAttachSSHArgs(conn, "/workspace", forwardCfg)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "--ssh-flag=-t") {
 		t.Fatalf("args = %v, want tty flag", args)

@@ -15,10 +15,9 @@ import (
 )
 
 const (
-	defaultSyncMode      = "two-way-safe"
-	oneWaySafeSyncMode   = "one-way-safe"
-	twoWaySafeSyncMode   = "two-way-safe"
-	defaultWorkspacePath = "/workspace"
+	defaultSyncMode    = "two-way-safe"
+	oneWaySafeSyncMode = "one-way-safe"
+	twoWaySafeSyncMode = "two-way-safe"
 )
 
 var supportedSyncModes = map[string]struct{}{
@@ -56,6 +55,8 @@ func (a *App) Run(args []string) error {
 	switch args[0] {
 	case "up":
 		return a.runUp(args[1:])
+	case "id":
+		return a.runID(args[1:])
 	case "attach":
 		return a.runAttach(args[1:])
 	case "forward":
@@ -83,7 +84,8 @@ func (a *App) Run(args []string) error {
 func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "Usage:")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe] [--no-attach]")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] attach")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] id")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] down")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] audit logs [-f]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward add <name> --local-port <port> --remote-port <port>")
@@ -105,6 +107,28 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] vm gcp set [--machine-type <type>] [--boot-disk-size <size>] [--image-family <family>] [--image-project <project>]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] status")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] version")
+}
+
+func (a *App) runID(args []string) error {
+	fs := flag.NewFlagSet("id", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("id does not accept arguments")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	state, err := LoadStateForProject(projectPath)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(a.stdout, vmcfg.FormatGCPID(state.GCPProjectID, state.Zone, state.InstanceName))
+	return nil
 }
 
 func (a *App) runUp(args []string) error {
@@ -198,7 +222,11 @@ func (a *App) runAuditLogs(args []string) error {
 		return a.followAuditLogs(state)
 	}
 
-	events, err := runtimecfg.QueryAuditLogs(a.auditTarget(state), "boot")
+	events, err := runtimecfg.QueryAuditLogs(a.auditTarget(vmcfg.GCPConnection{
+		ProjectID:    state.GCPProjectID,
+		Zone:         state.Zone,
+		InstanceName: state.InstanceName,
+	}), "boot")
 	if err != nil {
 		return err
 	}
@@ -209,11 +237,15 @@ func (a *App) runAuditLogs(args []string) error {
 func (a *App) runAttach(args []string) error {
 	fs := flag.NewFlagSet("attach", flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
+	targetID := fs.String("target", "", "attach to a remote IsoTTY target id")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("attach does not accept arguments")
+	}
+	if *targetID != "" {
+		return a.attachToTarget(*targetID)
 	}
 
 	projectPath, err := filepath.Abs(".")
@@ -223,10 +255,48 @@ func (a *App) runAttach(args []string) error {
 
 	state, err := LoadStateForProject(projectPath)
 	if err != nil {
+		if IsStateNotFoundError(err) {
+			return fmt.Errorf("%w\nhint: use `isotty attach --target <id>` with an id from `isotty id`", err)
+		}
 		return err
 	}
 
 	return a.attachToState(projectPath, state)
+}
+
+func (a *App) attachToTarget(targetID string) error {
+	target, err := vmcfg.ParseGCPID(targetID)
+	if err != nil {
+		return err
+	}
+	conn := vmcfg.GCPConnection{
+		ProjectID:    target.ProjectID,
+		Zone:         target.Zone,
+		InstanceName: target.InstanceName,
+	}
+
+	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
+	data, err := vmcfg.FetchGCPProjectFile(conn, ".isotty/forward.yaml")
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	} else {
+		forwardCfg, err = ParseForwardConfig(data)
+		if err != nil {
+			return fmt.Errorf("parse remote forward config: %w", err)
+		}
+	}
+
+	workspacePath, err := vmcfg.GetGCPWorkspacePath(conn)
+	if err != nil {
+		return err
+	}
+	projectHash, err := vmcfg.GetGCPProjectHash(conn)
+	if err != nil {
+		return err
+	}
+	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg)
 }
 
 func (a *App) attachToState(projectPath string, state State) error {
@@ -235,20 +305,34 @@ func (a *App) attachToState(projectPath string, state State) error {
 		return err
 	}
 
-	sshArgs := buildAttachSSHArgs(state, forwardCfg)
-	names := SortedForwardNames(forwardCfg)
-
-	if len(names) > 0 {
-		a.phase("Attaching to %s with %d forwards", state.InstanceName, len(names))
-	} else {
-		a.phase("Attaching to %s", state.InstanceName)
+	conn := vmcfg.GCPConnection{
+		ProjectID:    state.GCPProjectID,
+		Zone:         state.Zone,
+		InstanceName: state.InstanceName,
 	}
-
-	startEvent, err := runtimecfg.NewAttachVMEvent(state.ProjectHash, "attach-start", len(names), "")
+	workspacePath, err := vmcfg.GetGCPWorkspacePath(conn)
 	if err != nil {
 		return err
 	}
-	if err := runtimecfg.RecordVMEvent(a.auditTarget(state), startEvent, a.debug); err != nil {
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg)
+}
+
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg ForwardConfig) error {
+	sshArgs := buildAttachSSHArgs(conn, workspacePath, forwardCfg)
+	names := SortedForwardNames(forwardCfg)
+
+	if len(names) > 0 {
+		a.phase("Attaching to %s with %d forwards", conn.InstanceName, len(names))
+	} else {
+		a.phase("Attaching to %s", conn.InstanceName)
+	}
+
+	startEvent, err := runtimecfg.NewAttachVMEvent(projectHash, "attach-start", len(names), "")
+	if err != nil {
+		return err
+	}
+	target := a.auditTarget(conn)
+	if err := runtimecfg.RecordVMEvent(target, startEvent, a.debug); err != nil {
 		return fmt.Errorf("record attach-start event: %w", err)
 	}
 
@@ -258,14 +342,14 @@ func (a *App) attachToState(projectPath string, state State) error {
 	if attachErr != nil {
 		result = attachErr.Error()
 	}
-	endEvent, err := runtimecfg.NewAttachVMEvent(state.ProjectHash, "attach-end", len(names), result)
+	endEvent, err := runtimecfg.NewAttachVMEvent(projectHash, "attach-end", len(names), result)
 	if err != nil {
 		if attachErr != nil {
 			return fmt.Errorf("attach session failed: %v; resolve attach-end event context: %w", attachErr, err)
 		}
 		return err
 	}
-	if err := runtimecfg.RecordVMEvent(a.auditTarget(state), endEvent, a.debug); err != nil {
+	if err := runtimecfg.RecordVMEvent(target, endEvent, a.debug); err != nil {
 		if attachErr != nil {
 			return fmt.Errorf("attach session failed: %v; record attach-end event: %w", attachErr, err)
 		}
@@ -274,18 +358,18 @@ func (a *App) attachToState(projectPath string, state State) error {
 	return attachErr
 }
 
-func buildAttachSSHArgs(state State, forwardCfg ForwardConfig) []string {
+func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg ForwardConfig) []string {
 	sshArgs := []string{
-		"compute", "ssh", state.InstanceName,
-		"--project", state.GCPProjectID,
-		"--zone", state.Zone,
+		"compute", "ssh", conn.InstanceName,
+		"--project", conn.ProjectID,
+		"--zone", conn.Zone,
 		"--ssh-flag=-t",
 	}
 	for _, name := range SortedForwardNames(forwardCfg) {
 		forward := forwardCfg.Forwards[name]
 		sshArgs = append(sshArgs, fmt.Sprintf("--ssh-flag=-L 127.0.0.1:%d:127.0.0.1:%d", forward.LocalPort, forward.RemotePort))
 	}
-	sshArgs = append(sshArgs, "--command", fmt.Sprintf("cd %s && exec ${SHELL:-/bin/bash} -l", defaultWorkspacePath))
+	sshArgs = append(sshArgs, "--command", fmt.Sprintf("cd %s && exec ${SHELL:-/bin/bash} -l", workspacePath))
 	return sshArgs
 }
 
@@ -610,8 +694,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	}); err != nil {
 		return State{}, err
 	}
+	workspacePath, err := vmcfg.GetGCPWorkspacePath(vmcfg.GCPConnection{
+		ProjectID:    state.GCPProjectID,
+		Zone:         state.Zone,
+		InstanceName: state.InstanceName,
+	})
+	if err != nil {
+		return State{}, err
+	}
+	state.RemoteWorkspacePath = workspacePath
 	if created {
-		command, err := runtimecfg.BootstrapCommand(cfg.Runtime)
+		command, err := runtimecfg.BootstrapCommand(cfg.Runtime, state.RemoteWorkspacePath)
 		if err != nil {
 			return State{}, err
 		}
@@ -643,7 +736,11 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		return State{}, err
 	}
 	if err := a.runPhase("Configuring audit", func() error {
-		return runtimecfg.ConfigureAudit(a.auditTarget(state), a.debug)
+		return runtimecfg.ConfigureAudit(a.auditTarget(vmcfg.GCPConnection{
+			ProjectID:    state.GCPProjectID,
+			Zone:         state.Zone,
+			InstanceName: state.InstanceName,
+		}), a.debug)
 	}); err != nil {
 		return State{}, err
 	}
@@ -709,7 +806,11 @@ func (a *App) runPhase(format string, fn func() error, args ...any) error {
 func (a *App) followAuditLogs(state State) error {
 	seen := map[string]struct{}{}
 	for {
-		events, err := runtimecfg.QueryAuditLogs(a.auditTarget(state), "recent")
+		events, err := runtimecfg.QueryAuditLogs(a.auditTarget(vmcfg.GCPConnection{
+			ProjectID:    state.GCPProjectID,
+			Zone:         state.Zone,
+			InstanceName: state.InstanceName,
+		}), "recent")
 		if err != nil {
 			return err
 		}
@@ -746,12 +847,7 @@ func (a *App) printAuditEvent(event runtimecfg.AuditEvent) {
 	}
 }
 
-func (a *App) auditTarget(state State) runtimecfg.RemoteTarget {
-	conn := vmcfg.GCPConnection{
-		ProjectID:    state.GCPProjectID,
-		Zone:         state.Zone,
-		InstanceName: state.InstanceName,
-	}
+func (a *App) auditTarget(conn vmcfg.GCPConnection) runtimecfg.RemoteTarget {
 	return runtimecfg.RemoteTarget{
 		Run: func(command string, debug bool) error {
 			return vmcfg.RunGCPRemoteCommand(conn, command, debug)

@@ -9,17 +9,17 @@ import (
 )
 
 type State struct {
-	ProjectPath        string `json:"project_path"`
-	ProjectHash        string `json:"project_hash"`
-	Backend            string `json:"backend"`
-	GCPProjectID       string `json:"gcp_project_id"`
-	Zone               string `json:"zone"`
-	InstanceName       string `json:"instance_name"`
-	SyncMode           string `json:"sync_mode"`
-	BootstrapCompleted bool   `json:"bootstrap_completed,omitempty"`
+	ProjectPath         string `json:"project_path"`
+	ProjectHash         string `json:"project_hash"`
+	Backend             string `json:"backend"`
+	GCPProjectID        string `json:"gcp_project_id"`
+	Zone                string `json:"zone"`
+	InstanceName        string `json:"instance_name"`
+	SyncMode            string `json:"sync_mode"`
+	BootstrapCompleted  bool   `json:"bootstrap_completed,omitempty"`
+	RemoteWorkspacePath string `json:"remote_workspace_path"`
 
 	SessionName          string `json:"-"`
-	RemoteWorkspacePath  string `json:"-"`
 	MutagenDataDirectory string `json:"-"`
 	SSHConfigPath        string `json:"-"`
 	SSHWrapperDir        string `json:"-"`
@@ -106,6 +106,10 @@ func LoadStateForProject(projectPath string) (State, error) {
 	return state, nil
 }
 
+func IsStateNotFoundError(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "no IsoTTY environment found for ")
+}
+
 func DeleteState(projectHash string) error {
 	path, err := stateFilePath(projectHash)
 	if err != nil {
@@ -127,7 +131,6 @@ func stateFilePath(projectHash string) (string, error) {
 
 func (s *State) populateDerivedFields(homeDir string) {
 	s.SessionName = "isotty-" + s.ProjectHash
-	s.RemoteWorkspacePath = defaultWorkspacePath
 	s.MutagenDataDirectory = filepath.Join(homeDir, "mutagen")
 	s.SSHConfigPath = filepath.Join(homeDir, "ssh", "config")
 	s.SSHWrapperDir = filepath.Join(homeDir, "ssh", "bin")

@@ -29,9 +29,17 @@ func LoadForwardConfig(projectPath string) (ForwardConfig, error) {
 		return ForwardConfig{}, fmt.Errorf("read %s: %w", path, err)
 	}
 
+	cfg, err := ParseForwardConfig(data)
+	if err != nil {
+		return ForwardConfig{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+func ParseForwardConfig(data []byte) (ForwardConfig, error) {
 	var cfg ForwardConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return ForwardConfig{}, fmt.Errorf("parse %s: %w", path, err)
+		return ForwardConfig{}, err
 	}
 	if cfg.Forwards == nil {
 		cfg.Forwards = map[string]Forward{}

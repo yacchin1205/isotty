@@ -64,3 +64,13 @@ func TestAddForwardAndRemoveForward(t *testing.T) {
 		t.Fatalf("forwardConfigPath() should be valid: %v", err)
 	}
 }
+
+func TestParseForwardConfig(t *testing.T) {
+	cfg, err := ParseForwardConfig([]byte("forwards:\n  web:\n    local_port: 8080\n    remote_port: 8080\n"))
+	if err != nil {
+		t.Fatalf("ParseForwardConfig() error = %v", err)
+	}
+	if cfg.Forwards["web"].LocalPort != 8080 {
+		t.Fatalf("LocalPort = %d", cfg.Forwards["web"].LocalPort)
+	}
+}

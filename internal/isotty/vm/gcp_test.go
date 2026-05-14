@@ -233,6 +233,9 @@ func TestCreateInstanceBuildsExpectedCommand(t *testing.T) {
 	if !strings.Contains(joined, "--labels app=isotty,project_hash=abc123,backend=vm") {
 		t.Fatalf("args = %v", gotArgs)
 	}
+	if !strings.Contains(joined, "--metadata isotty-workspace-path=/workspace,isotty-project-hash=abc123") {
+		t.Fatalf("args = %v", gotArgs)
+	}
 }
 
 func TestInstanceExistsTreatsNotFoundAsFalse(t *testing.T) {
@@ -253,5 +256,87 @@ func TestInstanceExistsTreatsNotFoundAsFalse(t *testing.T) {
 	}
 	if exists {
 		t.Fatal("GCPInstanceExists() = true, want false")
+	}
+}
+
+func TestFormatAndParseGCPID(t *testing.T) {
+	value := FormatGCPID("demo-project", "us-central1-f", "isotty-abc123")
+	if value != "gcp:demo-project:us-central1-f:isotty-abc123" {
+		t.Fatalf("FormatGCPID() = %q", value)
+	}
+	target, err := ParseGCPID(value)
+	if err != nil {
+		t.Fatalf("ParseGCPID() error = %v", err)
+	}
+	if target.InstanceName != "isotty-abc123" {
+		t.Fatalf("target = %#v", target)
+	}
+}
+
+func TestGetGCPWorkspacePath(t *testing.T) {
+	originalCaptureGcloud := captureGcloud
+	captureGcloud = func(args ...string) (string, error) {
+		return "/workspace\n", nil
+	}
+	t.Cleanup(func() { captureGcloud = originalCaptureGcloud })
+
+	workspacePath, err := GetGCPWorkspacePath(GCPConnection{
+		ProjectID:    "demo-project",
+		Zone:         "us-central1-f",
+		InstanceName: "isotty-abc123",
+	})
+	if err != nil {
+		t.Fatalf("GetGCPWorkspacePath() error = %v", err)
+	}
+	if workspacePath != "/workspace" {
+		t.Fatalf("workspacePath = %q", workspacePath)
+	}
+}
+
+func TestGetGCPProjectHash(t *testing.T) {
+	originalCaptureGcloud := captureGcloud
+	captureGcloud = func(args ...string) (string, error) {
+		return "abc123\n", nil
+	}
+	t.Cleanup(func() { captureGcloud = originalCaptureGcloud })
+
+	projectHash, err := GetGCPProjectHash(GCPConnection{
+		ProjectID:    "demo-project",
+		Zone:         "us-central1-f",
+		InstanceName: "isotty-abc123",
+	})
+	if err != nil {
+		t.Fatalf("GetGCPProjectHash() error = %v", err)
+	}
+	if projectHash != "abc123" {
+		t.Fatalf("projectHash = %q", projectHash)
+	}
+}
+
+func TestFetchGCPProjectFile(t *testing.T) {
+	originalCaptureGcloud := captureGcloud
+	captureGcloud = func(args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "metadata.items.isotty-workspace-path"):
+			return "/workspace\n", nil
+		case strings.Contains(joined, `cat "/workspace/.isotty/forward.yaml"`):
+			return "forwards:\n  web:\n    local_port: 8080\n    remote_port: 8080\n", nil
+		default:
+			return "", errors.New("unexpected command")
+		}
+	}
+	t.Cleanup(func() { captureGcloud = originalCaptureGcloud })
+
+	data, err := FetchGCPProjectFile(GCPConnection{
+		ProjectID:    "demo-project",
+		Zone:         "us-central1-f",
+		InstanceName: "isotty-abc123",
+	}, ".isotty/forward.yaml")
+	if err != nil {
+		t.Fatalf("FetchGCPProjectFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), "local_port: 8080") {
+		t.Fatalf("data = %q", string(data))
 	}
 }

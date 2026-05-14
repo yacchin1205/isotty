@@ -8,13 +8,14 @@ import (
 
 func TestBuildMutagenCreateArgs(t *testing.T) {
 	state := State{
-		ProjectPath:  filepath.Clean("/tmp/project"),
-		ProjectHash:  "abc12345def0",
-		Backend:      "gcp-vm",
-		SyncMode:     defaultSyncMode,
-		InstanceName: "isotty-abc12345def0",
-		GCPProjectID: "demo-project",
-		Zone:         "us-central1-f",
+		ProjectPath:         filepath.Clean("/tmp/project"),
+		ProjectHash:         "abc12345def0",
+		Backend:             "gcp-vm",
+		SyncMode:            defaultSyncMode,
+		InstanceName:        "isotty-abc12345def0",
+		GCPProjectID:        "demo-project",
+		Zone:                "us-central1-f",
+		RemoteWorkspacePath: "/workspace",
 	}
 	state.populateDerivedFields("/tmp/isotty-home")
 

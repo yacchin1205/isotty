@@ -39,8 +39,8 @@ func Load(projectPath string) (RuntimeConfig, error) {
 	}, nil
 }
 
-func BootstrapCommand(cfg RuntimeConfig) (string, error) {
-	parts := WorkspaceBootstrapPrefix()
+func BootstrapCommand(cfg RuntimeConfig, workspacePath string) (string, error) {
+	parts := WorkspaceBootstrapPrefix(workspacePath)
 	if len(cfg.AptPackages) > 0 || NeedsNodeRuntime(cfg) {
 		parts = append(parts, "sudo apt-get update")
 	}

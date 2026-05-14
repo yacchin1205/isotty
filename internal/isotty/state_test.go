@@ -4,9 +4,10 @@ import "testing"
 
 func TestRemoteEndpoint(t *testing.T) {
 	state := State{
-		InstanceName: "isotty-abc123",
-		Zone:         "asia-northeast1-b",
-		GCPProjectID: "demo-project",
+		InstanceName:        "isotty-abc123",
+		Zone:                "asia-northeast1-b",
+		GCPProjectID:        "demo-project",
+		RemoteWorkspacePath: "/workspace",
 	}
 	state.populateDerivedFields("/tmp/isotty-home")
 
@@ -25,9 +26,6 @@ func TestPopulateDerivedFields(t *testing.T) {
 
 	if state.SessionName != "isotty-abc12345def0" {
 		t.Fatalf("SessionName = %q", state.SessionName)
-	}
-	if state.RemoteWorkspacePath != "/workspace" {
-		t.Fatalf("RemoteWorkspacePath = %q", state.RemoteWorkspacePath)
 	}
 	if state.MutagenDataDirectory != "/tmp/isotty-home/mutagen" {
 		t.Fatalf("MutagenDataDirectory = %q", state.MutagenDataDirectory)

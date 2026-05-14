@@ -57,6 +57,12 @@ Prepare the environment without attaching:
 isotty up --no-attach
 ```
 
+Attach later when you are ready to work in the VM. This also enables any configured port forwards:
+
+```bash
+isotty attach
+```
+
 Destroy the environment:
 
 ```bash
@@ -70,6 +76,16 @@ isotty status
 isotty audit logs
 isotty audit logs -f
 isotty --debug up
+```
+
+## Remote Attach
+
+`isotty id` prints a stable VM target id for the current environment.
+Use `isotty attach --target ...` to attach from outside the original project directory.
+
+```bash
+isotty id
+isotty attach --target <isotty-id>
 ```
 
 ## Project Config
@@ -88,6 +104,8 @@ jq
 ```
 
 Port forwards:
+
+These forwards are applied while attached, so services running in the VM are reachable on local `localhost` ports.
 
 ```bash
 isotty forward add web --local-port 8080 --remote-port 8080
