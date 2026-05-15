@@ -45,6 +45,7 @@ type GCPConnection struct {
 	ProjectID     string
 	Zone          string
 	InstanceName  string
+	User          string
 	SSHConfigPath string
 }
 
@@ -227,7 +228,7 @@ func WaitForGCPSSH(conn GCPConnection) error {
 	var lastErr error
 	for time.Now().Before(deadline) {
 		_, err := captureGcloud(
-			"compute", "ssh", conn.InstanceName,
+			"compute", "ssh", gcpSSHInstanceTarget(conn),
 			"--project", conn.ProjectID,
 			"--zone", conn.Zone,
 			"--command", "true",
@@ -243,7 +244,7 @@ func WaitForGCPSSH(conn GCPConnection) error {
 
 func RunGCPRemoteCommand(conn GCPConnection, command string, debug bool) error {
 	return runGcloud(debug,
-		"compute", "ssh", conn.InstanceName,
+		"compute", "ssh", gcpSSHInstanceTarget(conn),
 		"--project", conn.ProjectID,
 		"--zone", conn.Zone,
 		"--command", command,
@@ -261,7 +262,7 @@ func RunGCPInteractiveSSH(args ...string) error {
 
 func CaptureGCPRemoteCommand(conn GCPConnection, command string) (string, error) {
 	return captureGcloud(
-		"compute", "ssh", conn.InstanceName,
+		"compute", "ssh", gcpSSHInstanceTarget(conn),
 		"--project", conn.ProjectID,
 		"--zone", conn.Zone,
 		"--command", command,
@@ -436,3 +437,10 @@ func flagProvided(args []string, name string) bool {
 }
 
 func stringPointer(value string) *string { return &value }
+
+func gcpSSHInstanceTarget(conn GCPConnection) string {
+	if conn.User == "" {
+		return conn.InstanceName
+	}
+	return conn.User + "@" + conn.InstanceName
+}

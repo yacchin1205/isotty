@@ -279,6 +279,7 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 		ProjectID:    target.ProjectID,
 		Zone:         target.Zone,
 		InstanceName: target.InstanceName,
+		User:         user,
 	}
 
 	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
@@ -304,7 +305,7 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, user, projectHash, workspacePath, forwardCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg)
 }
 
 func (a *App) attachToState(projectPath string, state State, user string, noForward bool) error {
@@ -321,16 +322,17 @@ func (a *App) attachToState(projectPath string, state State, user string, noForw
 		ProjectID:    state.GCPProjectID,
 		Zone:         state.Zone,
 		InstanceName: state.InstanceName,
+		User:         user,
 	}
 	workspacePath, err := vmcfg.GetGCPWorkspacePath(conn)
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, user, state.ProjectHash, workspacePath, forwardCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg)
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, user, projectHash, workspacePath string, forwardCfg ForwardConfig) error {
-	sshArgs := buildAttachSSHArgs(conn, user, workspacePath, forwardCfg)
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg ForwardConfig) error {
+	sshArgs := buildAttachSSHArgs(conn, workspacePath, forwardCfg)
 	names := SortedForwardNames(forwardCfg)
 
 	if len(names) > 0 {
@@ -370,10 +372,10 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, user, projectHash, 
 	return attachErr
 }
 
-func buildAttachSSHArgs(conn vmcfg.GCPConnection, user, workspacePath string, forwardCfg ForwardConfig) []string {
+func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg ForwardConfig) []string {
 	instanceTarget := conn.InstanceName
-	if user != "" {
-		instanceTarget = user + "@" + instanceTarget
+	if conn.User != "" {
+		instanceTarget = conn.User + "@" + instanceTarget
 	}
 	sshArgs := []string{
 		"compute", "ssh", instanceTarget,

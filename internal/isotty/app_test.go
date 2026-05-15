@@ -19,7 +19,7 @@ func TestBuildAttachSSHArgs(t *testing.T) {
 		},
 	}
 
-	args := buildAttachSSHArgs(conn, "", "/workspace", forwardCfg)
+	args := buildAttachSSHArgs(conn, "/workspace", forwardCfg)
 	joined := strings.Join(args, " ")
 	if strings.Count(joined, "--ssh-flag=-t") != 2 {
 		t.Fatalf("args = %v, want two tty flags", args)
@@ -37,11 +37,12 @@ func TestBuildAttachSSHArgsWithUser(t *testing.T) {
 		InstanceName: "isotty-abc",
 		ProjectID:    "demo-project",
 		Zone:         "us-central1-f",
+		User:         "testuser",
 	}
 
-	args := buildAttachSSHArgs(conn, "yazawa", "/workspace", ForwardConfig{Forwards: map[string]Forward{}})
+	args := buildAttachSSHArgs(conn, "/workspace", ForwardConfig{Forwards: map[string]Forward{}})
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "compute ssh yazawa@isotty-abc") {
+	if !strings.Contains(joined, "compute ssh testuser@isotty-abc") {
 		t.Fatalf("args = %v, want user-qualified instance target", args)
 	}
 }
