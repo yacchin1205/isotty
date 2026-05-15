@@ -1,6 +1,7 @@
 package isotty
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
@@ -382,7 +384,6 @@ func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardC
 		"--project", conn.ProjectID,
 		"--zone", conn.Zone,
 		"--ssh-flag=-t",
-		"--ssh-flag=-t",
 	}
 	for _, name := range SortedForwardNames(forwardCfg) {
 		forward := forwardCfg.Forwards[name]
@@ -494,7 +495,7 @@ func (a *App) runStatus(args []string) error {
 	fmt.Fprintf(a.stdout, "Remote endpoint: %s\n", state.RemoteEndpoint())
 	fmt.Fprintln(a.stdout)
 
-	output, err := CaptureCommand("", state.MutagenEnv(), "mutagen", "sync", "list", "-l", state.SessionName)
+	output, err := describeMutagenSession(state)
 	if err != nil {
 		return fmt.Errorf("query mutagen session: %w", err)
 	}
@@ -658,15 +659,36 @@ func (a *App) printDependencyVersion(name string, args []string) error {
 
 	fmt.Fprintf(a.stdout, "%s: %s\n", name, path)
 
-	output, err := CaptureCommand("", os.Environ(), name, args...)
-	if err != nil {
-		return fmt.Errorf("check %s version: %w", name, err)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := exec.Command(name, args...)
+	cmd.Env = os.Environ()
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf(
+			"check %s version: command failed: %s %s: %w\nstdout:\n%s\nstderr:\n%s",
+			name,
+			name,
+			strings.Join(args, " "),
+			err,
+			strings.TrimRight(stdout.String(), "\n"),
+			strings.TrimRight(stderr.String(), "\n"),
+		)
 	}
+	output := stdout.String()
 
 	fmt.Fprintln(a.stdout, "")
 	fmt.Fprint(a.stdout, output)
 	if len(output) > 0 && output[len(output)-1] != '\n' {
 		fmt.Fprintln(a.stdout, "")
+	}
+	return nil
+}
+
+func requireExecutable(name string) error {
+	if _, err := exec.LookPath(name); err != nil {
+		return fmt.Errorf("%s is required but was not found in PATH", name)
 	}
 	return nil
 }

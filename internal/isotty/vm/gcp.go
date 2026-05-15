@@ -12,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	pty "github.com/aymanbagabas/go-pty"
+	"golang.org/x/term"
 )
 
 const (
@@ -252,12 +255,57 @@ func RunGCPRemoteCommand(conn GCPConnection, command string, debug bool) error {
 }
 
 func RunGCPInteractiveSSH(args ...string) error {
-	cmd := exec.Command("gcloud", args...)
+	terminal, err := pty.New()
+	if err != nil {
+		return fmt.Errorf("create pty: %w", err)
+	}
+	defer terminal.Close()
+
+	var restoreTerminal func() error
+	ttyFile := currentTerminalFile()
+	if ttyFile != nil {
+		fd := int(ttyFile.Fd())
+		oldState, err := term.MakeRaw(fd)
+		if err != nil {
+			return fmt.Errorf("set terminal raw mode: %w", err)
+		}
+		restoreTerminal = func() error {
+			return term.Restore(fd, oldState)
+		}
+		defer restoreTerminal()
+	}
+
+	if width, height, ok := currentTerminalSize(); ok {
+		if err := terminal.Resize(width, height); err != nil {
+			return fmt.Errorf("resize pty: %w", err)
+		}
+	}
+
+	cmd := terminal.Command("gcloud", args...)
 	cmd.Env = os.Environ()
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start interactive ssh: %w", err)
+	}
+
+	go func() {
+		_, _ = io.Copy(terminal, os.Stdin)
+	}()
+	go func() {
+		_, _ = io.Copy(os.Stdout, terminal)
+	}()
+
+	if err := cmd.Wait(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			// Interactive sessions may return 130 after delivering Ctrl+C to the remote process.
+			if exitErr.ExitCode() == 130 {
+				return nil
+			}
+			return fmt.Errorf("interactive ssh failed with exit code %d: %w", exitErr.ExitCode(), err)
+		}
+		return err
+	}
+	return nil
 }
 
 func CaptureGCPRemoteCommand(conn GCPConnection, command string) (string, error) {
@@ -345,6 +393,30 @@ func RefreshGCPSSHConfig(conn GCPConnection, debug bool) error {
 		"--project", conn.ProjectID,
 		"--ssh-config-file", conn.SSHConfigPath,
 	)
+}
+
+func currentTerminalSize() (int, int, bool) {
+	for _, file := range []*os.File{os.Stdin, os.Stdout, os.Stderr} {
+		fd := int(file.Fd())
+		if !term.IsTerminal(fd) {
+			continue
+		}
+		width, height, err := term.GetSize(fd)
+		if err != nil {
+			continue
+		}
+		return width, height, true
+	}
+	return 0, 0, false
+}
+
+func currentTerminalFile() *os.File {
+	for _, file := range []*os.File{os.Stdin, os.Stdout, os.Stderr} {
+		if term.IsTerminal(int(file.Fd())) {
+			return file
+		}
+	}
+	return nil
 }
 
 func runGCPShow(projectPath string, args []string, stdout, stderr io.Writer) error {

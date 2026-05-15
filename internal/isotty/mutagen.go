@@ -1,6 +1,8 @@
 package isotty
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,7 +32,7 @@ func recreateMutagenSession(state State, debug bool) error {
 		return err
 	}
 
-	if err := RunCommand("", state.MutagenEnv(), debug, "mutagen", buildMutagenCreateArgs(state)...); err != nil {
+	if err := runMutagenCommand(state.MutagenEnv(), debug, buildMutagenCreateArgs(state)...); err != nil {
 		return err
 	}
 	return flushMutagenSession(state)
@@ -38,14 +40,14 @@ func recreateMutagenSession(state State, debug bool) error {
 
 func terminateMutagenSession(state State) error {
 	args := []string{"sync", "terminate", "--label-selector", state.MutagenLabelSelector()}
-	output, err := CaptureCommand("", state.MutagenEnv(), "mutagen", args...)
+	output, err := captureMutagenCommand(state.MutagenEnv(), args...)
 	if err == nil {
 		_ = output
 		return nil
 	}
 
 	lower := strings.ToLower(err.Error())
-	if ExitCode(err) == 1 && (strings.Contains(lower, "not found") || strings.Contains(lower, "did not match any sessions")) {
+	if mutagenExitCode(err) == 1 && (strings.Contains(lower, "not found") || strings.Contains(lower, "did not match any sessions")) {
 		return nil
 	}
 	return err
@@ -53,8 +55,12 @@ func terminateMutagenSession(state State) error {
 
 func flushMutagenSession(state State) error {
 	args := []string{"sync", "flush", state.SessionName}
-	_, err := CaptureCommand("", state.MutagenEnv(), "mutagen", args...)
+	_, err := captureMutagenCommand(state.MutagenEnv(), args...)
 	return err
+}
+
+func describeMutagenSession(state State) (string, error) {
+	return captureMutagenCommand(state.MutagenEnv(), "sync", "list", "-l", state.SessionName)
 }
 
 func buildMutagenCreateArgs(state State) []string {
@@ -114,4 +120,61 @@ func requirePath(name string) (string, error) {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func runMutagenCommand(env []string, debug bool, args ...string) error {
+	if debug {
+		cmd := exec.Command("mutagen", args...)
+		cmd.Env = env
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cmd := exec.Command("mutagen", args...)
+	cmd.Env = env
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf(
+			"command failed: mutagen %s: %w\nstdout:\n%s\nstderr:\n%s",
+			strings.Join(args, " "),
+			err,
+			strings.TrimRight(stdout.String(), "\n"),
+			strings.TrimRight(stderr.String(), "\n"),
+		)
+	}
+	return nil
+}
+
+func captureMutagenCommand(env []string, args ...string) (string, error) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cmd := exec.Command("mutagen", args...)
+	cmd.Env = env
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf(
+			"command failed: mutagen %s: %w\nstdout:\n%s\nstderr:\n%s",
+			strings.Join(args, " "),
+			err,
+			strings.TrimRight(stdout.String(), "\n"),
+			strings.TrimRight(stderr.String(), "\n"),
+		)
+	}
+	return stdout.String(), nil
+}
+
+func mutagenExitCode(err error) int {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
 }
