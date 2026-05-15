@@ -19,15 +19,29 @@ func TestBuildAttachSSHArgs(t *testing.T) {
 		},
 	}
 
-	args := buildAttachSSHArgs(conn, "/workspace", forwardCfg)
+	args := buildAttachSSHArgs(conn, "", "/workspace", forwardCfg)
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--ssh-flag=-t") {
-		t.Fatalf("args = %v, want tty flag", args)
+	if !strings.Contains(joined, "--ssh-flag=-tt") {
+		t.Fatalf("args = %v, want forced tty flag", args)
 	}
 	if !strings.Contains(joined, "cd /workspace && exec ${SHELL:-/bin/bash} -l") {
 		t.Fatalf("args = %v, want workspace shell command", args)
 	}
 	if !strings.Contains(joined, "--ssh-flag=-L 127.0.0.1:8080:127.0.0.1:8080") {
 		t.Fatalf("args = %v, want forward flag", args)
+	}
+}
+
+func TestBuildAttachSSHArgsWithUser(t *testing.T) {
+	conn := vmcfg.GCPConnection{
+		InstanceName: "isotty-abc",
+		ProjectID:    "demo-project",
+		Zone:         "us-central1-f",
+	}
+
+	args := buildAttachSSHArgs(conn, "yazawa", "/workspace", ForwardConfig{Forwards: map[string]Forward{}})
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "compute ssh yazawa@isotty-abc") {
+		t.Fatalf("args = %v, want user-qualified instance target", args)
 	}
 }

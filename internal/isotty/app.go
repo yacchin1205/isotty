@@ -83,9 +83,9 @@ func (a *App) Run(args []string) error {
 
 func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "Usage:")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe] [--no-attach]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe] [--user <name>] [--no-attach]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] id")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>] [--no-forward]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>] [--user <name>] [--no-forward]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] down")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] audit logs [-f]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward add <name> --local-port <port> --remote-port <port>")
@@ -136,12 +136,16 @@ func (a *App) runUp(args []string) error {
 	fs.SetOutput(a.stderr)
 
 	syncMode := fs.String("sync", defaultSyncMode, "synchronization mode")
+	user := fs.String("user", "", "SSH username to use for auto-attach")
 	noAttach := fs.Bool("no-attach", false, "do not attach after preparing the environment")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if err := validateSyncMode(*syncMode); err != nil {
 		return err
+	}
+	if *noAttach && *user != "" {
+		return errors.New("up does not accept --user with --no-attach")
 	}
 	if fs.NArg() > 1 {
 		return errors.New("up accepts at most one path argument")
@@ -182,7 +186,7 @@ func (a *App) runUp(args []string) error {
 	if *noAttach {
 		return nil
 	}
-	return a.attachToState(projectPath, state, false)
+	return a.attachToState(projectPath, state, *user, false)
 }
 
 func (a *App) runAudit(args []string) error {
@@ -238,6 +242,7 @@ func (a *App) runAttach(args []string) error {
 	fs := flag.NewFlagSet("attach", flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
 	targetID := fs.String("target", "", "attach to a remote IsoTTY target id")
+	user := fs.String("user", "", "SSH username to use for attach")
 	noForward := fs.Bool("no-forward", false, "attach without loading or applying port forwards")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -246,7 +251,7 @@ func (a *App) runAttach(args []string) error {
 		return errors.New("attach does not accept arguments")
 	}
 	if *targetID != "" {
-		return a.attachToTarget(*targetID, *noForward)
+		return a.attachToTarget(*targetID, *user, *noForward)
 	}
 
 	projectPath, err := filepath.Abs(".")
@@ -262,10 +267,10 @@ func (a *App) runAttach(args []string) error {
 		return err
 	}
 
-	return a.attachToState(projectPath, state, *noForward)
+	return a.attachToState(projectPath, state, *user, *noForward)
 }
 
-func (a *App) attachToTarget(targetID string, noForward bool) error {
+func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 	target, err := vmcfg.ParseGCPID(targetID)
 	if err != nil {
 		return err
@@ -299,10 +304,10 @@ func (a *App) attachToTarget(targetID string, noForward bool) error {
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg)
+	return a.attachWithConnection(conn, user, projectHash, workspacePath, forwardCfg)
 }
 
-func (a *App) attachToState(projectPath string, state State, noForward bool) error {
+func (a *App) attachToState(projectPath string, state State, user string, noForward bool) error {
 	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
 	if !noForward {
 		var err error
@@ -321,11 +326,11 @@ func (a *App) attachToState(projectPath string, state State, noForward bool) err
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg)
+	return a.attachWithConnection(conn, user, state.ProjectHash, workspacePath, forwardCfg)
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg ForwardConfig) error {
-	sshArgs := buildAttachSSHArgs(conn, workspacePath, forwardCfg)
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, user, projectHash, workspacePath string, forwardCfg ForwardConfig) error {
+	sshArgs := buildAttachSSHArgs(conn, user, workspacePath, forwardCfg)
 	names := SortedForwardNames(forwardCfg)
 
 	if len(names) > 0 {
@@ -365,12 +370,16 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 	return attachErr
 }
 
-func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg ForwardConfig) []string {
+func buildAttachSSHArgs(conn vmcfg.GCPConnection, user, workspacePath string, forwardCfg ForwardConfig) []string {
+	instanceTarget := conn.InstanceName
+	if user != "" {
+		instanceTarget = user + "@" + instanceTarget
+	}
 	sshArgs := []string{
-		"compute", "ssh", conn.InstanceName,
+		"compute", "ssh", instanceTarget,
 		"--project", conn.ProjectID,
 		"--zone", conn.Zone,
-		"--ssh-flag=-t",
+		"--ssh-flag=-tt",
 	}
 	for _, name := range SortedForwardNames(forwardCfg) {
 		forward := forwardCfg.Forwards[name]
