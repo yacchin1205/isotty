@@ -379,7 +379,8 @@ func buildAttachSSHArgs(conn vmcfg.GCPConnection, user, workspacePath string, fo
 		"compute", "ssh", instanceTarget,
 		"--project", conn.ProjectID,
 		"--zone", conn.Zone,
-		"--ssh-flag=-tt",
+		"--ssh-flag=-t",
+		"--ssh-flag=-t",
 	}
 	for _, name := range SortedForwardNames(forwardCfg) {
 		forward := forwardCfg.Forwards[name]

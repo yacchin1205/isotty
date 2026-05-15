@@ -21,8 +21,8 @@ func TestBuildAttachSSHArgs(t *testing.T) {
 
 	args := buildAttachSSHArgs(conn, "", "/workspace", forwardCfg)
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--ssh-flag=-tt") {
-		t.Fatalf("args = %v, want forced tty flag", args)
+	if strings.Count(joined, "--ssh-flag=-t") != 2 {
+		t.Fatalf("args = %v, want two tty flags", args)
 	}
 	if !strings.Contains(joined, "cd /workspace && exec ${SHELL:-/bin/bash} -l") {
 		t.Fatalf("args = %v, want workspace shell command", args)
