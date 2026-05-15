@@ -85,7 +85,7 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "Usage:")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe] [--no-attach]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] id")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>] [--no-forward]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] down")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] audit logs [-f]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward add <name> --local-port <port> --remote-port <port>")
@@ -182,7 +182,7 @@ func (a *App) runUp(args []string) error {
 	if *noAttach {
 		return nil
 	}
-	return a.attachToState(projectPath, state)
+	return a.attachToState(projectPath, state, false)
 }
 
 func (a *App) runAudit(args []string) error {
@@ -238,6 +238,7 @@ func (a *App) runAttach(args []string) error {
 	fs := flag.NewFlagSet("attach", flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
 	targetID := fs.String("target", "", "attach to a remote IsoTTY target id")
+	noForward := fs.Bool("no-forward", false, "attach without loading or applying port forwards")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -245,7 +246,7 @@ func (a *App) runAttach(args []string) error {
 		return errors.New("attach does not accept arguments")
 	}
 	if *targetID != "" {
-		return a.attachToTarget(*targetID)
+		return a.attachToTarget(*targetID, *noForward)
 	}
 
 	projectPath, err := filepath.Abs(".")
@@ -261,10 +262,10 @@ func (a *App) runAttach(args []string) error {
 		return err
 	}
 
-	return a.attachToState(projectPath, state)
+	return a.attachToState(projectPath, state, *noForward)
 }
 
-func (a *App) attachToTarget(targetID string) error {
+func (a *App) attachToTarget(targetID string, noForward bool) error {
 	target, err := vmcfg.ParseGCPID(targetID)
 	if err != nil {
 		return err
@@ -276,15 +277,17 @@ func (a *App) attachToTarget(targetID string) error {
 	}
 
 	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
-	data, err := vmcfg.FetchGCPProjectFile(conn, ".isotty/forward.yaml")
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	} else {
-		forwardCfg, err = ParseForwardConfig(data)
+	if !noForward {
+		data, err := vmcfg.FetchGCPProjectFile(conn, ".isotty/forward.yaml")
 		if err != nil {
-			return fmt.Errorf("parse remote forward config: %w", err)
+			if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		} else {
+			forwardCfg, err = ParseForwardConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote forward config: %w", err)
+			}
 		}
 	}
 
@@ -299,10 +302,14 @@ func (a *App) attachToTarget(targetID string) error {
 	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg)
 }
 
-func (a *App) attachToState(projectPath string, state State) error {
-	forwardCfg, err := LoadForwardConfig(projectPath)
-	if err != nil {
-		return err
+func (a *App) attachToState(projectPath string, state State, noForward bool) error {
+	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
+	if !noForward {
+		var err error
+		forwardCfg, err = LoadForwardConfig(projectPath)
+		if err != nil {
+			return err
+		}
 	}
 
 	conn := vmcfg.GCPConnection{
