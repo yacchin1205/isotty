@@ -277,11 +277,16 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 	if err != nil {
 		return err
 	}
+	homeDir, err := isottyHome()
+	if err != nil {
+		return err
+	}
 	conn := vmcfg.GCPConnection{
-		ProjectID:    target.ProjectID,
-		Zone:         target.Zone,
-		InstanceName: target.InstanceName,
-		User:         user,
+		ProjectID:     target.ProjectID,
+		Zone:          target.Zone,
+		InstanceName:  target.InstanceName,
+		User:          user,
+		SSHConfigPath: filepath.Join(homeDir, "ssh", "config"),
 	}
 
 	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
@@ -321,10 +326,11 @@ func (a *App) attachToState(projectPath string, state State, user string, noForw
 	}
 
 	conn := vmcfg.GCPConnection{
-		ProjectID:    state.GCPProjectID,
-		Zone:         state.Zone,
-		InstanceName: state.InstanceName,
-		User:         user,
+		ProjectID:     state.GCPProjectID,
+		Zone:          state.Zone,
+		InstanceName:  state.InstanceName,
+		User:          user,
+		SSHConfigPath: state.SSHConfigPath,
 	}
 	workspacePath, err := vmcfg.GetGCPWorkspacePath(conn)
 	if err != nil {
@@ -352,6 +358,10 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		return fmt.Errorf("record attach-start event: %w", err)
 	}
 
+	if err := vmcfg.RefreshGCPSSHConfig(conn, a.debug); err != nil {
+		return fmt.Errorf("refresh SSH config: %w", err)
+	}
+
 	attachErr := vmcfg.RunGCPInteractiveSSH(sshArgs...)
 
 	result := "ok"
@@ -375,21 +385,19 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 }
 
 func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg ForwardConfig) []string {
-	instanceTarget := conn.InstanceName
+	instanceTarget := fmt.Sprintf("%s.%s.%s", conn.InstanceName, conn.Zone, conn.ProjectID)
 	if conn.User != "" {
 		instanceTarget = conn.User + "@" + instanceTarget
 	}
 	sshArgs := []string{
-		"compute", "ssh", instanceTarget,
-		"--project", conn.ProjectID,
-		"--zone", conn.Zone,
-		"--ssh-flag=-t",
+		"-F", conn.SSHConfigPath,
+		"-tt",
 	}
 	for _, name := range SortedForwardNames(forwardCfg) {
 		forward := forwardCfg.Forwards[name]
-		sshArgs = append(sshArgs, fmt.Sprintf("--ssh-flag=-L 127.0.0.1:%d:127.0.0.1:%d", forward.LocalPort, forward.RemotePort))
+		sshArgs = append(sshArgs, "-L", fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", forward.LocalPort, forward.RemotePort))
 	}
-	sshArgs = append(sshArgs, "--command", fmt.Sprintf("cd %s && exec ${SHELL:-/bin/bash} -l", workspacePath))
+	sshArgs = append(sshArgs, instanceTarget, fmt.Sprintf("cd %s && exec ${SHELL:-/bin/bash} -l", workspacePath))
 	return sshArgs
 }
 

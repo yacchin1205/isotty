@@ -255,7 +255,7 @@ func RunGCPRemoteCommand(conn GCPConnection, command string, debug bool) error {
 
 func RunGCPInteractiveSSH(args ...string) error {
 	if err := interactive.Run(interactive.Process{
-		Program: "gcloud",
+		Program: "ssh",
 		Args:    args,
 		Env:     os.Environ(),
 	}); err != nil {
