@@ -166,6 +166,9 @@ func (a *App) runUp(args []string) error {
 	if err := requireExecutable("gcloud"); err != nil {
 		return err
 	}
+	if err := requireExecutable("ssh"); err != nil {
+		return err
+	}
 	if err := requireExecutable("mutagen"); err != nil {
 		return err
 	}
@@ -251,6 +254,9 @@ func (a *App) runAttach(args []string) error {
 	}
 	if fs.NArg() != 0 {
 		return errors.New("attach does not accept arguments")
+	}
+	if err := requireExecutable("ssh"); err != nil {
+		return err
 	}
 	if *targetID != "" {
 		return a.attachToTarget(*targetID, *user, *noForward)
@@ -469,6 +475,9 @@ func (a *App) runVersion(args []string) error {
 		return err
 	}
 	if err := a.printDependencyVersion("mutagen", []string{"version"}); err != nil {
+		return err
+	}
+	if err := a.printDependencyVersion("ssh", []string{"-V"}); err != nil {
 		return err
 	}
 	return nil
