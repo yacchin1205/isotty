@@ -105,6 +105,10 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime agent add <name>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime agent remove <name>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime agent list")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime tools enable <name>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime tools disable <name>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime tools list")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime tools available")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] vm gcp show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] vm gcp set [--machine-type <type>] [--boot-disk-size <size>] [--image-family <family>] [--image-project <project>]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] status")
@@ -539,7 +543,7 @@ func (a *App) runForward(args []string) error {
 
 func (a *App) runRuntime(args []string) error {
 	if len(args) == 0 {
-		return errors.New("runtime requires a subcommand: apt, service, post-install, node, or agent")
+		return errors.New("runtime requires a subcommand: apt, service, post-install, node, agent, or tools")
 	}
 
 	projectPath, err := filepath.Abs(".")
@@ -558,6 +562,8 @@ func (a *App) runRuntime(args []string) error {
 		return runtimecfg.RunNode(projectPath, args[1:], a.stdout, a.stderr)
 	case "agent":
 		return runtimecfg.RunAgent(projectPath, args[1:], a.stdout, a.stderr)
+	case "tools":
+		return runtimecfg.RunTools(projectPath, args[1:], a.stdout, a.stderr)
 	default:
 		return fmt.Errorf("unknown runtime subcommand %q", args[0])
 	}
