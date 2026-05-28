@@ -100,11 +100,11 @@ func RemoveAptPackages(projectPath string, packages []string) error {
 	return saveTextList(AptPackagesPath(projectPath), "apt config", next)
 }
 
-func AptBootstrapCommands(cfg RuntimeConfig) []string {
-	if len(cfg.AptPackages) == 0 {
+func AptBootstrapCommands(packages []string) []string {
+	if len(packages) == 0 {
 		return nil
 	}
-	return []string{fmt.Sprintf("sudo apt-get install -y %s", shellJoin(cfg.AptPackages))}
+	return []string{fmt.Sprintf("sudo apt-get install -y %s", shellJoin(packages))}
 }
 
 func RunApt(projectPath string, args []string, stdout, stderr io.Writer) error {

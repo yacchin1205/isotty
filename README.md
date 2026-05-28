@@ -103,6 +103,27 @@ ripgrep
 jq
 ```
 
+Tool bundles:
+
+Tool bundles are curated environments you select by name instead of listing
+every package yourself. Each bundle installs a set of apt packages plus any
+follow-up setup (for example a Python virtualenv).
+
+```bash
+isotty runtime tools available
+isotty runtime tools enable doc-tools
+isotty runtime tools list
+```
+
+Stored in:
+
+```text
+./.isotty/tools.yaml
+```
+
+The first bundle is `doc-tools`, for reading PDF announcements, checking Word
+templates, and organizing submitted documents. See [Tools design](docs/TOOLS.md).
+
 Port forwards:
 
 These forwards are applied while attached, so services running in the VM are reachable on local `localhost` ports.
@@ -220,4 +241,5 @@ IsoTTY stores local state under:
 * [Forward design](docs/FORWARD.md)
 * [Audit design](docs/AUDIT.md)
 * [Agent design](docs/AGENT.md)
+* [Tools design](docs/TOOLS.md)
 * [Contributing](CONTRIBUTING.md)

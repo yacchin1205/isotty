@@ -32,7 +32,7 @@ func PostInstallCommand(workspacePath string) string {
 
 func BootstrapLabel(cfg RuntimeConfig) string {
 	parts := []string{"Bootstrapping workspace"}
-	if len(cfg.AptPackages) > 0 {
+	if len(AptInstallPackages(cfg)) > 0 {
 		parts = append(parts, "installing packages")
 	}
 	if NeedsNodeRuntime(cfg) {
@@ -40,6 +40,9 @@ func BootstrapLabel(cfg RuntimeConfig) string {
 	}
 	if len(cfg.Agents) > 0 {
 		parts = append(parts, "installing agents")
+	}
+	if len(cfg.Tools) > 0 {
+		parts = append(parts, "installing tools")
 	}
 	return strings.Join(parts, " and ")
 }
