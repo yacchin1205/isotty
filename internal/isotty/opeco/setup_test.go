@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestActiveNeedsAnAgent(t *testing.T) {
+func TestOpecoActiveNeedsAnAgent(t *testing.T) {
 	if Active(nil) {
 		t.Fatal("opeco should be inactive without agents")
 	}
@@ -15,8 +15,8 @@ func TestActiveNeedsAnAgent(t *testing.T) {
 	}
 }
 
-func TestSetupCommand(t *testing.T) {
-	command := SetupCommand([]string{"claude"})
+func TestOpecoSetupCommand(t *testing.T) {
+	command := SetupCommand([]string{"claude"}, 61002)
 	prefix, suffix := "printf %s ", " | base64 -d | bash"
 	if !strings.HasPrefix(command, prefix) || !strings.HasSuffix(command, suffix) {
 		t.Fatalf("command = %q", command)
@@ -26,12 +26,14 @@ func TestSetupCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`version="` + version + `"`,
+		`minimum_version="` + minimumVersion + `"`,
+		"/releases/latest",
 		`qr_port="61002"`,
 		`install_claude="1"`,
 		`install_codex="0"`,
 		"sha256sum --ignore-missing -c checksums.txt",
 		"sudo install -m 0755",
+		`env="{\"BROWSER\": \"$open_client\"}"`,
 	} {
 		if !strings.Contains(string(script), want) {
 			t.Fatalf("script missing %q:\n%s", want, script)

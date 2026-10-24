@@ -16,14 +16,16 @@ the point of IsoTTY.
 ## Model
 
 ```text
-agent in VM --isotty-notes--> 127.0.0.1:<vm_port> ==ssh -R==> gateway in `isotty attach` --> ep_weave
+agent in VM --isotty-notes--> 127.0.0.1:61001/epweave ==ssh -R==> host gateway in `isotty attach` --> ep_weave
 ```
 
-* The gateway is an HTTP server inside the `isotty attach` process, bound to
-  a host loopback port and exposed on the VM's loopback with `ssh -R`.
+* The host gateway is an HTTP server inside the `isotty attach` process,
+  bound to a host loopback port and exposed on the VM's loopback at port
+  61001 with `ssh -R`. ep_weave is one of its services, mounted under
+  `/epweave`.
 * Only the gateway holds the ep_weave credentials. The VM sees an HTTP
   endpoint and nothing else.
-* The gateway offers a fixed, narrow operation set. Delete and whole-pad
+* The service offers a fixed, narrow operation set. Delete and whole-pad
   rewrite do not exist in it.
 
 ## Config
@@ -52,17 +54,13 @@ Project config, synced with the rest of `.isotty/`:
 
 ```yaml
 prefix: isotty
-vm_port: 61001   # optional
 ```
 
 ```bash
-isotty epweave enable --prefix isotty [--vm-port 61001]
+isotty epweave enable --prefix isotty
 isotty epweave show
 isotty epweave disable
 ```
-
-`vm_port` defaults to 61001, above the Linux ephemeral range, so it collides
-neither with services a project runs in the VM nor with outgoing connections.
 
 ### Pin
 
@@ -144,7 +142,7 @@ lose the queue with `isotty down`. Instead a failed write fails within
 seconds with a message that says why and what to do:
 
 ```text
-isotty-notes: the ep_weave gateway at http://127.0.0.1:61001 is not reachable (...).
+isotty-notes: the ep_weave gateway at http://127.0.0.1:61001/epweave is not reachable (...).
 It is available only while the host is attached with `isotty attach`; writes are not queued.
 Keep the note as a Markdown file under /workspace and retry after re-attach.
 ```

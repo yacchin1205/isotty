@@ -343,18 +343,3 @@ func TestGatewayReportsAuditFailureAfterWrite(t *testing.T) {
 		t.Fatalf("pads = %v", etherpad.pads)
 	}
 }
-
-func TestServeAndClose(t *testing.T) {
-	gateway, err := Serve(&Notes{client: &Client{URL: "http://example"}, prefix: "isotty/"}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/status", gateway.Port()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if err := gateway.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
-	}
-}

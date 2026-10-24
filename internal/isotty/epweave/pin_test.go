@@ -20,11 +20,8 @@ func TestVerifyPinned(t *testing.T) {
 		t.Fatalf("VerifyPinned() = %#v, %v", got, err)
 	}
 
-	port := 61002
-	for _, tampered := range []ProjectConfig{{Prefix: "other"}, {Prefix: "isotty", VMPort: &port}} {
-		if _, err := VerifyPinned(home, "abc", tampered); err == nil || !strings.Contains(err.Error(), "differs from the configuration pinned") {
-			t.Fatalf("tampered %#v error = %v", tampered, err)
-		}
+	if _, err := VerifyPinned(home, "abc", ProjectConfig{Prefix: "other"}); err == nil || !strings.Contains(err.Error(), "differs from the prefix pinned") {
+		t.Fatalf("tampered prefix error = %v", err)
 	}
 
 	if err := RemovePin(home, "abc"); err != nil {

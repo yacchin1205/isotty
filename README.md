@@ -167,7 +167,7 @@ See [ep_weave design](docs/EPWEAVE.md).
 opeco notifications:
 
 When an agent is configured, `isotty up` also installs [opeco](https://github.com/yacchin1205/opeco-link) in the VM and registers it as the agent's `opeco-link` MCP server, so the agent can keep you informed on your phone while your machine sleeps.
-Pairing happens once while attached: the agent prints the QR page URL, which `isotty attach` forwards to your browser.
+Pairing happens once while attached: the QR page opens in your browser through the attach session.
 
 See [opeco design](docs/OPECO.md).
 
