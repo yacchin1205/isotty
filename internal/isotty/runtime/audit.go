@@ -17,6 +17,10 @@ var (
 	auditEventIDPattern  = regexp.MustCompile(`audit\(.*:([0-9]+)\)`)
 	auditTimePattern     = regexp.MustCompile(`audit\(([0-9]+(?:\.[0-9]+)?):[0-9]+\)`)
 	auditDateTimePattern = regexp.MustCompile(`audit\(([0-9]{2}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?):[0-9]+\)`)
+	// ausearch separates records with a line of exactly "----"; command
+	// arguments may contain the same dashes (e.g. "-----BEGIN PGP"), so only
+	// whole lines count.
+	auditBlockSeparator = regexp.MustCompile(`(?m)^----[ \t]*$`)
 )
 
 const (
@@ -219,7 +223,7 @@ func parseAuditEvents(output, kind string) ([]AuditEvent, error) {
 	}
 
 	var events []AuditEvent
-	blocks := strings.Split(output, "----")
+	blocks := auditBlockSeparator.Split(output, -1)
 	for index, block := range blocks {
 		block = strings.TrimSpace(block)
 		if block == "" {
