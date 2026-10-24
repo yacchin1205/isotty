@@ -69,6 +69,8 @@ Destroy the environment:
 isotty down
 ```
 
+`down` first saves the configured agents' login state from the VM, encrypted under `~/.isotty`, so the next `isotty up` of the same project starts logged in. See [Agent design](docs/AGENT.md).
+
 ## Common Commands
 
 ```bash

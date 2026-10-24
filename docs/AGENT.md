@@ -50,6 +50,28 @@ Node.js is installed through the NodeSource apt repository.
 
 ## Credentials
 
-IsoTTY does not copy or manage agent credentials.
+IsoTTY never copies credentials from the host into the VM. Authentication
+happens inside the isolated environment, once per project.
 
-The goal is to make the CLI available in the VM. Authentication remains a separate step inside the isolated environment.
+A login made in the VM would die with the VM, so `isotty down` saves each
+configured agent's home state and `isotty up` puts it back when it creates
+a new VM:
+
+| agent | saved paths |
+|---|---|
+| `claude` | `~/.claude`, `~/.claude.json` |
+| `codex` | `~/.codex` |
+
+Nothing is selected or filtered: the agent's state at `down` is the state
+the next VM starts with, including logins, settings, and the agent's own
+record of trusting `/workspace`. The settings IsoTTY itself writes into those
+files are merged again on every `up`, after the restore.
+
+The state is stored per project on the host as
+`~/.isotty/projects/<project-hash>.<agent>.tar.gz.enc`, encrypted with
+AES-256-GCM under `~/.isotty/agents.key` (mode 600, created on first use).
+Without the key the saved state is unreadable. Projects never share state.
+
+`down` fails when the state cannot be saved, so a login is not lost
+silently; `down --force` removes the VM anyway. Removing an agent with
+`isotty runtime agent remove` deletes its saved state.
