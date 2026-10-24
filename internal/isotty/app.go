@@ -2,6 +2,7 @@ package isotty
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -96,7 +97,7 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe] [--user <name>] [--no-attach]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] id")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>] [--user <name>] [--no-forward]")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] down")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] down [--force]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] audit logs [-f]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward add <name> --local-port <port> --remote-port <port>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward list")
@@ -598,6 +599,7 @@ func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardC
 func (a *App) runDown(args []string) error {
 	fs := flag.NewFlagSet("down", flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
+	force := fs.Bool("force", false, "remove the VM even when agent logins cannot be saved")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -615,16 +617,27 @@ func (a *App) runDown(args []string) error {
 		return err
 	}
 
+	exists, err := vmcfg.GCPInstanceExists(state.GCPProjectID, state.Zone, state.InstanceName)
+	if err != nil {
+		return fmt.Errorf("check instance: %w", err)
+	}
+
+	// The login archive is written into the synced .isotty/, so sync stops
+	// first; a VM about to be deleted has no use for it.
 	if err := a.runPhase("Stopping sync session", func() error {
 		return terminateMutagenSession(state)
 	}); err != nil {
 		return fmt.Errorf("terminate sync session: %w", err)
 	}
-
-	exists, err := vmcfg.GCPInstanceExists(state.GCPProjectID, state.Zone, state.InstanceName)
-	if err != nil {
-		return fmt.Errorf("check instance: %w", err)
+	if exists {
+		if err := a.saveAgentAuth(state); err != nil {
+			if !*force {
+				return fmt.Errorf("%w\nhint: `isotty down --force` removes the VM without saving; sync is stopped until the next `isotty up`", err)
+			}
+			fmt.Fprintf(a.stderr, "warning: agent logins were not saved: %v\n", err)
+		}
 	}
+
 	if exists {
 		if err := a.runPhase("Deleting VM %s", func() error {
 			return vmcfg.DeleteGCPInstance(vmcfg.GCPConnection{
@@ -745,7 +758,13 @@ func (a *App) runRuntime(args []string) error {
 	case "node":
 		return runtimecfg.RunNode(projectPath, args[1:], a.stdout, a.stderr)
 	case "agent":
-		return runtimecfg.RunAgent(projectPath, args[1:], a.stdout, a.stderr)
+		if err := runtimecfg.RunAgent(projectPath, args[1:], a.stdout, a.stderr); err != nil {
+			return err
+		}
+		if len(args) > 2 && args[1] == "remove" {
+			return runtimecfg.RemoveAgentAuth(projectPath, args[2:])
+		}
+		return nil
 	case "tools":
 		return runtimecfg.RunTools(projectPath, args[1:], a.stdout, a.stderr)
 	default:
@@ -989,6 +1008,9 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		}); err != nil {
 			return State{}, err
 		}
+		if err := a.restoreAgentAuth(cfg, state); err != nil {
+			return State{}, err
+		}
 	} else {
 		a.phase("Skipping bootstrap for existing VM %s", state.InstanceName)
 	}
@@ -1069,6 +1091,55 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	}
 
 	return state, nil
+}
+
+// saveAgentAuth stores each configured agent's home state from the VM so the
+// next VM of this project starts logged in.
+func (a *App) saveAgentAuth(state State) error {
+	agents, err := runtimecfg.ListAgents(state.ProjectPath)
+	if err != nil {
+		return err
+	}
+	homeDir, err := isottyHome()
+	if err != nil {
+		return err
+	}
+	conn := vmcfg.GCPConnection{ProjectID: state.GCPProjectID, Zone: state.Zone, InstanceName: state.InstanceName}
+	for _, agent := range agents {
+		if err := a.runPhase("Saving %s login state", func() error {
+			output, err := vmcfg.CaptureGCPRemoteCommand(conn, runtimecfg.CaptureAgentAuthCommand(agent))
+			if err != nil {
+				return err
+			}
+			archive, err := base64.StdEncoding.DecodeString(strings.TrimSpace(output))
+			if err != nil {
+				return fmt.Errorf("decode %s login state: %w", agent, err)
+			}
+			return runtimecfg.SaveAgentAuth(homeDir, state.ProjectPath, agent, archive)
+		}, agent); err != nil {
+			return fmt.Errorf("save %s login state: %w", agent, err)
+		}
+	}
+	return nil
+}
+
+func (a *App) restoreAgentAuth(cfg Config, state State) error {
+	conn := vmcfg.GCPConnection{ProjectID: state.GCPProjectID, Zone: state.Zone, InstanceName: state.InstanceName}
+	for _, agent := range cfg.Runtime.Agents {
+		archive, ok, err := runtimecfg.LoadAgentAuth(cfg.HomeDir, cfg.ProjectPath, agent)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		if err := a.runPhase("Restoring %s login state", func() error {
+			return vmcfg.RunGCPRemoteCommandWithInput(conn, runtimecfg.RestoreAgentAuthCommand(), bytes.NewReader(archive))
+		}, agent); err != nil {
+			return fmt.Errorf("restore %s login state: %w", agent, err)
+		}
+	}
+	return nil
 }
 
 func (a *App) phase(format string, args ...any) {

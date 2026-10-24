@@ -115,6 +115,7 @@ The VM backend assumes:
 
 * no local home directory mount
 * no SSH agent forwarding by default
-* no automatic credential copying
+* no automatic credential copying from the host; logins made in the VM are
+  kept per project, see [Agent design](AGENT.md)
 
 This is a practical isolation layer, not a high-assurance sandbox.
