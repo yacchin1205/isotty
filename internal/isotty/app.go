@@ -9,9 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/yazawa/isotty/internal/isotty/epweave"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
@@ -63,6 +65,8 @@ func (a *App) Run(args []string) error {
 		return a.runAttach(args[1:])
 	case "forward":
 		return a.runForward(args[1:])
+	case "epweave":
+		return a.runEpweave(args[1:])
 	case "runtime":
 		return a.runRuntime(args[1:])
 	case "vm":
@@ -93,6 +97,9 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward add <name> --local-port <port> --remote-port <port>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward list")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward remove <name>")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] epweave enable --prefix <name> [--vm-port <port>]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] epweave disable")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] epweave show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt add <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt remove <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt list")
@@ -300,6 +307,7 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 	}
 
 	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
+	var epweaveCfg *epweave.ProjectConfig
 	if !noForward {
 		data, err := vmcfg.FetchGCPProjectFile(conn, ".isotty/forward.yaml")
 		if err != nil {
@@ -322,14 +330,41 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg)
+	if !noForward {
+		data, err := vmcfg.FetchGCPProjectFile(conn, ".isotty/epweave.yaml")
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		} else {
+			synced, err := epweave.ParseProjectConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote epweave config: %w", err)
+			}
+			verified, err := epweave.VerifyPinned(homeDir, projectHash, synced)
+			if err != nil {
+				return err
+			}
+			epweaveCfg = &verified
+		}
+	}
+	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg, epweaveCfg)
 }
 
 func (a *App) attachToState(projectPath string, state State, user string, noForward bool) error {
 	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
+	var epweaveCfg *epweave.ProjectConfig
 	if !noForward {
 		var err error
 		forwardCfg, err = LoadForwardConfig(projectPath)
+		if err != nil {
+			return err
+		}
+		homeDir, err := isottyHome()
+		if err != nil {
+			return err
+		}
+		epweaveCfg, err = loadEpweaveProjectConfig(projectPath, state.ProjectHash, homeDir)
 		if err != nil {
 			return err
 		}
@@ -346,16 +381,43 @@ func (a *App) attachToState(projectPath string, state State, user string, noForw
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg, epweaveCfg)
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg ForwardConfig) error {
-	sshArgs := buildAttachSSHArgs(conn, workspacePath, forwardCfg)
-	names := SortedForwardNames(forwardCfg)
+// epweaveForward is the reverse forward that exposes the host-side gateway
+// on the VM's loopback for the attach session.
+type epweaveForward struct {
+	VMPort   int
+	HostPort int
+}
 
-	if len(names) > 0 {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg ForwardConfig, epweaveCfg *epweave.ProjectConfig) (err error) {
+	names := SortedForwardNames(forwardCfg)
+	target := a.auditTarget(conn)
+
+	var reverse *epweaveForward
+	if epweaveCfg != nil {
+		gateway, err := a.startEpweaveGateway(*epweaveCfg, projectHash, target)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if closeErr := gateway.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+		}()
+		reverse = &epweaveForward{VMPort: epweaveCfg.Port(), HostPort: gateway.Port()}
+	}
+	sshArgs := buildAttachSSHArgs(conn, workspacePath, forwardCfg, reverse)
+
+	switch {
+	case len(names) > 0 && reverse != nil:
+		a.phase("Attaching to %s with %d forwards and ep_weave gateway on VM port %d", conn.InstanceName, len(names), reverse.VMPort)
+	case len(names) > 0:
 		a.phase("Attaching to %s with %d forwards", conn.InstanceName, len(names))
-	} else {
+	case reverse != nil:
+		a.phase("Attaching to %s with ep_weave gateway on VM port %d", conn.InstanceName, reverse.VMPort)
+	default:
 		a.phase("Attaching to %s", conn.InstanceName)
 	}
 
@@ -363,7 +425,6 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 	if err != nil {
 		return err
 	}
-	target := a.auditTarget(conn)
 	if err := runtimecfg.RecordVMEvent(target, startEvent, a.debug); err != nil {
 		return fmt.Errorf("record attach-start event: %w", err)
 	}
@@ -394,7 +455,33 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 	return attachErr
 }
 
-func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg ForwardConfig) []string {
+// startEpweaveGateway connects to ep_weave with the host credentials and
+// serves the project's Notes on a loopback port. Pad writes are recorded in
+// the VM event log; that happens while the interactive session owns the
+// terminal, so gcloud output must never reach it (debug is forced off).
+func (a *App) startEpweaveGateway(cfg epweave.ProjectConfig, projectHash string, target runtimecfg.RemoteTarget) (*epweave.Gateway, error) {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return nil, err
+	}
+	hostCfg, err := epweave.LoadHostConfig(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	notes, err := epweave.Connect(hostCfg, cfg, "isotty-"+projectHash, "isotty:"+cfg.Prefix)
+	if err != nil {
+		return nil, fmt.Errorf("connect to ep_weave: %w", err)
+	}
+	return epweave.Serve(notes, func(event epweave.WriteEvent) error {
+		record, err := runtimecfg.NewEpweaveVMEvent(projectHash, event.Operation, event.Title, event.PadID)
+		if err != nil {
+			return err
+		}
+		return runtimecfg.RecordVMEvent(target, record, false)
+	})
+}
+
+func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg ForwardConfig, reverse *epweaveForward) []string {
 	instanceTarget := fmt.Sprintf("%s.%s.%s", conn.InstanceName, conn.Zone, conn.ProjectID)
 	if conn.User != "" {
 		instanceTarget = conn.User + "@" + instanceTarget
@@ -402,10 +489,20 @@ func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardC
 	sshArgs := []string{
 		"-F", conn.SSHConfigPath,
 		"-tt",
+		// A forward that cannot bind must fail the attach instead of leaving
+		// a session whose forwards silently point nowhere.
+		"-o", "ExitOnForwardFailure=yes",
+		// Detect a dead peer within ~45s so a dropped session releases its
+		// forwards instead of lingering until TCP gives up.
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=3",
 	}
 	for _, name := range SortedForwardNames(forwardCfg) {
 		forward := forwardCfg.Forwards[name]
 		sshArgs = append(sshArgs, "-L", fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", forward.LocalPort, forward.RemotePort))
+	}
+	if reverse != nil {
+		sshArgs = append(sshArgs, "-R", fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", reverse.VMPort, reverse.HostPort))
 	}
 	sshArgs = append(sshArgs, instanceTarget, fmt.Sprintf("cd %s && exec ${SHELL:-/bin/bash} -l", workspacePath))
 	return sshArgs
@@ -816,6 +913,18 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	}); err != nil {
 		return State{}, err
 	}
+	if cfg.Epweave != nil {
+		installClaudeSkill := slices.Contains(cfg.Runtime.Agents, "claude")
+		if err := a.runPhase("Installing ep_weave client", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, epweave.SetupCommand(*cfg.Epweave, installClaudeSkill), a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	}
 	if err := a.runPhase("Starting sync session", func() error {
 		return recreateMutagenSession(state, a.debug)
 	}); err != nil {
@@ -936,4 +1045,123 @@ func validateSyncMode(mode string) error {
 		return nil
 	}
 	return fmt.Errorf("unsupported sync mode %q", mode)
+}
+
+func (a *App) runEpweave(args []string) error {
+	if len(args) == 0 {
+		return errors.New("epweave requires a subcommand: enable, disable, or show")
+	}
+
+	switch args[0] {
+	case "enable":
+		return a.runEpweaveEnable(args[1:])
+	case "disable":
+		return a.runEpweaveDisable(args[1:])
+	case "show":
+		return a.runEpweaveShow(args[1:])
+	default:
+		return fmt.Errorf("unknown epweave subcommand %q", args[0])
+	}
+}
+
+func (a *App) runEpweaveEnable(args []string) error {
+	fs := flag.NewFlagSet("epweave enable", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	prefix := fs.String("prefix", "", "title prefix the VM may write under (titles become <prefix>/<topic>)")
+	vmPort := fs.Int("vm-port", 0, fmt.Sprintf("VM loopback port for the gateway (default %d)", epweave.DefaultVMPort))
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("epweave enable does not accept arguments")
+	}
+	if *prefix == "" {
+		return errors.New("epweave enable requires --prefix")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	homeDir, err := isottyHome()
+	if err != nil {
+		return err
+	}
+	cfg := epweave.ProjectConfig{Prefix: *prefix}
+	if *vmPort != 0 {
+		cfg.VMPort = vmPort
+	}
+	if err := epweave.SaveProjectConfig(projectPath, cfg); err != nil {
+		return err
+	}
+	if err := epweave.SavePin(homeDir, hashProjectPath(projectPath), cfg); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "Enabled ep_weave: titles under %s are writable from VM port %d\n", cfg.TitlePrefix(), cfg.Port())
+	fmt.Fprintf(a.stdout, "Run `isotty up` to install the client in the VM.\n")
+	return nil
+}
+
+func (a *App) runEpweaveDisable(args []string) error {
+	fs := flag.NewFlagSet("epweave disable", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("epweave disable does not accept arguments")
+	}
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	homeDir, err := isottyHome()
+	if err != nil {
+		return err
+	}
+	if err := epweave.RemoveProjectConfig(projectPath); err != nil {
+		return err
+	}
+	if err := epweave.RemovePin(homeDir, hashProjectPath(projectPath)); err != nil {
+		return err
+	}
+	fmt.Fprintln(a.stdout, "Disabled ep_weave for this project.")
+	return nil
+}
+
+func (a *App) runEpweaveShow(args []string) error {
+	fs := flag.NewFlagSet("epweave show", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("epweave show does not accept arguments")
+	}
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	homeDir, err := isottyHome()
+	if err != nil {
+		return err
+	}
+	cfg, err := loadEpweaveProjectConfig(projectPath, hashProjectPath(projectPath), homeDir)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		fmt.Fprintln(a.stdout, "ep_weave is not enabled for this project.")
+		return nil
+	}
+	hostCfg, err := epweave.LoadHostConfig(homeDir)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "prefix: %s\n", cfg.Prefix)
+	fmt.Fprintf(a.stdout, "vm_port: %d\n", cfg.Port())
+	fmt.Fprintf(a.stdout, "pinned: %s\n", epweave.PinPath(homeDir, hashProjectPath(projectPath)))
+	fmt.Fprintf(a.stdout, "url: %s\n", hostCfg.URL)
+	fmt.Fprintf(a.stdout, "client_id: %s\n", hostCfg.ClientID)
+	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yazawa/isotty/internal/isotty/epweave"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
@@ -21,6 +22,8 @@ type Config struct {
 	HomeDir      string
 	Runtime      runtimecfg.RuntimeConfig
 	VM           vmcfg.VMConfig
+	// Epweave is nil when the project has not enabled ep_weave.
+	Epweave *epweave.ProjectConfig
 }
 
 func LoadConfig(projectPath string) (Config, error) {
@@ -51,6 +54,10 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	epweaveConfig, err := loadEpweaveProjectConfig(projectPath, projectHash, homeDir)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		ProjectPath:  projectPath,
@@ -60,7 +67,25 @@ func LoadConfig(projectPath string) (Config, error) {
 		HomeDir:      homeDir,
 		Runtime:      runtimeConfig,
 		VM:           vmConfig,
+		Epweave:      epweaveConfig,
 	}, nil
+}
+
+// loadEpweaveProjectConfig returns the synced project config once it has
+// been checked against the pin this host recorded at `isotty epweave enable`.
+func loadEpweaveProjectConfig(projectPath, projectHash, homeDir string) (*epweave.ProjectConfig, error) {
+	synced, enabled, err := epweave.LoadProjectConfig(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	if !enabled {
+		return nil, nil
+	}
+	cfg, err := epweave.VerifyPinned(homeDir, projectHash, synced)
+	if err != nil {
+		return nil, err
+	}
+	return &cfg, nil
 }
 
 func hashProjectPath(projectPath string) string {

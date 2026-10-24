@@ -139,6 +139,31 @@ Stored in:
 ./.isotty/forward.yaml
 ```
 
+ep_weave notes:
+
+The agent in the VM can read and write pads in the [ep_weave](https://github.com/NII-cloud-operation/ep_weave) running on the host, through a gateway that `isotty attach` provides.
+The VM never sees ep_weave itself or its credentials, and can write only under the project's title prefix.
+
+```bash
+isotty epweave enable --prefix myproject
+isotty up
+```
+
+Credentials live on the host in `~/.isotty/epweave.yaml`; the project setting is stored in:
+
+```text
+./.isotty/epweave.yaml
+```
+
+Inside the VM:
+
+```bash
+isotty-notes status
+isotty-notes create 'myproject/design' --tags '#myproject' < memo.md
+```
+
+See [ep_weave design](docs/EPWEAVE.md).
+
 Optional Node.js runtime version:
 
 ```text
@@ -239,6 +264,7 @@ IsoTTY stores local state under:
 * [VM design](docs/VM.md)
 * [Sync design](docs/SYNC.md)
 * [Forward design](docs/FORWARD.md)
+* [ep_weave design](docs/EPWEAVE.md)
 * [Audit design](docs/AUDIT.md)
 * [Agent design](docs/AGENT.md)
 * [Tools design](docs/TOOLS.md)

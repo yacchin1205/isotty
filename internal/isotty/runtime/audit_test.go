@@ -1,6 +1,7 @@
 package runtimecfg
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -155,5 +156,38 @@ func TestParseVMEvents(t *testing.T) {
 	}
 	if events[1].Message != "attach-end client=macbook-pro user=yazawa result=ok" {
 		t.Fatalf("Message = %q", events[1].Message)
+	}
+}
+
+func TestParseAuditEventsKeepsDashesInsideArguments(t *testing.T) {
+	output := `----
+time->Wed May 14 01:02:03 2026
+type=SYSCALL msg=audit(05/14/2026 01:02:03.123:4242): arch=x86_64 syscall=execve success=yes exit=0 exe="/usr/bin/gawk" key="isotty-exec"
+type=EXECVE msg=audit(05/14/2026 01:02:03.123:4242): argc=2 a0="awk" a1="/^-----BEGIN/{ x = 1; }"
+----
+time->Wed May 14 01:02:04 2026
+type=SYSCALL msg=audit(05/14/2026 01:02:04.123:4243): arch=x86_64 syscall=execve success=yes exit=0 exe="/usr/bin/base64" key="isotty-exec"
+type=EXECVE msg=audit(05/14/2026 01:02:04.123:4243): argc=2 a0="base64" a1="-d"
+`
+	events, err := parseAuditEvents(output, "exec")
+	if err != nil {
+		t.Fatalf("parseAuditEvents returned error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("len(events) = %d, want 2", len(events))
+	}
+	if !strings.HasPrefix(events[0].Command, "awk /^-----BEGIN/") || events[1].Command != "base64 -d" {
+		t.Fatalf("Commands = %q, %q", events[0].Command, events[1].Command)
+	}
+}
+
+func TestParseVMEventsEpweave(t *testing.T) {
+	output := `{"time":"2026-10-24T00:17:08Z","type":"epweave-create","client_hostname":"macbook-pro","client_user":"yazawa","project_hash":"abc","title":"isotty-test/動作確認","pad_id":"ea96a25b"}`
+	events, err := parseVMEvents(output)
+	if err != nil {
+		t.Fatalf("parseVMEvents returned error: %v", err)
+	}
+	if events[0].Message != `epweave-create client=macbook-pro user=yazawa title="isotty-test/動作確認" pad=ea96a25b` {
+		t.Fatalf("Message = %q", events[0].Message)
 	}
 }

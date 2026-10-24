@@ -17,6 +17,10 @@ var (
 	auditEventIDPattern  = regexp.MustCompile(`audit\(.*:([0-9]+)\)`)
 	auditTimePattern     = regexp.MustCompile(`audit\(([0-9]+(?:\.[0-9]+)?):[0-9]+\)`)
 	auditDateTimePattern = regexp.MustCompile(`audit\(([0-9]{2}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?):[0-9]+\)`)
+	// ausearch separates records with a line of exactly "----"; command
+	// arguments may contain the same dashes (e.g. "-----BEGIN PGP"), so only
+	// whole lines count.
+	auditBlockSeparator = regexp.MustCompile(`(?m)^----[ \t]*$`)
 )
 
 const (
@@ -67,6 +71,8 @@ type VMEventRecord struct {
 	ProjectHash    string `json:"project_hash,omitempty"`
 	ForwardCount   int    `json:"forward_count,omitempty"`
 	Result         string `json:"result,omitempty"`
+	Title          string `json:"title,omitempty"`
+	PadID          string `json:"pad_id,omitempty"`
 }
 
 type RemoteTarget struct {
@@ -125,6 +131,27 @@ func QueryAuditLogs(target RemoteTarget, start string) ([]AuditEvent, error) {
 }
 
 func NewAttachVMEvent(projectHash, eventType string, forwardCount int, result string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, eventType)
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.ForwardCount = forwardCount
+	record.Result = result
+	return record, nil
+}
+
+// NewEpweaveVMEvent records a pad write made from the VM through the ep_weave gateway.
+func NewEpweaveVMEvent(projectHash, operation, title, padID string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, "epweave-"+operation)
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.Title = title
+	record.PadID = padID
+	return record, nil
+}
+
+func newVMEvent(projectHash, eventType string) (VMEventRecord, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return VMEventRecord{}, fmt.Errorf("resolve client hostname: %w", err)
@@ -133,14 +160,11 @@ func NewAttachVMEvent(projectHash, eventType string, forwardCount int, result st
 	if err != nil {
 		return VMEventRecord{}, fmt.Errorf("resolve client user: %w", err)
 	}
-
 	return VMEventRecord{
 		Type:           eventType,
 		ClientHostname: hostname,
 		ClientUser:     currentUser.Username,
 		ProjectHash:    projectHash,
-		ForwardCount:   forwardCount,
-		Result:         result,
 	}, nil
 }
 
@@ -199,7 +223,7 @@ func parseAuditEvents(output, kind string) ([]AuditEvent, error) {
 	}
 
 	var events []AuditEvent
-	blocks := strings.Split(output, "----")
+	blocks := auditBlockSeparator.Split(output, -1)
 	for index, block := range blocks {
 		block = strings.TrimSpace(block)
 		if block == "" {
@@ -483,6 +507,12 @@ func formatVMEvent(record VMEventRecord) string {
 	}
 	if record.Result != "" {
 		parts = append(parts, "result="+record.Result)
+	}
+	if record.Title != "" {
+		parts = append(parts, "title="+strconv.Quote(record.Title))
+	}
+	if record.PadID != "" {
+		parts = append(parts, "pad="+record.PadID)
 	}
 	return strings.Join(parts, " ")
 }
