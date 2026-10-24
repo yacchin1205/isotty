@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"strconv"
 )
@@ -18,44 +17,6 @@ type WriteEvent struct {
 	PadID     string
 }
 
-// Gateway serves the Notes operations on a host loopback port for the
-// duration of an attach session. The VM reaches it through ssh -R.
-type Gateway struct {
-	listener net.Listener
-	server   *http.Server
-	served   chan error
-}
-
-func Serve(notes *Notes, onWrite func(WriteEvent) error) (*Gateway, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, fmt.Errorf("listen for ep_weave gateway: %w", err)
-	}
-	gateway := &Gateway{
-		listener: listener,
-		server:   &http.Server{Handler: Handler(notes, onWrite)},
-		served:   make(chan error, 1),
-	}
-	go func() {
-		gateway.served <- gateway.server.Serve(listener)
-	}()
-	return gateway, nil
-}
-
-func (g *Gateway) Port() int {
-	return g.listener.Addr().(*net.TCPAddr).Port
-}
-
-func (g *Gateway) Close() error {
-	if err := g.server.Close(); err != nil {
-		return fmt.Errorf("close ep_weave gateway: %w", err)
-	}
-	if err := <-g.served; !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("ep_weave gateway: %w", err)
-	}
-	return nil
-}
-
 type createRequest struct {
 	Title    string `json:"title"`
 	Markdown string `json:"markdown"`
@@ -67,6 +28,8 @@ type appendRequest struct {
 	Markdown string `json:"markdown"`
 }
 
+// Handler serves the Notes operations; the host gateway mounts it under
+// /epweave for the VM.
 func Handler(notes *Notes, onWrite func(WriteEvent) error) http.Handler {
 	mux := http.NewServeMux()
 

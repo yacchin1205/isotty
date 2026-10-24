@@ -62,10 +62,10 @@ func VerifyPinned(homeDir, projectHash string, synced ProjectConfig) (ProjectCon
 	if !ok {
 		return ProjectConfig{}, fmt.Errorf("ep_weave is configured in .isotty/epweave.yaml but not pinned on this host; run `isotty epweave enable --prefix %s` here to accept it", synced.Prefix)
 	}
-	if pinned.Prefix != synced.Prefix || pinned.Port() != synced.Port() {
+	if pinned.Prefix != synced.Prefix {
 		return ProjectConfig{}, fmt.Errorf(
-			".isotty/epweave.yaml (prefix=%s, vm_port=%d) differs from the configuration pinned on this host (prefix=%s, vm_port=%d); the file is synced from the VM, so something in the VM may have edited it. Review it, then run `isotty epweave enable` again to accept the new values",
-			synced.Prefix, synced.Port(), pinned.Prefix, pinned.Port(),
+			".isotty/epweave.yaml (prefix=%s) differs from the prefix pinned on this host (%s); the file is synced from the VM, so something in the VM may have edited it. Review it, then run `isotty epweave enable` again to accept the new value",
+			synced.Prefix, pinned.Prefix,
 		)
 	}
 	return synced, nil

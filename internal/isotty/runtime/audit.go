@@ -73,6 +73,7 @@ type VMEventRecord struct {
 	Result         string `json:"result,omitempty"`
 	Title          string `json:"title,omitempty"`
 	PadID          string `json:"pad_id,omitempty"`
+	URL            string `json:"url,omitempty"`
 }
 
 type RemoteTarget struct {
@@ -148,6 +149,16 @@ func NewEpweaveVMEvent(projectHash, operation, title, padID string) (VMEventReco
 	}
 	record.Title = title
 	record.PadID = padID
+	return record, nil
+}
+
+// NewOpenVMEvent records a URL the VM asked the host to open in its browser.
+func NewOpenVMEvent(projectHash, url string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, "open-url")
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.URL = url
 	return record, nil
 }
 
@@ -513,6 +524,9 @@ func formatVMEvent(record VMEventRecord) string {
 	}
 	if record.PadID != "" {
 		parts = append(parts, "pad="+record.PadID)
+	}
+	if record.URL != "" {
+		parts = append(parts, "url="+record.URL)
 	}
 	return strings.Join(parts, " ")
 }

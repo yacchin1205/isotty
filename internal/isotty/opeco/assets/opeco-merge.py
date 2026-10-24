@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Merge the opeco MCP server and its agent hooks into agent config files.
 
-mcp-json PATH NAME COMMAND ARG...   ~/.claude.json style {"mcpServers": {...}}
-mcp-toml PATH NAME COMMAND ARG...   ~/.codex/config.toml, kept between marker comments
-hooks PATH HOOKS_JSON SERVER        merge the "hooks" object of HOOKS_JSON, replacing
-                                    groups that already call SERVER
+mcp-json PATH NAME ENV_JSON COMMAND ARG...   ~/.claude.json style {"mcpServers": {...}}
+mcp-toml PATH NAME ENV_JSON COMMAND ARG...   ~/.codex/config.toml, kept between marker comments
+hooks PATH HOOKS_JSON SERVER                 merge the "hooks" object of HOOKS_JSON, replacing
+                                             groups that already call SERVER
 """
 import json
 import os
@@ -29,13 +29,16 @@ def save_json(path, data):
         f.write('\n')
 
 
-def mcp_json(path, name, command, *args):
+def mcp_json(path, name, env_json, command, *args):
     data = load_json(path)
-    data.setdefault('mcpServers', {})[name] = {'type': 'stdio', 'command': command, 'args': list(args)}
+    server = {'type': 'stdio', 'command': command, 'args': list(args)}
+    if env := json.loads(env_json):
+        server['env'] = env
+    data.setdefault('mcpServers', {})[name] = server
     save_json(path, data)
 
 
-def mcp_toml(path, name, command, *args):
+def mcp_toml(path, name, env_json, command, *args):
     text = ''
     if os.path.exists(path):
         with open(path, encoding='utf-8') as f:
@@ -44,8 +47,10 @@ def mcp_toml(path, name, command, *args):
         head, rest = text.split(TOML_BEGIN, 1)
         _, tail = rest.split(TOML_END, 1)
         text = head.rstrip('\n') + '\n' + tail.lstrip('\n')
-    block = (f'{TOML_BEGIN}\n[mcp_servers.{name}]\n'
-             f'command = {json.dumps(command)}\nargs = {json.dumps(list(args))}\n{TOML_END}\n')
+    block = f'{TOML_BEGIN}\n[mcp_servers.{name}]\ncommand = {json.dumps(command)}\nargs = {json.dumps(list(args))}\n'
+    if env := json.loads(env_json):
+        block += 'env = { ' + ', '.join(f'{json.dumps(k)} = {json.dumps(v)}' for k, v in env.items()) + ' }\n'
+    block += f'{TOML_END}\n'
     text = (text.rstrip('\n') + '\n\n' if text.strip() else '') + block
     # A table the person wrote by hand for the same server makes this a duplicate; refuse to write.
     tomllib.loads(text)

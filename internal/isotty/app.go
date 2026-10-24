@@ -6,14 +6,17 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yazawa/isotty/internal/isotty/epweave"
+	"github.com/yazawa/isotty/internal/isotty/gateway"
 	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
@@ -98,7 +101,7 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward add <name> --local-port <port> --remote-port <port>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward list")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] forward remove <name>")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] epweave enable --prefix <name> [--vm-port <port>]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] epweave enable --prefix <name>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] epweave disable")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] epweave show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt add <package>...")
@@ -318,6 +321,7 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 
 	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
 	var epweaveCfg *epweave.ProjectConfig
+	var agents []string
 	if !noForward {
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/forward.yaml"); err != nil {
 			return err
@@ -340,7 +344,6 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 			}
 			epweaveCfg = &verified
 		}
-		var agents []string
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/agent.yaml"); err != nil {
 			return err
 		} else if data != nil {
@@ -349,8 +352,17 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 				return fmt.Errorf("parse remote agent config: %w", err)
 			}
 		}
-		if err := addOpecoForward(forwardCfg, agents); err != nil {
-			return err
+		if opeco.Active(agents) {
+			state, err := LoadState(projectHash)
+			if os.IsNotExist(err) {
+				return fmt.Errorf("this host has no state for project %s, so the opeco QR port that `isotty up` allocated is unknown; run `isotty up` in the project directory, or attach with --no-forward", projectHash)
+			}
+			if err != nil {
+				return err
+			}
+			if err := addOpecoForward(forwardCfg, state.OpecoQRPort); err != nil {
+				return err
+			}
 		}
 	}
 	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg, epweaveCfg)
@@ -368,6 +380,7 @@ func fetchOptionalProjectFile(conn vmcfg.GCPConnection, pathInWorkspace string) 
 func (a *App) attachToState(projectPath string, state State, user string, noForward bool) error {
 	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
 	var epweaveCfg *epweave.ProjectConfig
+	var agents []string
 	if !noForward {
 		var err error
 		forwardCfg, err = LoadForwardConfig(projectPath)
@@ -382,12 +395,14 @@ func (a *App) attachToState(projectPath string, state State, user string, noForw
 		if err != nil {
 			return err
 		}
-		agents, err := runtimecfg.ListAgents(projectPath)
+		agents, err = runtimecfg.ListAgents(projectPath)
 		if err != nil {
 			return err
 		}
-		if err := addOpecoForward(forwardCfg, agents); err != nil {
-			return err
+		if opeco.Active(agents) {
+			if err := addOpecoForward(forwardCfg, state.OpecoQRPort); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -408,21 +423,21 @@ func (a *App) attachToState(projectPath string, state State, user string, noForw
 const opecoForwardName = "opeco-qr"
 
 // addOpecoForward exposes the VM's opeco QR page on the same host port while
-// attached, so the URL opeco prints opens unchanged in the host browser.
-func addOpecoForward(forwardCfg ForwardConfig, agents []string) error {
-	if !opeco.Active(agents) {
-		return nil
+// attached, so the URL opeco prints opens unchanged in the host browser. The
+// port is the one `up` recorded in the project state.
+func addOpecoForward(forwardCfg ForwardConfig, qrPort int) error {
+	if qrPort == 0 {
+		return errors.New("the project state has no opeco QR port; run `isotty up` to allocate one")
 	}
 	if _, exists := forwardCfg.Forwards[opecoForwardName]; exists {
 		return fmt.Errorf("forward %q is reserved for the opeco QR page", opecoForwardName)
 	}
-	forwardCfg.Forwards[opecoForwardName] = Forward{LocalPort: opeco.QRPort, RemotePort: opeco.QRPort}
+	forwardCfg.Forwards[opecoForwardName] = Forward{LocalPort: qrPort, RemotePort: qrPort}
 	return nil
 }
 
-// epweaveForward is the reverse forward that exposes the host-side gateway
-// on the VM's loopback for the attach session.
-type epweaveForward struct {
+// reverseForward exposes the host gateway on the VM's loopback for the attach session.
+type reverseForward struct {
 	VMPort   int
 	HostPort int
 }
@@ -431,29 +446,65 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 	names := SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
-	var reverse *epweaveForward
+	// Pad writes and browser-open requests are recorded in the VM event log
+	// while the interactive session owns the terminal, so gcloud output must
+	// never reach it (debug is forced off).
+	record := func(record runtimecfg.VMEventRecord) error {
+		return runtimecfg.RecordVMEvent(target, record, false)
+	}
+	// Open requests are answered before their event is recorded, so a failed
+	// record has no request to fail; it fails the attach once the session ends.
+	var deferredErrs []error
+	var deferredMu sync.Mutex
+	mux := http.NewServeMux()
+	var services []string
 	if epweaveCfg != nil {
-		gateway, err := a.startEpweaveGateway(*epweaveCfg, projectHash, target)
+		handler, err := a.epweaveHandler(*epweaveCfg, projectHash, record)
+		if err != nil {
+			return err
+		}
+		mux.Handle("/epweave/", http.StripPrefix("/epweave", handler))
+		services = append(services, "ep_weave")
+	}
+	if qr, ok := forwardCfg.Forwards[opecoForwardName]; ok {
+		mux.Handle("/open", opeco.OpenHandler(qr.RemotePort, opeco.OpenInBrowser, func(url string) {
+			event, err := runtimecfg.NewOpenVMEvent(projectHash, url)
+			if err == nil {
+				err = record(event)
+			}
+			if err != nil {
+				deferredMu.Lock()
+				deferredErrs = append(deferredErrs, fmt.Errorf("record open-url event for %s: %w", url, err))
+				deferredMu.Unlock()
+			}
+		}))
+		services = append(services, "browser open")
+	}
+	var reverse *reverseForward
+	if len(services) > 0 {
+		gw, err := gateway.Serve(mux)
 		if err != nil {
 			return err
 		}
 		defer func() {
-			if closeErr := gateway.Close(); closeErr != nil && err == nil {
+			if closeErr := gw.Close(); closeErr != nil && err == nil {
 				err = closeErr
 			}
 		}()
-		reverse = &epweaveForward{VMPort: epweaveCfg.Port(), HostPort: gateway.Port()}
+		reverse = &reverseForward{VMPort: gateway.VMPort, HostPort: gw.Port()}
 	}
 	sshArgs := buildAttachSSHArgs(conn, workspacePath, forwardCfg, reverse)
 
-	switch {
-	case len(names) > 0 && reverse != nil:
-		a.phase("Attaching to %s with %d forwards and ep_weave gateway on VM port %d", conn.InstanceName, len(names), reverse.VMPort)
-	case len(names) > 0:
-		a.phase("Attaching to %s with %d forwards", conn.InstanceName, len(names))
-	case reverse != nil:
-		a.phase("Attaching to %s with ep_weave gateway on VM port %d", conn.InstanceName, reverse.VMPort)
-	default:
+	var with []string
+	if len(names) > 0 {
+		with = append(with, fmt.Sprintf("%d forwards", len(names)))
+	}
+	if reverse != nil {
+		with = append(with, fmt.Sprintf("host gateway (%s) on VM port %d", strings.Join(services, ", "), reverse.VMPort))
+	}
+	if len(with) > 0 {
+		a.phase("Attaching to %s with %s", conn.InstanceName, strings.Join(with, " and "))
+	} else {
 		a.phase("Attaching to %s", conn.InstanceName)
 	}
 
@@ -488,14 +539,14 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		}
 		return fmt.Errorf("record attach-end event: %w", err)
 	}
-	return attachErr
+	deferredMu.Lock()
+	defer deferredMu.Unlock()
+	return errors.Join(append([]error{attachErr}, deferredErrs...)...)
 }
 
-// startEpweaveGateway connects to ep_weave with the host credentials and
-// serves the project's Notes on a loopback port. Pad writes are recorded in
-// the VM event log; that happens while the interactive session owns the
-// terminal, so gcloud output must never reach it (debug is forced off).
-func (a *App) startEpweaveGateway(cfg epweave.ProjectConfig, projectHash string, target runtimecfg.RemoteTarget) (*epweave.Gateway, error) {
+// epweaveHandler connects to ep_weave with the host credentials and serves
+// the project's Notes, recording every pad write in the VM event log.
+func (a *App) epweaveHandler(cfg epweave.ProjectConfig, projectHash string, record func(runtimecfg.VMEventRecord) error) (http.Handler, error) {
 	homeDir, err := isottyHome()
 	if err != nil {
 		return nil, err
@@ -508,16 +559,16 @@ func (a *App) startEpweaveGateway(cfg epweave.ProjectConfig, projectHash string,
 	if err != nil {
 		return nil, fmt.Errorf("connect to ep_weave: %w", err)
 	}
-	return epweave.Serve(notes, func(event epweave.WriteEvent) error {
-		record, err := runtimecfg.NewEpweaveVMEvent(projectHash, event.Operation, event.Title, event.PadID)
+	return epweave.Handler(notes, func(event epweave.WriteEvent) error {
+		vmEvent, err := runtimecfg.NewEpweaveVMEvent(projectHash, event.Operation, event.Title, event.PadID)
 		if err != nil {
 			return err
 		}
-		return runtimecfg.RecordVMEvent(target, record, false)
-	})
+		return record(vmEvent)
+	}), nil
 }
 
-func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg ForwardConfig, reverse *epweaveForward) []string {
+func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg ForwardConfig, reverse *reverseForward) []string {
 	instanceTarget := fmt.Sprintf("%s.%s.%s", conn.InstanceName, conn.Zone, conn.ProjectID)
 	if conn.User != "" {
 		instanceTarget = conn.User + "@" + instanceTarget
@@ -853,10 +904,26 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	state := NewState(cfg, syncMode)
 	created := false
 	gcpConfig := cfg.VM.GCP
-	_, stateErr := LoadStateForProject(cfg.ProjectPath)
+	previous, stateErr := LoadStateForProject(cfg.ProjectPath)
 	hasState := stateErr == nil
 	if stateErr != nil && !IsStateNotFoundError(stateErr) {
 		return State{}, stateErr
+	}
+	if hasState {
+		state.OpecoQRPort = previous.OpecoQRPort
+	}
+	if opeco.Active(cfg.Runtime.Agents) && state.OpecoQRPort == 0 {
+		others, err := ListStates()
+		if err != nil {
+			return State{}, err
+		}
+		var taken []int
+		for _, other := range others {
+			if other.ProjectHash != state.ProjectHash && other.OpecoQRPort != 0 {
+				taken = append(taken, other.OpecoQRPort)
+			}
+		}
+		state.OpecoQRPort = opeco.ChooseQRPort(taken)
 	}
 	exists, err := vmcfg.GCPInstanceExists(cfg.GCPProjectID, cfg.Zone, state.InstanceName)
 	if err != nil {
@@ -962,13 +1029,13 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		}
 	}
 	if opeco.Active(cfg.Runtime.Agents) {
-		if err := a.runPhase("Installing opeco", func() error {
+		if err := a.runPhase("Installing opeco (QR page on port %d)", func() error {
 			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
 				ProjectID:    state.GCPProjectID,
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
-			}, opeco.SetupCommand(cfg.Runtime.Agents), a.debug)
-		}); err != nil {
+			}, opeco.SetupCommand(cfg.Runtime.Agents, state.OpecoQRPort), a.debug)
+		}, state.OpecoQRPort); err != nil {
 			return State{}, err
 		}
 	}
@@ -1115,7 +1182,6 @@ func (a *App) runEpweaveEnable(args []string) error {
 	fs := flag.NewFlagSet("epweave enable", flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
 	prefix := fs.String("prefix", "", "title prefix the VM may write under (titles become <prefix>/<topic>)")
-	vmPort := fs.Int("vm-port", 0, fmt.Sprintf("VM loopback port for the gateway (default %d)", epweave.DefaultVMPort))
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1135,16 +1201,13 @@ func (a *App) runEpweaveEnable(args []string) error {
 		return err
 	}
 	cfg := epweave.ProjectConfig{Prefix: *prefix}
-	if *vmPort != 0 {
-		cfg.VMPort = vmPort
-	}
 	if err := epweave.SaveProjectConfig(projectPath, cfg); err != nil {
 		return err
 	}
 	if err := epweave.SavePin(homeDir, hashProjectPath(projectPath), cfg); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.stdout, "Enabled ep_weave: titles under %s are writable from VM port %d\n", cfg.TitlePrefix(), cfg.Port())
+	fmt.Fprintf(a.stdout, "Enabled ep_weave: titles under %s are writable from the VM\n", cfg.TitlePrefix())
 	fmt.Fprintf(a.stdout, "Run `isotty up` to install the client in the VM.\n")
 	return nil
 }
@@ -1206,7 +1269,6 @@ func (a *App) runEpweaveShow(args []string) error {
 		return err
 	}
 	fmt.Fprintf(a.stdout, "prefix: %s\n", cfg.Prefix)
-	fmt.Fprintf(a.stdout, "vm_port: %d\n", cfg.Port())
 	fmt.Fprintf(a.stdout, "pinned: %s\n", epweave.PinPath(homeDir, hashProjectPath(projectPath)))
 	fmt.Fprintf(a.stdout, "url: %s\n", hostCfg.URL)
 	fmt.Fprintf(a.stdout, "client_id: %s\n", hostCfg.ClientID)
