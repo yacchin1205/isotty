@@ -157,3 +157,14 @@ func TestParseVMEvents(t *testing.T) {
 		t.Fatalf("Message = %q", events[1].Message)
 	}
 }
+
+func TestParseVMEventsEpweave(t *testing.T) {
+	output := `{"time":"2026-10-24T00:17:08Z","type":"epweave-create","client_hostname":"macbook-pro","client_user":"yazawa","project_hash":"abc","title":"isotty-test/動作確認","pad_id":"ea96a25b"}`
+	events, err := parseVMEvents(output)
+	if err != nil {
+		t.Fatalf("parseVMEvents returned error: %v", err)
+	}
+	if events[0].Message != `epweave-create client=macbook-pro user=yazawa title="isotty-test/動作確認" pad=ea96a25b` {
+		t.Fatalf("Message = %q", events[0].Message)
+	}
+}

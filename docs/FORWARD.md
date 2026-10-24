@@ -54,3 +54,6 @@ The default posture is:
 * local bind target is `127.0.0.1`
 * forwards are not kept alive in the background
 * invalid forward definitions fail loudly
+* a forward that cannot bind fails the attach (`ExitOnForwardFailure=yes`)
+
+The reverse forward used by the ep_weave gateway is described in [ep_weave design](EPWEAVE.md).

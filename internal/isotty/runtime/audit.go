@@ -67,6 +67,8 @@ type VMEventRecord struct {
 	ProjectHash    string `json:"project_hash,omitempty"`
 	ForwardCount   int    `json:"forward_count,omitempty"`
 	Result         string `json:"result,omitempty"`
+	Title          string `json:"title,omitempty"`
+	PadID          string `json:"pad_id,omitempty"`
 }
 
 type RemoteTarget struct {
@@ -125,6 +127,27 @@ func QueryAuditLogs(target RemoteTarget, start string) ([]AuditEvent, error) {
 }
 
 func NewAttachVMEvent(projectHash, eventType string, forwardCount int, result string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, eventType)
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.ForwardCount = forwardCount
+	record.Result = result
+	return record, nil
+}
+
+// NewEpweaveVMEvent records a pad write made from the VM through the ep_weave gateway.
+func NewEpweaveVMEvent(projectHash, operation, title, padID string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, "epweave-"+operation)
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.Title = title
+	record.PadID = padID
+	return record, nil
+}
+
+func newVMEvent(projectHash, eventType string) (VMEventRecord, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return VMEventRecord{}, fmt.Errorf("resolve client hostname: %w", err)
@@ -133,14 +156,11 @@ func NewAttachVMEvent(projectHash, eventType string, forwardCount int, result st
 	if err != nil {
 		return VMEventRecord{}, fmt.Errorf("resolve client user: %w", err)
 	}
-
 	return VMEventRecord{
 		Type:           eventType,
 		ClientHostname: hostname,
 		ClientUser:     currentUser.Username,
 		ProjectHash:    projectHash,
-		ForwardCount:   forwardCount,
-		Result:         result,
 	}, nil
 }
 
@@ -483,6 +503,12 @@ func formatVMEvent(record VMEventRecord) string {
 	}
 	if record.Result != "" {
 		parts = append(parts, "result="+record.Result)
+	}
+	if record.Title != "" {
+		parts = append(parts, "title="+strconv.Quote(record.Title))
+	}
+	if record.PadID != "" {
+		parts = append(parts, "pad="+record.PadID)
 	}
 	return strings.Join(parts, " ")
 }
