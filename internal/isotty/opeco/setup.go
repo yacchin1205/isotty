@@ -17,7 +17,7 @@ import (
 // minimumVersion is the oldest opeco-link release whose CLI offers what
 // the setup relies on: `--qr-port` and `BROWSER`. The VM gets the latest
 // release, which is the one opeco keeps compatible with its service.
-const minimumVersion = "2026.10.1"
+const minimumVersion = "2026.10.2"
 
 //go:embed assets/opeco-setup.sh
 var setupScript string
