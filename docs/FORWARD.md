@@ -56,4 +56,7 @@ The default posture is:
 * invalid forward definitions fail loudly
 * a forward that cannot bind fails the attach (`ExitOnForwardFailure=yes`)
 
-The reverse forward used by the ep_weave gateway is described in [ep_weave design](EPWEAVE.md).
+`attach` also opens one reverse forward for the host gateway, which serves
+host-side services to the VM on port 61001: [ep_weave](EPWEAVE.md) under
+`/epweave` and the browser-open request of [opeco](OPECO.md) at `/open`. It
+exists only while the project uses at least one of them.

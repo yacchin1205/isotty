@@ -10,11 +10,6 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// DefaultVMPort sits above the Linux ephemeral range (32768-60999) so it
-// collides neither with services a project runs in the VM nor with outgoing
-// connections.
-const DefaultVMPort = 61001
-
 // HostConfig holds the ep_weave credentials. It lives on the host only and is
 // never synced into the VM; only the gateway uses it.
 type HostConfig struct {
@@ -23,11 +18,10 @@ type HostConfig struct {
 	ClientSecret string `json:"client_secret"`
 }
 
-// ProjectConfig enables the gateway for a project. Pads whose title starts
-// with "<prefix>/" are writable from the VM; every pad is readable.
+// ProjectConfig enables ep_weave for a project. Pads whose title starts with
+// "<prefix>/" are writable from the VM; every pad is readable.
 type ProjectConfig struct {
 	Prefix string `json:"prefix"`
-	VMPort *int   `json:"vm_port,omitempty"`
 }
 
 func HostConfigPath(homeDir string) string {
@@ -79,16 +73,11 @@ func LoadProjectConfig(projectPath string) (ProjectConfig, bool, error) {
 
 func ParseProjectConfig(data []byte) (ProjectConfig, error) {
 	var cfg ProjectConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := yaml.UnmarshalStrict(data, &cfg); err != nil {
 		return ProjectConfig{}, err
 	}
 	if err := ValidatePrefix(cfg.Prefix); err != nil {
 		return ProjectConfig{}, err
-	}
-	if cfg.VMPort != nil {
-		if err := validatePort(*cfg.VMPort); err != nil {
-			return ProjectConfig{}, err
-		}
 	}
 	return cfg, nil
 }
@@ -96,11 +85,6 @@ func ParseProjectConfig(data []byte) (ProjectConfig, error) {
 func SaveProjectConfig(projectPath string, cfg ProjectConfig) error {
 	if err := ValidatePrefix(cfg.Prefix); err != nil {
 		return err
-	}
-	if cfg.VMPort != nil {
-		if err := validatePort(*cfg.VMPort); err != nil {
-			return err
-		}
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
@@ -124,13 +108,6 @@ func RemoveProjectConfig(projectPath string) error {
 	return nil
 }
 
-func (c ProjectConfig) Port() int {
-	if c.VMPort == nil {
-		return DefaultVMPort
-	}
-	return *c.VMPort
-}
-
 // TitlePrefix is the prefix every title written from the VM must carry.
 func (c ProjectConfig) TitlePrefix() string {
 	return c.Prefix + "/"
@@ -144,13 +121,6 @@ func ValidatePrefix(prefix string) error {
 	}
 	if strings.ContainsAny(prefix, "/#") || strings.ContainsFunc(prefix, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' }) {
 		return fmt.Errorf("invalid prefix %q: it must not contain '/', '#' or whitespace", prefix)
-	}
-	return nil
-}
-
-func validatePort(port int) error {
-	if port < 1 || port > 65535 {
-		return fmt.Errorf("invalid vm_port %d", port)
 	}
 	return nil
 }

@@ -35,13 +35,20 @@ func ListAgents(projectPath string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("read %s: %w", configPath, err)
 	}
+	agents, err := ParseAgents(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", configPath, err)
+	}
+	return agents, nil
+}
 
+func ParseAgents(data []byte) ([]string, error) {
 	var cfg agentConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", configPath, err)
+		return nil, err
 	}
 	if len(cfg.Agents) == 0 {
-		return nil, fmt.Errorf("%s does not define any agents", configPath)
+		return nil, errors.New("does not define any agents")
 	}
 
 	agents := make([]string, 0, len(cfg.Agents))
@@ -50,7 +57,7 @@ func ListAgents(projectPath string) ([]string, error) {
 		case "codex", "claude":
 			agents = append(agents, name)
 		default:
-			return nil, fmt.Errorf("%s contains unsupported agent %q", configPath, name)
+			return nil, fmt.Errorf("contains unsupported agent %q", name)
 		}
 	}
 	sort.Strings(agents)

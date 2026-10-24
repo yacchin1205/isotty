@@ -50,7 +50,7 @@ func TestBuildAttachSSHArgsWithEpweaveGateway(t *testing.T) {
 		SSHConfigPath: "/tmp/isotty/ssh/config",
 	}
 
-	args := buildAttachSSHArgs(conn, "/workspace", ForwardConfig{Forwards: map[string]Forward{}}, &epweaveForward{VMPort: 61001, HostPort: 54321})
+	args := buildAttachSSHArgs(conn, "/workspace", ForwardConfig{Forwards: map[string]Forward{}}, &reverseForward{VMPort: 61001, HostPort: 54321})
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-R 127.0.0.1:61001:127.0.0.1:54321") {
 		t.Fatalf("args = %v, want reverse forward to the gateway", args)
@@ -70,5 +70,21 @@ func TestBuildAttachSSHArgsWithUser(t *testing.T) {
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "testuser@isotty-abc.us-central1-f.demo-project") {
 		t.Fatalf("args = %v, want user-qualified instance target", args)
+	}
+}
+
+func TestAddOpecoForwardUsesTheProjectPort(t *testing.T) {
+	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
+	if err := addOpecoForward(forwardCfg, 0); err == nil {
+		t.Fatal("a state without a QR port must fail the attach")
+	}
+	if err := addOpecoForward(forwardCfg, 61003); err != nil {
+		t.Fatal(err)
+	}
+	if qr := forwardCfg.Forwards[opecoForwardName]; qr.LocalPort != 61003 || qr.RemotePort != 61003 {
+		t.Fatalf("opeco-qr forward = %+v, want 61003 on both ends", qr)
+	}
+	if err := addOpecoForward(forwardCfg, 61003); err == nil {
+		t.Fatal("a project forward named opeco-qr must be rejected")
 	}
 }

@@ -18,6 +18,10 @@ type State struct {
 	SyncMode            string `json:"sync_mode"`
 	BootstrapCompleted  bool   `json:"bootstrap_completed,omitempty"`
 	RemoteWorkspacePath string `json:"remote_workspace_path"`
+	// OpecoQRPort is the port opeco serves its QR page on in this VM, chosen
+	// at `up` so that no two projects on this host share it; 0 when the
+	// project has no agents.
+	OpecoQRPort int `json:"opeco_qr_port,omitempty"`
 
 	SessionName          string `json:"-"`
 	MutagenDataDirectory string `json:"-"`
@@ -80,23 +84,52 @@ func SaveState(state State) error {
 }
 
 func LoadStateForProject(projectPath string) (State, error) {
-	hash := hashProjectPath(projectPath)
-	path, err := stateFilePath(hash)
+	state, err := LoadState(hashProjectPath(projectPath))
+	if os.IsNotExist(err) {
+		return State{}, fmt.Errorf("no IsoTTY environment found for %s", projectPath)
+	}
+	return state, err
+}
+
+// LoadState reads the state of a project by hash; a missing state is reported
+// with an error for which os.IsNotExist holds.
+func LoadState(projectHash string) (State, error) {
+	path, err := stateFilePath(projectHash)
 	if err != nil {
 		return State{}, err
 	}
+	return readState(path)
+}
 
+// ListStates returns every project state on this host.
+func ListStates() ([]State, error) {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return nil, err
+	}
+	paths, err := filepath.Glob(filepath.Join(homeDir, "projects", "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	states := make([]State, 0, len(paths))
+	for _, path := range paths {
+		state, err := readState(path)
+		if err != nil {
+			return nil, err
+		}
+		states = append(states, state)
+	}
+	return states, nil
+}
+
+func readState(path string) (State, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return State{}, fmt.Errorf("no IsoTTY environment found for %s", projectPath)
-		}
 		return State{}, err
 	}
-
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
-		return State{}, err
+		return State{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	homeDir, err := isottyHome()
 	if err != nil {

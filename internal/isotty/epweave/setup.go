@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/yazawa/isotty/internal/isotty/gateway"
 )
 
 //go:embed assets/isotty-notes.py
@@ -48,7 +50,7 @@ func SetupCommand(cfg ProjectConfig, installClaudeSkill bool) string {
 
 func render(template string, cfg ProjectConfig) string {
 	return strings.NewReplacer(
-		"__ISOTTY_EPWEAVE_PORT__", strconv.Itoa(cfg.Port()),
+		"__ISOTTY_GATEWAY_PORT__", strconv.Itoa(gateway.VMPort),
 		"__ISOTTY_EPWEAVE_PREFIX__", cfg.TitlePrefix(),
 	).Replace(template)
 }

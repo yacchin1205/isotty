@@ -20,7 +20,7 @@ func TestProjectConfigRoundTrip(t *testing.T) {
 	if err != nil || !enabled {
 		t.Fatalf("LoadProjectConfig() = enabled %v, err %v", enabled, err)
 	}
-	if cfg.Prefix != "isotty" || cfg.Port() != DefaultVMPort || cfg.TitlePrefix() != "isotty/" {
+	if cfg.Prefix != "isotty" || cfg.TitlePrefix() != "isotty/" {
 		t.Fatalf("cfg = %#v", cfg)
 	}
 
@@ -33,14 +33,14 @@ func TestProjectConfigRoundTrip(t *testing.T) {
 }
 
 func TestParseProjectConfig(t *testing.T) {
-	cfg, err := ParseProjectConfig([]byte("prefix: demo\nvm_port: 61002\n"))
+	cfg, err := ParseProjectConfig([]byte("prefix: demo\n"))
 	if err != nil {
 		t.Fatalf("ParseProjectConfig() error = %v", err)
 	}
-	if cfg.Prefix != "demo" || cfg.Port() != 61002 {
+	if cfg.Prefix != "demo" {
 		t.Fatalf("cfg = %#v", cfg)
 	}
-	for _, data := range []string{"", "prefix: ''\n", "prefix: a/b\n", "prefix: '#x'\n", "prefix: 'a b'\n", "prefix: ok\nvm_port: 0\n"} {
+	for _, data := range []string{"", "prefix: ''\n", "prefix: a/b\n", "prefix: '#x'\n", "prefix: 'a b'\n", "prefix: ok\nvm_port: 61001\n"} {
 		if _, err := ParseProjectConfig([]byte(data)); err == nil {
 			t.Fatalf("ParseProjectConfig(%q) should fail", data)
 		}
@@ -99,8 +99,7 @@ func TestInsertionPoint(t *testing.T) {
 }
 
 func TestSetupCommand(t *testing.T) {
-	port := 61002
-	command := SetupCommand(ProjectConfig{Prefix: "demo", VMPort: &port}, true)
+	command := SetupCommand(ProjectConfig{Prefix: "demo"}, true)
 	for _, want := range []string{"set -euo pipefail", "sudo tee " + ClientPath, "sudo chmod 755 " + ClientPath, "sshd_config.d/00-isotty.conf", "systemctl reload ssh", ClaudeSkillDir + "/SKILL.md"} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("SetupCommand() missing %q:\n%s", want, command)
@@ -109,8 +108,8 @@ func TestSetupCommand(t *testing.T) {
 	if strings.Contains(SetupCommand(ProjectConfig{Prefix: "demo"}, false), "SKILL.md") {
 		t.Fatal("SetupCommand() should not install the skill without Claude")
 	}
-	rendered := render(notesClientScript, ProjectConfig{Prefix: "demo", VMPort: &port})
-	if !strings.Contains(rendered, "http://127.0.0.1:61002") || strings.Contains(rendered, "__ISOTTY_") {
+	rendered := render(notesClientScript, ProjectConfig{Prefix: "demo"})
+	if !strings.Contains(rendered, "http://127.0.0.1:61001/epweave") || strings.Contains(rendered, "__ISOTTY_") {
 		t.Fatalf("rendered client script not substituted:\n%s", rendered)
 	}
 	skill := render(notesSkill, ProjectConfig{Prefix: "demo"})

@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-GATEWAY = 'http://127.0.0.1:__ISOTTY_EPWEAVE_PORT__'
+GATEWAY = 'http://127.0.0.1:__ISOTTY_GATEWAY_PORT__/epweave'
 
 UNREACHABLE = (
     'isotty-notes: the ep_weave gateway at {gateway} is not reachable ({reason}). '

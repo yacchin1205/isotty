@@ -253,6 +253,34 @@ func RunGCPRemoteCommand(conn GCPConnection, command string, debug bool) error {
 	)
 }
 
+// RunGCPRemoteCommandWithInput runs command with input on its stdin, for data
+// too large for a command line.
+func RunGCPRemoteCommandWithInput(conn GCPConnection, command string, input io.Reader) error {
+	args := []string{
+		"compute", "ssh", gcpSSHInstanceTarget(conn),
+		"--project", conn.ProjectID,
+		"--zone", conn.Zone,
+		"--command", command,
+	}
+	var stdout strings.Builder
+	var stderr strings.Builder
+	cmd := exec.Command("gcloud", args...)
+	cmd.Env = os.Environ()
+	cmd.Stdin = input
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf(
+			"command failed: gcloud %s: %w\nstdout:\n%s\nstderr:\n%s",
+			strings.Join(args, " "),
+			err,
+			strings.TrimRight(stdout.String(), "\n"),
+			strings.TrimRight(stderr.String(), "\n"),
+		)
+	}
+	return nil
+}
+
 func RunGCPInteractiveSSH(args ...string) error {
 	if err := interactive.Run(interactive.Process{
 		Program: "ssh",
