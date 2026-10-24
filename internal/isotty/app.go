@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/yazawa/isotty/internal/isotty/epweave"
+	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
@@ -306,22 +307,6 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 		SSHConfigPath: filepath.Join(homeDir, "ssh", "config"),
 	}
 
-	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
-	var epweaveCfg *epweave.ProjectConfig
-	if !noForward {
-		data, err := vmcfg.FetchGCPProjectFile(conn, ".isotty/forward.yaml")
-		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-		} else {
-			forwardCfg, err = ParseForwardConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote forward config: %w", err)
-			}
-		}
-	}
-
 	workspacePath, err := vmcfg.GetGCPWorkspacePath(conn)
 	if err != nil {
 		return err
@@ -330,13 +315,21 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 	if err != nil {
 		return err
 	}
+
+	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
+	var epweaveCfg *epweave.ProjectConfig
 	if !noForward {
-		data, err := vmcfg.FetchGCPProjectFile(conn, ".isotty/epweave.yaml")
-		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				return err
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/forward.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			forwardCfg, err = ParseForwardConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote forward config: %w", err)
 			}
-		} else {
+		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/epweave.yaml"); err != nil {
+			return err
+		} else if data != nil {
 			synced, err := epweave.ParseProjectConfig(data)
 			if err != nil {
 				return fmt.Errorf("parse remote epweave config: %w", err)
@@ -347,8 +340,29 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 			}
 			epweaveCfg = &verified
 		}
+		var agents []string
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/agent.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			agents, err = runtimecfg.ParseAgents(data)
+			if err != nil {
+				return fmt.Errorf("parse remote agent config: %w", err)
+			}
+		}
+		if err := addOpecoForward(forwardCfg, agents); err != nil {
+			return err
+		}
 	}
 	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg, epweaveCfg)
+}
+
+// fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
+func fetchOptionalProjectFile(conn vmcfg.GCPConnection, pathInWorkspace string) ([]byte, error) {
+	data, err := vmcfg.FetchGCPProjectFile(conn, pathInWorkspace)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return data, err
 }
 
 func (a *App) attachToState(projectPath string, state State, user string, noForward bool) error {
@@ -368,6 +382,13 @@ func (a *App) attachToState(projectPath string, state State, user string, noForw
 		if err != nil {
 			return err
 		}
+		agents, err := runtimecfg.ListAgents(projectPath)
+		if err != nil {
+			return err
+		}
+		if err := addOpecoForward(forwardCfg, agents); err != nil {
+			return err
+		}
 	}
 
 	conn := vmcfg.GCPConnection{
@@ -382,6 +403,21 @@ func (a *App) attachToState(projectPath string, state State, user string, noForw
 		return err
 	}
 	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg, epweaveCfg)
+}
+
+const opecoForwardName = "opeco-qr"
+
+// addOpecoForward exposes the VM's opeco QR page on the same host port while
+// attached, so the URL opeco prints opens unchanged in the host browser.
+func addOpecoForward(forwardCfg ForwardConfig, agents []string) error {
+	if !opeco.Active(agents) {
+		return nil
+	}
+	if _, exists := forwardCfg.Forwards[opecoForwardName]; exists {
+		return fmt.Errorf("forward %q is reserved for the opeco QR page", opecoForwardName)
+	}
+	forwardCfg.Forwards[opecoForwardName] = Forward{LocalPort: opeco.QRPort, RemotePort: opeco.QRPort}
+	return nil
 }
 
 // epweaveForward is the reverse forward that exposes the host-side gateway
@@ -921,6 +957,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
 			}, epweave.SetupCommand(*cfg.Epweave, installClaudeSkill), a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	}
+	if opeco.Active(cfg.Runtime.Agents) {
+		if err := a.runPhase("Installing opeco", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, opeco.SetupCommand(cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}

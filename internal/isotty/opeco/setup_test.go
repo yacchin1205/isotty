@@ -1,0 +1,43 @@
+package opeco
+
+import (
+	"encoding/base64"
+	"strings"
+	"testing"
+)
+
+func TestActiveNeedsAnAgent(t *testing.T) {
+	if Active(nil) {
+		t.Fatal("opeco should be inactive without agents")
+	}
+	if !Active([]string{"claude"}) {
+		t.Fatal("opeco should be active with an agent")
+	}
+}
+
+func TestSetupCommand(t *testing.T) {
+	command := SetupCommand([]string{"claude"})
+	prefix, suffix := "printf %s ", " | base64 -d | bash"
+	if !strings.HasPrefix(command, prefix) || !strings.HasSuffix(command, suffix) {
+		t.Fatalf("command = %q", command)
+	}
+	script, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(strings.TrimPrefix(command, prefix), suffix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`version="` + version + `"`,
+		`qr_port="61002"`,
+		`install_claude="1"`,
+		`install_codex="0"`,
+		"sha256sum --ignore-missing -c checksums.txt",
+		"sudo install -m 0755",
+	} {
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(string(script), "__") {
+		t.Fatalf("script has an unrendered placeholder:\n%s", script)
+	}
+}

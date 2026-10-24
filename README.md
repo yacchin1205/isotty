@@ -164,6 +164,13 @@ isotty-notes create 'myproject/design' --tags '#myproject' < memo.md
 
 See [ep_weave design](docs/EPWEAVE.md).
 
+opeco notifications:
+
+When an agent is configured, `isotty up` also installs [opeco](https://github.com/yacchin1205/opeco-link) in the VM and registers it as the agent's `opeco-link` MCP server, so the agent can keep you informed on your phone while your machine sleeps.
+Pairing happens once while attached: the agent prints the QR page URL, which `isotty attach` forwards to your browser.
+
+See [opeco design](docs/OPECO.md).
+
 Optional Node.js runtime version:
 
 ```text
@@ -265,6 +272,7 @@ IsoTTY stores local state under:
 * [Sync design](docs/SYNC.md)
 * [Forward design](docs/FORWARD.md)
 * [ep_weave design](docs/EPWEAVE.md)
+* [opeco design](docs/OPECO.md)
 * [Audit design](docs/AUDIT.md)
 * [Agent design](docs/AGENT.md)
 * [Tools design](docs/TOOLS.md)
