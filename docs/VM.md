@@ -88,6 +88,7 @@ Bootstrap sets up:
 * optional agent CLIs from `./.isotty/agent.yaml`
 * optional services from `./.isotty/service.yaml`
 * optional post-install script from `/workspace/.isotty/post-install.sh`, executed with `sudo`
+* the host's `~/.isotty/home` and then saved agent login state, unpacked into the VM home
 * audit support required by IsoTTY
 
 ## Local State

@@ -43,11 +43,6 @@ func CaptureAgentAuthCommand(agent string) string {
 		shellJoin(paths), excludes)
 }
 
-// RestoreAgentAuthCommand unpacks an archive streamed on stdin into the home.
-func RestoreAgentAuthCommand() string {
-	return "tar -xzf - -C ~"
-}
-
 // SaveAgentAuth encrypts and stores an archive. An empty archive (the agent
 // had no state) removes the file, so the project mirrors the VM at `down`.
 func SaveAgentAuth(homeDir, projectPath, agent string, archive []byte) error {

@@ -96,7 +96,4 @@ func TestCaptureAgentAuthCommand(t *testing.T) {
 	if !strings.Contains(codex, `tar -czf - --exclude=".codex/.tmp" --exclude=".codex/cache" --exclude=".codex/plugins/cache" "$@"`) {
 		t.Fatalf("codex command missing excludes: %s", codex)
 	}
-	if RestoreAgentAuthCommand() != "tar -xzf - -C ~" {
-		t.Fatalf("RestoreAgentAuthCommand() = %q", RestoreAgentAuthCommand())
-	}
 }
