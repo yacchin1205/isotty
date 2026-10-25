@@ -246,6 +246,12 @@ isotty vm gcp show
 isotty vm gcp set --machine-type e2-standard-8 --boot-disk-size 200GB
 ```
 
+## Files for the VM Home
+
+Files placed under `~/.isotty/home` on the host are copied into the home directory of every VM this host creates, with the same relative paths. This is how personal instructions reach the agents, for example `~/.isotty/home/CODE_POLICY.md` and a `~/.isotty/home/.claude/CLAUDE.md` that tells Claude to read it.
+
+The directory must hold copies: `isotty up` stops if it finds a symbolic link, naming the link. Files are copied when the VM is created, so changes reach a VM only through `down` and `up`.
+
 ## Sync Modes
 
 Default:

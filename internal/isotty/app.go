@@ -923,6 +923,10 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	state := NewState(cfg, syncMode)
 	created := false
 	gcpConfig := cfg.VM.GCP
+	homeArchive, hasHomeArchive, err := runtimecfg.HomeFilesArchive(cfg.HomeDir)
+	if err != nil {
+		return State{}, err
+	}
 	previous, stateErr := LoadStateForProject(cfg.ProjectPath)
 	hasState := stateErr == nil
 	if stateErr != nil && !IsStateNotFoundError(stateErr) {
@@ -1007,6 +1011,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 			}, command, a.debug)
 		}); err != nil {
 			return State{}, err
+		}
+		if hasHomeArchive {
+			if err := a.runPhase("Copying %s into the VM home", func() error {
+				return vmcfg.RunGCPRemoteCommandWithInput(vmcfg.GCPConnection{
+					ProjectID:    state.GCPProjectID,
+					Zone:         state.Zone,
+					InstanceName: state.InstanceName,
+				}, runtimecfg.UnpackHomeCommand(), bytes.NewReader(homeArchive))
+			}, runtimecfg.HomeFilesDir(cfg.HomeDir)); err != nil {
+				return State{}, err
+			}
 		}
 		if err := a.restoreAgentAuth(cfg, state); err != nil {
 			return State{}, err
@@ -1134,7 +1149,7 @@ func (a *App) restoreAgentAuth(cfg Config, state State) error {
 			continue
 		}
 		if err := a.runPhase("Restoring %s login state", func() error {
-			return vmcfg.RunGCPRemoteCommandWithInput(conn, runtimecfg.RestoreAgentAuthCommand(), bytes.NewReader(archive))
+			return vmcfg.RunGCPRemoteCommandWithInput(conn, runtimecfg.UnpackHomeCommand(), bytes.NewReader(archive))
 		}, agent); err != nil {
 			return fmt.Errorf("restore %s login state: %w", agent, err)
 		}
