@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yazawa/isotty/internal/isotty/gateway"
+	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 )
 
 // minimumVersion is the oldest opeco-link release whose CLI offers what

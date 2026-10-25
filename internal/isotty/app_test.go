@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yazawa/isotty/internal/isotty/host"
+
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
 
@@ -14,8 +16,8 @@ func TestBuildAttachSSHArgs(t *testing.T) {
 		Zone:          "us-central1-f",
 		SSHConfigPath: "/tmp/isotty/ssh/config",
 	}
-	forwardCfg := ForwardConfig{
-		Forwards: map[string]Forward{
+	forwardCfg := host.ForwardConfig{
+		Forwards: map[string]host.Forward{
 			"web": {LocalPort: 8080, RemotePort: 8080},
 		},
 	}
@@ -50,7 +52,7 @@ func TestBuildAttachSSHArgsWithEpweaveGateway(t *testing.T) {
 		SSHConfigPath: "/tmp/isotty/ssh/config",
 	}
 
-	args := buildAttachSSHArgs(conn, "/workspace", ForwardConfig{Forwards: map[string]Forward{}}, &reverseForward{VMPort: 61001, HostPort: 54321})
+	args := buildAttachSSHArgs(conn, "/workspace", host.ForwardConfig{Forwards: map[string]host.Forward{}}, &reverseForward{VMPort: 61001, HostPort: 54321})
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-R 127.0.0.1:61001:127.0.0.1:54321") {
 		t.Fatalf("args = %v, want reverse forward to the gateway", args)
@@ -66,7 +68,7 @@ func TestBuildAttachSSHArgsWithUser(t *testing.T) {
 		SSHConfigPath: "/tmp/isotty/ssh/config",
 	}
 
-	args := buildAttachSSHArgs(conn, "/workspace", ForwardConfig{Forwards: map[string]Forward{}}, nil)
+	args := buildAttachSSHArgs(conn, "/workspace", host.ForwardConfig{Forwards: map[string]host.Forward{}}, nil)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "testuser@isotty-abc.us-central1-f.demo-project") {
 		t.Fatalf("args = %v, want user-qualified instance target", args)
@@ -74,7 +76,7 @@ func TestBuildAttachSSHArgsWithUser(t *testing.T) {
 }
 
 func TestAddOpecoForwardUsesTheProjectPort(t *testing.T) {
-	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
+	forwardCfg := host.ForwardConfig{Forwards: map[string]host.Forward{}}
 	if err := addOpecoForward(forwardCfg, 0); err == nil {
 		t.Fatal("a state without a QR port must fail the attach")
 	}

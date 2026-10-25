@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yazawa/isotty/internal/isotty/gateway"
+	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 )
 
 //go:embed assets/isotty-notes.py

@@ -131,8 +131,8 @@ Port forwards:
 These forwards are applied while attached, so services running in the VM are reachable on local `localhost` ports.
 
 ```bash
-isotty forward add web --local-port 8080 --remote-port 8080
-isotty forward list
+isotty host forward add web --local-port 8080 --remote-port 8080
+isotty host forward list
 ```
 
 Stored in:
@@ -147,7 +147,7 @@ The agent in the VM can read and write pads in the [ep_weave](https://github.com
 The VM never sees ep_weave itself or its credentials, and can write only under the project's title prefix.
 
 ```bash
-isotty epweave enable --prefix myproject
+isotty host epweave enable --prefix myproject
 isotty up
 ```
 

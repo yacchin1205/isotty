@@ -1,4 +1,4 @@
-package isotty
+package host
 
 import (
 	"path/filepath"
