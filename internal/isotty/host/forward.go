@@ -1,8 +1,10 @@
-package isotty
+package host
 
 import (
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -119,4 +121,92 @@ func validatePort(port int) error {
 
 func forwardConfigPath(projectPath string) string {
 	return filepath.Join(projectPath, ".isotty", "forward.yaml")
+}
+
+func runForward(projectPath string, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("host forward requires a subcommand: add, list, or remove")
+	}
+
+	switch args[0] {
+	case "add":
+		return runForwardAdd(projectPath, args[1:], stdout, stderr)
+	case "list":
+		return runForwardList(projectPath, args[1:], stdout, stderr)
+	case "remove":
+		return runForwardRemove(projectPath, args[1:], stdout, stderr)
+	default:
+		return fmt.Errorf("unknown host forward subcommand %q", args[0])
+	}
+}
+
+func runForwardAdd(projectPath string, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("host forward add requires a name")
+	}
+	name := args[0]
+
+	fs := flag.NewFlagSet("host forward add", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	localPort := fs.Int("local-port", 0, "local port")
+	remotePort := fs.Int("remote-port", 0, "remote port")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("host forward add accepts exactly one name")
+	}
+
+	forward := Forward{LocalPort: *localPort, RemotePort: *remotePort}
+	if err := AddForward(projectPath, name, forward); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(stdout, "Added forward %s (%d -> %d)\n", name, forward.LocalPort, forward.RemotePort)
+	return nil
+}
+
+func runForwardList(projectPath string, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("host forward list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("host forward list does not accept arguments")
+	}
+
+	cfg, err := LoadForwardConfig(projectPath)
+	if err != nil {
+		return err
+	}
+	names := SortedForwardNames(cfg)
+	if len(names) == 0 {
+		fmt.Fprintln(stdout, "No forwards configured.")
+		return nil
+	}
+	for _, name := range names {
+		forward := cfg.Forwards[name]
+		fmt.Fprintf(stdout, "%s: localhost:%d -> remote:%d\n", name, forward.LocalPort, forward.RemotePort)
+	}
+	return nil
+}
+
+func runForwardRemove(projectPath string, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("host forward remove", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("host forward remove requires a name")
+	}
+
+	name := fs.Arg(0)
+	if err := RemoveForward(projectPath, name); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(stdout, "Removed forward %s\n", name)
+	return nil
 }

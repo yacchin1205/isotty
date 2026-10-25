@@ -16,8 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yazawa/isotty/internal/isotty/epweave"
-	"github.com/yazawa/isotty/internal/isotty/gateway"
+	"github.com/yazawa/isotty/internal/isotty/host"
+	"github.com/yazawa/isotty/internal/isotty/host/epweave"
+	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
@@ -68,10 +69,8 @@ func (a *App) Run(args []string) error {
 		return a.runID(args[1:])
 	case "attach":
 		return a.runAttach(args[1:])
-	case "forward":
-		return a.runForward(args[1:])
-	case "epweave":
-		return a.runEpweave(args[1:])
+	case "host":
+		return a.runHost(args[1:])
 	case "runtime":
 		return a.runRuntime(args[1:])
 	case "vm":
@@ -96,15 +95,15 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "Usage:")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe] [--user <name>] [--no-attach]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] id")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>] [--user <name>] [--no-forward]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>] [--user <name>] [--no-host]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] down [--force]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] audit logs [-f]")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] forward add <name> --local-port <port> --remote-port <port>")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] forward list")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] forward remove <name>")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] epweave enable --prefix <name>")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] epweave disable")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] epweave show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host forward add <name> --local-port <port> --remote-port <port>")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host forward list")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host forward remove <name>")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host epweave enable --prefix <name>")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host epweave disable")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host epweave show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt add <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt remove <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt list")
@@ -264,7 +263,7 @@ func (a *App) runAttach(args []string) error {
 	fs.SetOutput(a.stderr)
 	targetID := fs.String("target", "", "attach to a remote IsoTTY target id")
 	user := fs.String("user", "", "SSH username to use for attach")
-	noForward := fs.Bool("no-forward", false, "attach without loading or applying port forwards")
+	noHost := fs.Bool("no-host", false, "attach without port forwards and without the host gateway")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -275,7 +274,7 @@ func (a *App) runAttach(args []string) error {
 		return err
 	}
 	if *targetID != "" {
-		return a.attachToTarget(*targetID, *user, *noForward)
+		return a.attachToTarget(*targetID, *user, *noHost)
 	}
 
 	projectPath, err := filepath.Abs(".")
@@ -291,10 +290,10 @@ func (a *App) runAttach(args []string) error {
 		return err
 	}
 
-	return a.attachToState(projectPath, state, *user, *noForward)
+	return a.attachToState(projectPath, state, *user, *noHost)
 }
 
-func (a *App) attachToTarget(targetID, user string, noForward bool) error {
+func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 	target, err := vmcfg.ParseGCPID(targetID)
 	if err != nil {
 		return err
@@ -320,14 +319,14 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 		return err
 	}
 
-	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
+	forwardCfg := host.ForwardConfig{Forwards: map[string]host.Forward{}}
 	var epweaveCfg *epweave.ProjectConfig
 	var agents []string
-	if !noForward {
+	if !noHost {
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/forward.yaml"); err != nil {
 			return err
 		} else if data != nil {
-			forwardCfg, err = ParseForwardConfig(data)
+			forwardCfg, err = host.ParseForwardConfig(data)
 			if err != nil {
 				return fmt.Errorf("parse remote forward config: %w", err)
 			}
@@ -356,7 +355,7 @@ func (a *App) attachToTarget(targetID, user string, noForward bool) error {
 		if opeco.Active(agents) {
 			state, err := LoadState(projectHash)
 			if os.IsNotExist(err) {
-				return fmt.Errorf("this host has no state for project %s, so the opeco QR port that `isotty up` allocated is unknown; run `isotty up` in the project directory, or attach with --no-forward", projectHash)
+				return fmt.Errorf("this host has no state for project %s, so the opeco QR port that `isotty up` allocated is unknown; run `isotty up` in the project directory, or attach with --no-host", projectHash)
 			}
 			if err != nil {
 				return err
@@ -378,13 +377,13 @@ func fetchOptionalProjectFile(conn vmcfg.GCPConnection, pathInWorkspace string) 
 	return data, err
 }
 
-func (a *App) attachToState(projectPath string, state State, user string, noForward bool) error {
-	forwardCfg := ForwardConfig{Forwards: map[string]Forward{}}
+func (a *App) attachToState(projectPath string, state State, user string, noHost bool) error {
+	forwardCfg := host.ForwardConfig{Forwards: map[string]host.Forward{}}
 	var epweaveCfg *epweave.ProjectConfig
 	var agents []string
-	if !noForward {
+	if !noHost {
 		var err error
-		forwardCfg, err = LoadForwardConfig(projectPath)
+		forwardCfg, err = host.LoadForwardConfig(projectPath)
 		if err != nil {
 			return err
 		}
@@ -392,7 +391,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noForw
 		if err != nil {
 			return err
 		}
-		epweaveCfg, err = loadEpweaveProjectConfig(projectPath, state.ProjectHash, homeDir)
+		epweaveCfg, err = host.LoadEpweaveProjectConfig(projectPath, state.ProjectHash, homeDir)
 		if err != nil {
 			return err
 		}
@@ -426,14 +425,14 @@ const opecoForwardName = "opeco-qr"
 // addOpecoForward exposes the VM's opeco QR page on the same host port while
 // attached, so the URL opeco prints opens unchanged in the host browser. The
 // port is the one `up` recorded in the project state.
-func addOpecoForward(forwardCfg ForwardConfig, qrPort int) error {
+func addOpecoForward(forwardCfg host.ForwardConfig, qrPort int) error {
 	if qrPort == 0 {
 		return errors.New("the project state has no opeco QR port; run `isotty up` to allocate one")
 	}
 	if _, exists := forwardCfg.Forwards[opecoForwardName]; exists {
 		return fmt.Errorf("forward %q is reserved for the opeco QR page", opecoForwardName)
 	}
-	forwardCfg.Forwards[opecoForwardName] = Forward{LocalPort: qrPort, RemotePort: qrPort}
+	forwardCfg.Forwards[opecoForwardName] = host.Forward{LocalPort: qrPort, RemotePort: qrPort}
 	return nil
 }
 
@@ -443,8 +442,8 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg ForwardConfig, epweaveCfg *epweave.ProjectConfig) (err error) {
-	names := SortedForwardNames(forwardCfg)
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig) (err error) {
+	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
 	// Pad writes and browser-open requests are recorded in the VM event log
@@ -569,7 +568,7 @@ func (a *App) epweaveHandler(cfg epweave.ProjectConfig, projectHash string, reco
 	}), nil
 }
 
-func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg ForwardConfig, reverse *reverseForward) []string {
+func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg host.ForwardConfig, reverse *reverseForward) []string {
 	instanceTarget := fmt.Sprintf("%s.%s.%s", conn.InstanceName, conn.Zone, conn.ProjectID)
 	if conn.User != "" {
 		instanceTarget = conn.User + "@" + instanceTarget
@@ -585,7 +584,7 @@ func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardC
 		"-o", "ServerAliveInterval=15",
 		"-o", "ServerAliveCountMax=3",
 	}
-	for _, name := range SortedForwardNames(forwardCfg) {
+	for _, name := range host.SortedForwardNames(forwardCfg) {
 		forward := forwardCfg.Forwards[name]
 		sshArgs = append(sshArgs, "-L", fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", forward.LocalPort, forward.RemotePort))
 	}
@@ -721,23 +720,6 @@ func (a *App) runStatus(args []string) error {
 	return nil
 }
 
-func (a *App) runForward(args []string) error {
-	if len(args) == 0 {
-		return errors.New("forward requires a subcommand: add, list, or remove")
-	}
-
-	switch args[0] {
-	case "add":
-		return a.runForwardAdd(args[1:])
-	case "list":
-		return a.runForwardList(args[1:])
-	case "remove":
-		return a.runForwardRemove(args[1:])
-	default:
-		return fmt.Errorf("unknown forward subcommand %q", args[0])
-	}
-}
-
 func (a *App) runRuntime(args []string) error {
 	if len(args) == 0 {
 		return errors.New("runtime requires a subcommand: apt, service, post-install, node, agent, or tools")
@@ -772,6 +754,18 @@ func (a *App) runRuntime(args []string) error {
 	}
 }
 
+func (a *App) runHost(args []string) error {
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	homeDir, err := isottyHome()
+	if err != nil {
+		return err
+	}
+	return host.Run(projectPath, hashProjectPath(projectPath), homeDir, args, a.stdout, a.stderr)
+}
+
 func (a *App) runVM(args []string) error {
 	if len(args) == 0 {
 		return errors.New("vm requires a subcommand: gcp")
@@ -788,92 +782,6 @@ func (a *App) runVM(args []string) error {
 	default:
 		return fmt.Errorf("unknown vm subcommand %q", args[0])
 	}
-}
-
-func (a *App) runForwardAdd(args []string) error {
-	if len(args) == 0 {
-		return errors.New("forward add requires a name")
-	}
-	name := args[0]
-
-	fs := flag.NewFlagSet("forward add", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	localPort := fs.Int("local-port", 0, "local port")
-	remotePort := fs.Int("remote-port", 0, "remote port")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("forward add accepts exactly one name")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-
-	forward := Forward{LocalPort: *localPort, RemotePort: *remotePort}
-	if err := AddForward(projectPath, name, forward); err != nil {
-		return err
-	}
-
-	fmt.Fprintf(a.stdout, "Added forward %s (%d -> %d)\n", name, forward.LocalPort, forward.RemotePort)
-	return nil
-}
-
-func (a *App) runForwardList(args []string) error {
-	fs := flag.NewFlagSet("forward list", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("forward list does not accept arguments")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-
-	cfg, err := LoadForwardConfig(projectPath)
-	if err != nil {
-		return err
-	}
-	names := SortedForwardNames(cfg)
-	if len(names) == 0 {
-		fmt.Fprintln(a.stdout, "No forwards configured.")
-		return nil
-	}
-	for _, name := range names {
-		forward := cfg.Forwards[name]
-		fmt.Fprintf(a.stdout, "%s: localhost:%d -> remote:%d\n", name, forward.LocalPort, forward.RemotePort)
-	}
-	return nil
-}
-
-func (a *App) runForwardRemove(args []string) error {
-	fs := flag.NewFlagSet("forward remove", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return errors.New("forward remove requires a name")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-
-	name := fs.Arg(0)
-	if err := RemoveForward(projectPath, name); err != nil {
-		return err
-	}
-
-	fmt.Fprintf(a.stdout, "Removed forward %s\n", name)
-	return nil
 }
 
 func (a *App) printDependencyVersion(name string, args []string) error {
@@ -1245,118 +1153,4 @@ func validateSyncMode(mode string) error {
 		return nil
 	}
 	return fmt.Errorf("unsupported sync mode %q", mode)
-}
-
-func (a *App) runEpweave(args []string) error {
-	if len(args) == 0 {
-		return errors.New("epweave requires a subcommand: enable, disable, or show")
-	}
-
-	switch args[0] {
-	case "enable":
-		return a.runEpweaveEnable(args[1:])
-	case "disable":
-		return a.runEpweaveDisable(args[1:])
-	case "show":
-		return a.runEpweaveShow(args[1:])
-	default:
-		return fmt.Errorf("unknown epweave subcommand %q", args[0])
-	}
-}
-
-func (a *App) runEpweaveEnable(args []string) error {
-	fs := flag.NewFlagSet("epweave enable", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	prefix := fs.String("prefix", "", "title prefix the VM may write under (titles become <prefix>/<topic>)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("epweave enable does not accept arguments")
-	}
-	if *prefix == "" {
-		return errors.New("epweave enable requires --prefix")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	homeDir, err := isottyHome()
-	if err != nil {
-		return err
-	}
-	cfg := epweave.ProjectConfig{Prefix: *prefix}
-	if err := epweave.SaveProjectConfig(projectPath, cfg); err != nil {
-		return err
-	}
-	if err := epweave.SavePin(homeDir, hashProjectPath(projectPath), cfg); err != nil {
-		return err
-	}
-	fmt.Fprintf(a.stdout, "Enabled ep_weave: titles under %s are writable from the VM\n", cfg.TitlePrefix())
-	fmt.Fprintf(a.stdout, "Run `isotty up` to install the client in the VM.\n")
-	return nil
-}
-
-func (a *App) runEpweaveDisable(args []string) error {
-	fs := flag.NewFlagSet("epweave disable", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("epweave disable does not accept arguments")
-	}
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	homeDir, err := isottyHome()
-	if err != nil {
-		return err
-	}
-	if err := epweave.RemoveProjectConfig(projectPath); err != nil {
-		return err
-	}
-	if err := epweave.RemovePin(homeDir, hashProjectPath(projectPath)); err != nil {
-		return err
-	}
-	fmt.Fprintln(a.stdout, "Disabled ep_weave for this project.")
-	return nil
-}
-
-func (a *App) runEpweaveShow(args []string) error {
-	fs := flag.NewFlagSet("epweave show", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("epweave show does not accept arguments")
-	}
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	homeDir, err := isottyHome()
-	if err != nil {
-		return err
-	}
-	cfg, err := loadEpweaveProjectConfig(projectPath, hashProjectPath(projectPath), homeDir)
-	if err != nil {
-		return err
-	}
-	if cfg == nil {
-		fmt.Fprintln(a.stdout, "ep_weave is not enabled for this project.")
-		return nil
-	}
-	hostCfg, err := epweave.LoadHostConfig(homeDir)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(a.stdout, "prefix: %s\n", cfg.Prefix)
-	fmt.Fprintf(a.stdout, "pinned: %s\n", epweave.PinPath(homeDir, hashProjectPath(projectPath)))
-	fmt.Fprintf(a.stdout, "url: %s\n", hostCfg.URL)
-	fmt.Fprintf(a.stdout, "client_id: %s\n", hostCfg.ClientID)
-	return nil
 }

@@ -22,9 +22,9 @@ forwards:
 ## CLI
 
 ```bash
-isotty forward add <name> --local-port <port> --remote-port <port>
-isotty forward list
-isotty forward remove <name>
+isotty host forward add <name> --local-port <port> --remote-port <port>
+isotty host forward list
+isotty host forward remove <name>
 ```
 
 ## Lifecycle

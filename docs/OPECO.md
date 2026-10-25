@@ -37,8 +37,8 @@ Every accepted open request is recorded in the VM event log (`open-url`), so
 `isotty audit logs` shows what the VM asked the host's browser to show.
 
 The QR forward appears as `opeco-qr` beside the project's own forwards and
-exists only while attached. `attach --no-forward` skips it and the gateway
-like the others.
+exists only while attached. `attach --no-host` skips it together with the
+other forwards and the gateway.
 
 There is nothing to configure: opeco is installed whenever
 `.isotty/agent.yaml` lists an agent.

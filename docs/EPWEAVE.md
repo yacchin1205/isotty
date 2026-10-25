@@ -57,15 +57,15 @@ prefix: isotty
 ```
 
 ```bash
-isotty epweave enable --prefix isotty
-isotty epweave show
-isotty epweave disable
+isotty host epweave enable --prefix isotty
+isotty host epweave show
+isotty host epweave disable
 ```
 
 ### Pin
 
 `.isotty/` is synced two-way with `/workspace`, so an agent in the VM could
-rewrite `epweave.yaml` and widen its own prefix. `isotty epweave enable`
+rewrite `epweave.yaml` and widen its own prefix. `isotty host epweave enable`
 therefore also records the accepted values on the host:
 
 ```text
@@ -74,7 +74,7 @@ therefore also records the accepted values on the host:
 
 `up`, `attach` and `attach --target` compare the synced file with the pin
 and refuse to continue when they differ or when no pin exists. Accepting a
-change means running `isotty epweave enable` on the host again.
+change means running `isotty host epweave enable` on the host again.
 
 ## Operations
 
@@ -158,8 +158,8 @@ Three settings make that failure prompt instead of a hang:
   point nowhere; this applies to `-L` forwards as well
 
 A second `isotty attach` to the same VM therefore fails while the first is
-alive; use `isotty attach --no-forward` for the second terminal. The
-`--no-forward` flag also skips the gateway.
+alive; use `isotty attach --no-host` for the second terminal. That flag
+skips the forwards and the gateway.
 
 ## Security Posture
 
