@@ -19,6 +19,7 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
 	"github.com/yazawa/isotty/internal/isotty/host/gateway"
+	"github.com/yazawa/isotty/internal/isotty/host/github"
 	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
@@ -104,6 +105,9 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host epweave enable --prefix <name>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host epweave disable")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host epweave show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host github enable [--remote <name>[:read|write]]... [--repo <owner/name>[:read|write]]...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host github disable")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host github show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt add <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt remove <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt list")
@@ -321,6 +325,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 
 	forwardCfg := host.ForwardConfig{Forwards: map[string]host.Forward{}}
 	var epweaveCfg *epweave.ProjectConfig
+	var githubCfg *github.ProjectConfig
 	var agents []string
 	if !noHost {
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/forward.yaml"); err != nil {
@@ -344,6 +349,19 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 			epweaveCfg = &verified
 		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/github.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			synced, err := github.ParseProjectConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote github config: %w", err)
+			}
+			verified, err := github.VerifyPinned(homeDir, projectHash, synced)
+			if err != nil {
+				return err
+			}
+			githubCfg = &verified
+		}
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/agent.yaml"); err != nil {
 			return err
 		} else if data != nil {
@@ -365,7 +383,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 		}
 	}
-	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg, epweaveCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -380,6 +398,7 @@ func fetchOptionalProjectFile(conn vmcfg.GCPConnection, pathInWorkspace string) 
 func (a *App) attachToState(projectPath string, state State, user string, noHost bool) error {
 	forwardCfg := host.ForwardConfig{Forwards: map[string]host.Forward{}}
 	var epweaveCfg *epweave.ProjectConfig
+	var githubCfg *github.ProjectConfig
 	var agents []string
 	if !noHost {
 		var err error
@@ -392,6 +411,10 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 			return err
 		}
 		epweaveCfg, err = host.LoadEpweaveProjectConfig(projectPath, state.ProjectHash, homeDir)
+		if err != nil {
+			return err
+		}
+		githubCfg, err = host.LoadGitHubProjectConfig(projectPath, state.ProjectHash, homeDir)
 		if err != nil {
 			return err
 		}
@@ -417,7 +440,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg, epweaveCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -442,7 +465,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -465,6 +488,14 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		}
 		mux.Handle("/epweave/", http.StripPrefix("/epweave", handler))
 		services = append(services, "ep_weave")
+	}
+	if githubCfg != nil {
+		handler, err := a.githubHandler(*githubCfg, projectHash, record)
+		if err != nil {
+			return err
+		}
+		mux.Handle("/github/", http.StripPrefix("/github", handler))
+		services = append(services, "GitHub")
 	}
 	if qr, ok := forwardCfg.Forwards[opecoForwardName]; ok {
 		mux.Handle("/open", opeco.OpenHandler(qr.RemotePort, opeco.OpenInBrowser, func(url string) {
@@ -561,6 +592,26 @@ func (a *App) epweaveHandler(cfg epweave.ProjectConfig, projectHash string, reco
 	}
 	return epweave.Handler(notes, func(event epweave.WriteEvent) error {
 		vmEvent, err := runtimecfg.NewEpweaveVMEvent(projectHash, event.Operation, event.Title, event.PadID)
+		if err != nil {
+			return err
+		}
+		return record(vmEvent)
+	}), nil
+}
+
+// githubHandler relays the pinned repositories with the host token, recording
+// every push and write in the VM event log.
+func (a *App) githubHandler(cfg github.ProjectConfig, projectHash string, record func(runtimecfg.VMEventRecord) error) (http.Handler, error) {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return nil, err
+	}
+	hostCfg, err := github.LoadHostConfig(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	return github.Handler(hostCfg.Token, cfg, func(event github.WriteEvent) error {
+		vmEvent, err := runtimecfg.NewGitHubVMEvent(projectHash, event.Operation, event.Repo, event.Target)
 		if err != nil {
 			return err
 		}
@@ -969,6 +1020,18 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
 			}, epweave.SetupCommand(*cfg.Epweave, installClaudeSkill), a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	}
+	if cfg.GitHub != nil {
+		installClaudeSkill := slices.Contains(cfg.Runtime.Agents, "claude")
+		if err := a.runPhase("Installing GitHub client", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, github.SetupCommand(installClaudeSkill), a.debug)
 		}); err != nil {
 			return State{}, err
 		}

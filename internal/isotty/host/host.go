@@ -13,7 +13,7 @@ import (
 
 func Run(projectPath, projectHash, homeDir string, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("host requires a subcommand: forward or epweave")
+		return errors.New("host requires a subcommand: forward, epweave, or github")
 	}
 
 	switch args[0] {
@@ -21,6 +21,8 @@ func Run(projectPath, projectHash, homeDir string, args []string, stdout, stderr
 		return runForward(projectPath, args[1:], stdout, stderr)
 	case "epweave":
 		return runEpweave(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
+	case "github":
+		return runGitHub(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown host subcommand %q", args[0])
 	}

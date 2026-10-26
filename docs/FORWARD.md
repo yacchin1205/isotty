@@ -58,5 +58,6 @@ The default posture is:
 
 `attach` also opens one reverse forward for the host gateway, which serves
 host-side services to the VM on port 61001: [ep_weave](EPWEAVE.md) under
-`/epweave` and the browser-open request of [opeco](OPECO.md) at `/open`. It
-exists only while the project uses at least one of them.
+`/epweave`, the [GitHub relay](GITHUB.md) under `/github` and the
+browser-open request of [opeco](OPECO.md) at `/open`. It exists only while
+the project uses at least one of them.

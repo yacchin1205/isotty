@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
+	"github.com/yazawa/isotty/internal/isotty/host/pin"
 )
 
 func runEpweave(projectPath, projectHash, homeDir string, args []string, stdout, stderr io.Writer) error {
@@ -44,7 +45,7 @@ func runEpweaveEnable(projectPath, projectHash, homeDir string, args []string, s
 	if err := epweave.SaveProjectConfig(projectPath, cfg); err != nil {
 		return err
 	}
-	if err := epweave.SavePin(homeDir, projectHash, cfg); err != nil {
+	if err := pin.Save(homeDir, projectHash, epweave.PinKind, cfg); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "Enabled ep_weave: titles under %s are writable from the VM\n", cfg.TitlePrefix())
@@ -64,7 +65,7 @@ func runEpweaveDisable(projectPath, projectHash, homeDir string, args []string, 
 	if err := epweave.RemoveProjectConfig(projectPath); err != nil {
 		return err
 	}
-	if err := epweave.RemovePin(homeDir, projectHash); err != nil {
+	if err := pin.Remove(homeDir, projectHash, epweave.PinKind); err != nil {
 		return err
 	}
 	fmt.Fprintln(stdout, "Disabled ep_weave for this project.")
@@ -93,7 +94,7 @@ func runEpweaveShow(projectPath, projectHash, homeDir string, args []string, std
 		return err
 	}
 	fmt.Fprintf(stdout, "prefix: %s\n", cfg.Prefix)
-	fmt.Fprintf(stdout, "pinned: %s\n", epweave.PinPath(homeDir, projectHash))
+	fmt.Fprintf(stdout, "pinned: %s\n", pin.Path(homeDir, projectHash, epweave.PinKind))
 	fmt.Fprintf(stdout, "url: %s\n", hostCfg.URL)
 	fmt.Fprintf(stdout, "client_id: %s\n", hostCfg.ClientID)
 	return nil

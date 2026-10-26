@@ -74,6 +74,8 @@ type VMEventRecord struct {
 	Title          string `json:"title,omitempty"`
 	PadID          string `json:"pad_id,omitempty"`
 	URL            string `json:"url,omitempty"`
+	Repo           string `json:"repo,omitempty"`
+	Target         string `json:"target,omitempty"`
 }
 
 type RemoteTarget struct {
@@ -149,6 +151,18 @@ func NewEpweaveVMEvent(projectHash, operation, title, padID string) (VMEventReco
 	}
 	record.Title = title
 	record.PadID = padID
+	return record, nil
+}
+
+// NewGitHubVMEvent records a write the VM made on GitHub through the relay;
+// target is the pull request, issue or run it touched, empty for a push.
+func NewGitHubVMEvent(projectHash, operation, repo, target string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, "github-"+operation)
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.Repo = repo
+	record.Target = target
 	return record, nil
 }
 
@@ -527,6 +541,12 @@ func formatVMEvent(record VMEventRecord) string {
 	}
 	if record.URL != "" {
 		parts = append(parts, "url="+record.URL)
+	}
+	if record.Repo != "" {
+		parts = append(parts, "repo="+record.Repo)
+	}
+	if record.Target != "" {
+		parts = append(parts, "target="+record.Target)
 	}
 	return strings.Join(parts, " ")
 }

@@ -3,6 +3,8 @@ package epweave
 import (
 	"strings"
 	"testing"
+
+	"github.com/yazawa/isotty/internal/isotty/host/pin"
 )
 
 func TestVerifyPinned(t *testing.T) {
@@ -13,8 +15,8 @@ func TestVerifyPinned(t *testing.T) {
 		t.Fatalf("unpinned error = %v", err)
 	}
 
-	if err := SavePin(home, "abc", synced); err != nil {
-		t.Fatalf("SavePin() error = %v", err)
+	if err := pin.Save(home, "abc", PinKind, synced); err != nil {
+		t.Fatalf("pin.Save() error = %v", err)
 	}
 	if got, err := VerifyPinned(home, "abc", synced); err != nil || got.Prefix != "isotty" {
 		t.Fatalf("VerifyPinned() = %#v, %v", got, err)
@@ -24,14 +26,14 @@ func TestVerifyPinned(t *testing.T) {
 		t.Fatalf("tampered prefix error = %v", err)
 	}
 
-	if err := RemovePin(home, "abc"); err != nil {
-		t.Fatalf("RemovePin() error = %v", err)
+	if err := pin.Remove(home, "abc", PinKind); err != nil {
+		t.Fatalf("pin.Remove() error = %v", err)
 	}
-	if _, ok, err := LoadPin(home, "abc"); err != nil || ok {
-		t.Fatalf("LoadPin() after remove = %v, %v", ok, err)
+	if _, err := VerifyPinned(home, "abc", synced); err == nil || !strings.Contains(err.Error(), "not pinned") {
+		t.Fatalf("error after remove = %v", err)
 	}
-	if err := RemovePin(home, "abc"); err != nil {
-		t.Fatalf("second RemovePin() error = %v", err)
+	if err := pin.Remove(home, "abc", PinKind); err != nil {
+		t.Fatalf("second pin.Remove() error = %v", err)
 	}
 }
 

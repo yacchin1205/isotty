@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+
+	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 )
 
 const maxRequestBody = 4 << 20
@@ -34,20 +36,20 @@ func Handler(notes *Notes, onWrite func(WriteEvent) error) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"url": notes.URL(), "prefix": notes.Prefix()})
+		gateway.WriteJSON(w, http.StatusOK, map[string]string{"url": notes.URL(), "prefix": notes.Prefix()})
 	})
 
 	mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query().Get("q")
 		if query == "" {
-			writeError(w, http.StatusBadRequest, "q is required")
+			gateway.WriteError(w, http.StatusBadRequest, "q is required")
 			return
 		}
 		rows := 20
 		if raw := r.URL.Query().Get("rows"); raw != "" {
 			parsed, err := strconv.Atoi(raw)
 			if err != nil || parsed < 1 {
-				writeError(w, http.StatusBadRequest, "rows must be a positive integer")
+				gateway.WriteError(w, http.StatusBadRequest, "rows must be a positive integer")
 				return
 			}
 			rows = parsed
@@ -57,13 +59,13 @@ func Handler(notes *Notes, onWrite func(WriteEvent) error) http.Handler {
 			writeNotesError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"docs": docs})
+		gateway.WriteJSON(w, http.StatusOK, map[string]any{"docs": docs})
 	})
 
 	mux.HandleFunc("GET /read", func(w http.ResponseWriter, r *http.Request) {
 		title := r.URL.Query().Get("title")
 		if title == "" {
-			writeError(w, http.StatusBadRequest, "title is required")
+			gateway.WriteError(w, http.StatusBadRequest, "title is required")
 			return
 		}
 		asHTML, ok := formatParam(w, r)
@@ -75,7 +77,7 @@ func Handler(notes *Notes, onWrite func(WriteEvent) error) http.Handler {
 			writeNotesError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, result)
+		gateway.WriteJSON(w, http.StatusOK, result)
 	})
 
 	mux.HandleFunc("POST /create", func(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +86,7 @@ func Handler(notes *Notes, onWrite func(WriteEvent) error) http.Handler {
 			return
 		}
 		if req.Title == "" {
-			writeError(w, http.StatusBadRequest, "title is required")
+			gateway.WriteError(w, http.StatusBadRequest, "title is required")
 			return
 		}
 		result, err := notes.Create(req.Title, req.Markdown, req.Tags)
@@ -101,7 +103,7 @@ func Handler(notes *Notes, onWrite func(WriteEvent) error) http.Handler {
 			return
 		}
 		if req.Title == "" {
-			writeError(w, http.StatusBadRequest, "title is required")
+			gateway.WriteError(w, http.StatusBadRequest, "title is required")
 			return
 		}
 		result, err := notes.Append(req.Title, req.Markdown)
@@ -115,12 +117,12 @@ func Handler(notes *Notes, onWrite func(WriteEvent) error) http.Handler {
 	mux.HandleFunc("GET /changes", func(w http.ResponseWriter, r *http.Request) {
 		title := r.URL.Query().Get("title")
 		if title == "" {
-			writeError(w, http.StatusBadRequest, "title is required")
+			gateway.WriteError(w, http.StatusBadRequest, "title is required")
 			return
 		}
 		since, err := strconv.Atoi(r.URL.Query().Get("since"))
 		if err != nil || since < 0 {
-			writeError(w, http.StatusBadRequest, "since must be a non-negative revision number")
+			gateway.WriteError(w, http.StatusBadRequest, "since must be a non-negative revision number")
 			return
 		}
 		asHTML, ok := formatParam(w, r)
@@ -132,7 +134,7 @@ func Handler(notes *Notes, onWrite func(WriteEvent) error) http.Handler {
 			writeNotesError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, result)
+		gateway.WriteJSON(w, http.StatusOK, result)
 	})
 
 	return mux
@@ -146,7 +148,7 @@ func formatParam(w http.ResponseWriter, r *http.Request) (asHTML bool, ok bool) 
 	case "html":
 		return true, true
 	default:
-		writeError(w, http.StatusBadRequest, "format must be text or html")
+		gateway.WriteError(w, http.StatusBadRequest, "format must be text or html")
 		return false, false
 	}
 }
@@ -155,7 +157,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, out any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(out); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		gateway.WriteError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return false
 	}
 	return true
@@ -165,38 +167,26 @@ func decodeBody(w http.ResponseWriter, r *http.Request, out any) bool {
 // already changed, so the agent must learn both facts.
 func finishWrite(w http.ResponseWriter, onWrite func(WriteEvent) error, event WriteEvent, result WriteResult) {
 	if err := onWrite(event); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
+		gateway.WriteJSON(w, http.StatusInternalServerError, map[string]string{
 			"error":  fmt.Sprintf("the note was written to %s but recording the audit event failed: %v", result.URL, err),
 			"pad_id": result.PadID,
 			"url":    result.URL,
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	gateway.WriteJSON(w, http.StatusOK, result)
 }
 
 func writeNotesError(w http.ResponseWriter, err error) {
 	var prefixErr PrefixError
 	switch {
 	case errors.As(err, &prefixErr):
-		writeError(w, http.StatusForbidden, err.Error())
+		gateway.WriteError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrPadNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
+		gateway.WriteError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrPadExists):
-		writeError(w, http.StatusConflict, err.Error())
+		gateway.WriteError(w, http.StatusConflict, err.Error())
 	default:
-		writeError(w, http.StatusBadGateway, "ep_weave request failed: "+err.Error())
-	}
-}
-
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		panic(err)
+		gateway.WriteError(w, http.StatusBadGateway, "ep_weave request failed: "+err.Error())
 	}
 }
