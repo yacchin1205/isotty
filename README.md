@@ -1,6 +1,10 @@
 # IsoTTY
 
+<p align="center"><img src="docs/logo.png" width="280" alt="A crab waving from a tide pool"></p>
+
 IsoTTY is a disposable isolated development sandbox.
+
+The name is *iso*lated + *tty*, but it reads just as well as 磯 (iso), the rocky shore: a tide pool is a little sea of its own, cut off from the ocean until the next tide, and so is each VM.
 
 IsoTTY trusts the agent and distrusts mistakes: it is not a cage for a hostile agent, but a way to agree with the human on what the agent may reach, keep a mistake inside that agreement, and show afterwards what happened.
 
