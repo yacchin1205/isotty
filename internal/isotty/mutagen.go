@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 )
 
 var defaultIgnores = []string{
@@ -94,12 +96,12 @@ func ensureSSHWrappers(state State) error {
 		return fmt.Errorf("create ssh wrapper directory: %w", err)
 	}
 
-	sshScript := fmt.Sprintf("#!/bin/sh\nexec %s -F %s \"$@\"\n", shellQuote(sshPath), shellQuote(state.SSHConfigPath))
+	sshScript := fmt.Sprintf("#!/bin/sh\nexec %s -F %s \"$@\"\n", runtimecfg.ShellQuote(sshPath), runtimecfg.ShellQuote(state.SSHConfigPath))
 	if err := os.WriteFile(filepath.Join(state.SSHWrapperDir, "ssh"), []byte(sshScript), 0o755); err != nil {
 		return fmt.Errorf("write ssh wrapper: %w", err)
 	}
 
-	scpScript := fmt.Sprintf("#!/bin/sh\nexec %s -F %s \"$@\"\n", shellQuote(scpPath), shellQuote(state.SSHConfigPath))
+	scpScript := fmt.Sprintf("#!/bin/sh\nexec %s -F %s \"$@\"\n", runtimecfg.ShellQuote(scpPath), runtimecfg.ShellQuote(state.SSHConfigPath))
 	if err := os.WriteFile(filepath.Join(state.SSHWrapperDir, "scp"), []byte(scpScript), 0o755); err != nil {
 		return fmt.Errorf("write scp wrapper: %w", err)
 	}
@@ -116,10 +118,6 @@ func requirePath(name string) (string, error) {
 		return "", fmt.Errorf("%s is required but was not found in PATH", name)
 	}
 	return path, nil
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func runMutagenCommand(env []string, debug bool, args ...string) error {

@@ -1183,7 +1183,7 @@ func (a *App) restoreAgentAuth(cfg Config, state State) error {
 			continue
 		}
 		if err := a.runPhase("Restoring %s login state", func() error {
-			return vmcfg.RunGCPRemoteCommandWithInput(conn, runtimecfg.UnpackHomeCommand(), bytes.NewReader(archive))
+			return vmcfg.RunGCPRemoteCommandWithInput(conn, runtimecfg.UnpackAgentAuthCommand(agent), bytes.NewReader(archive))
 		}, agent); err != nil {
 			return fmt.Errorf("restore %s login state: %w", agent, err)
 		}
@@ -1250,16 +1250,27 @@ func (a *App) printAuditEvent(event runtimecfg.AuditEvent) {
 	timestamp := event.Time.Format(time.RFC3339)
 	switch event.Kind {
 	case "exec":
-		fmt.Fprintf(a.stdout, "%s exec %s\n", timestamp, event.Command)
+		fmt.Fprintf(a.stdout, "%s exec %s\n", timestamp, terminalSafe(event.Command))
 	case "connect":
 		if event.Address != "" {
-			fmt.Fprintf(a.stdout, "%s connect %s\n", timestamp, event.Address)
+			fmt.Fprintf(a.stdout, "%s connect %s\n", timestamp, terminalSafe(event.Address))
 			return
 		}
-		fmt.Fprintf(a.stdout, "%s connect %s\n", timestamp, event.Executable)
+		fmt.Fprintf(a.stdout, "%s connect %s\n", timestamp, terminalSafe(event.Executable))
 	default:
-		fmt.Fprintf(a.stdout, "%s %s\n", timestamp, event.RawSummary())
+		fmt.Fprintf(a.stdout, "%s %s\n", timestamp, terminalSafe(event.RawSummary()))
 	}
+}
+
+// terminalSafe escapes control characters so a value the VM chose cannot
+// drive the human's terminal.
+func terminalSafe(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || (r >= ' ' && r != 0x7f) {
+			return r
+		}
+		return '\uFFFD'
+	}, value)
 }
 
 func (a *App) auditTarget(conn vmcfg.GCPConnection) runtimecfg.RemoteTarget {

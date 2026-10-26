@@ -106,3 +106,16 @@ func symlinkError(path, root string) error {
 func UnpackHomeCommand() string {
 	return "tar -xzf - -C ~"
 }
+
+// UnpackAgentAuthCommand restores only the agent's own paths from an archive
+// the previous VM produced, so the archive cannot place anything else in the
+// new home.
+func UnpackAgentAuthCommand(agent string) string {
+	paths, ok := agentHomePaths[agent]
+	if !ok {
+		panic(fmt.Sprintf("unsupported agent %q", agent))
+	}
+	return fmt.Sprintf(
+		`tmp=$(mktemp -d) && tar -xzf - -C "$tmp" && for p in %s; do if [ -e "$tmp/$p" ]; then rm -rf ~/"$p" && mv "$tmp/$p" ~/; fi; done; rm -rf "$tmp"`,
+		shellJoin(paths))
+}
