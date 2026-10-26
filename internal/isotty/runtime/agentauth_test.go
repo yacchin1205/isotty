@@ -93,7 +93,7 @@ func TestCaptureAgentAuthCommand(t *testing.T) {
 		t.Fatalf("claude command missing excludes: %s", command)
 	}
 	codex := CaptureAgentAuthCommand("codex")
-	if !strings.Contains(codex, `tar -czf - --exclude='.codex/.tmp' --exclude='.codex/cache' --exclude='.codex/plugins/cache' "$@"`) {
+	if !strings.Contains(codex, `tar -czf - --exclude='.codex/.tmp' --exclude='.codex/cache' --exclude='.codex/plugins/cache' --exclude='.codex/packages' "$@"`) {
 		t.Fatalf("codex command missing excludes: %s", codex)
 	}
 }
