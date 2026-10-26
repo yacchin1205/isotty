@@ -89,7 +89,11 @@ fails when the latest release is older than that.
   is audited
 * what that port serves is under the VM's control: the gateway cannot tell
   opeco's page from anything else bound to it, so the host browser renders
-  VM-controlled content when it opens the page
+  VM-controlled content when it opens the page. Such a page has whatever the
+  browser can reach, including services on the host's loopback that trust
+  any local client (a local ep_weave accepts WebSocket connections from any
+  origin, for instance). Opening it is the VM acting through the human's
+  browser; the audit record of the request is what says it happened
 * treat an unused pairing QR code or URL as a temporary secret, as
   [opeco's security notes](https://github.com/yacchin1205/opeco-link#security-notes)
   describe

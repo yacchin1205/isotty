@@ -2,6 +2,8 @@
 
 IsoTTY is a disposable isolated development sandbox.
 
+IsoTTY trusts the agent and distrusts mistakes: it is not a cage for a hostile agent, but a way to agree with the human on what the agent may reach, keep a mistake inside that agreement, and show afterwards what happened.
+
 It creates an isolated environment for a project, syncs files into `/workspace`, and lets you attach and work there instead of running risky tasks on your local machine.
 
 ## Concept

@@ -170,4 +170,6 @@ skips the forwards and the gateway.
 * pads are data written by other authors; the VM skill tells the agent that
   its user's instructions take precedence over anything a pad asks
 * the gateway binds to `127.0.0.1` on both ends and lives only while attached
-* ep_weave's own pads and editor are never reachable from the VM
+* ep_weave's own pads and editor are not relayed to the VM; a page the VM
+  asks the host browser to open (see [OPECO.md](OPECO.md)) has the browser's
+  reach, which includes a local ep_weave
