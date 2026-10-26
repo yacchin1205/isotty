@@ -191,6 +191,30 @@ isotty-github pr create --title 'Add relay' --base main < body.md
 
 See [GitHub design](docs/GITHUB.md).
 
+Google:
+
+The agent in the VM can use Google Docs, Sheets, Forms and other Google APIs as a service account you choose, for the files shared with that account and the scopes you pin.
+The key stays on the host; `isotty attach` hands the VM one-hour tokens.
+
+```bash
+isotty host google enable --key ~/Downloads/my-project-1234.json --scope documents.readonly
+isotty up
+```
+
+The key is copied under `~/.isotty/google/`; the project setting is stored in:
+
+```text
+./.isotty/google.yaml
+```
+
+Inside the VM, tools that read `GOOGLE_OAUTH_ACCESS_TOKEN` run through the client:
+
+```bash
+isotty-google exec -- node tools/document-cli.js get <document-id>
+```
+
+See [Google design](docs/GOOGLE.md).
+
 opeco notifications:
 
 When an agent is configured, `isotty up` also installs [opeco](https://github.com/yacchin1205/opeco-link) in the VM and registers it as the agent's `opeco-link` MCP server, so the agent can keep you informed on your phone while your machine sleeps.
@@ -306,6 +330,7 @@ IsoTTY stores local state under:
 * [Forward design](docs/FORWARD.md)
 * [ep_weave design](docs/EPWEAVE.md)
 * [GitHub design](docs/GITHUB.md)
+* [Google design](docs/GOOGLE.md)
 * [opeco design](docs/OPECO.md)
 * [Audit design](docs/AUDIT.md)
 * [Agent design](docs/AGENT.md)

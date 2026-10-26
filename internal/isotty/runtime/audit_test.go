@@ -202,3 +202,14 @@ func TestParseVMEventsGitHub(t *testing.T) {
 		t.Fatalf("Message = %q", events[0].Message)
 	}
 }
+
+func TestParseVMEventsGoogle(t *testing.T) {
+	output := `{"time":"2026-10-26T01:02:03Z","type":"google-token","client_hostname":"macbook-pro","client_user":"yazawa","project_hash":"abc","account":"docs-reader@p.iam.gserviceaccount.com","scopes":"documents.readonly,spreadsheets.readonly"}`
+	events, err := parseVMEvents(output)
+	if err != nil {
+		t.Fatalf("parseVMEvents returned error: %v", err)
+	}
+	if events[0].Message != `google-token client=macbook-pro user=yazawa account=docs-reader@p.iam.gserviceaccount.com scopes=documents.readonly,spreadsheets.readonly` {
+		t.Fatalf("Message = %q", events[0].Message)
+	}
+}

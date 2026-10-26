@@ -12,6 +12,7 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
 	"github.com/yazawa/isotty/internal/isotty/host/github"
+	"github.com/yazawa/isotty/internal/isotty/host/google"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
@@ -28,6 +29,8 @@ type Config struct {
 	Epweave *epweave.ProjectConfig
 	// GitHub is nil when the project has not enabled the GitHub relay.
 	GitHub *github.ProjectConfig
+	// Google is nil when the project has not enabled the Google token gateway.
+	Google *google.ProjectConfig
 }
 
 func LoadConfig(projectPath string) (Config, error) {
@@ -66,6 +69,10 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	googleConfig, err := host.LoadGoogleProjectConfig(projectPath, projectHash, homeDir)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		ProjectPath:  projectPath,
@@ -77,6 +84,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		VM:           vmConfig,
 		Epweave:      epweaveConfig,
 		GitHub:       githubConfig,
+		Google:       googleConfig,
 	}, nil
 }
 

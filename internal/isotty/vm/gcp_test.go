@@ -236,6 +236,9 @@ func TestCreateInstanceBuildsExpectedCommand(t *testing.T) {
 	if !strings.Contains(joined, "--metadata isotty-workspace-path=/workspace,isotty-project-hash=abc123") {
 		t.Fatalf("args = %v", gotArgs)
 	}
+	if !strings.Contains(joined, "--no-service-account --no-scopes") {
+		t.Fatalf("args = %v, want no service account and no scopes", gotArgs)
+	}
 }
 
 func TestInstanceExistsTreatsNotFoundAsFalse(t *testing.T) {

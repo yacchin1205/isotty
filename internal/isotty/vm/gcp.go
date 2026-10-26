@@ -204,6 +204,11 @@ func CreateGCPInstance(spec GCPInstanceSpec, instanceName string, debug bool) er
 		"--boot-disk-size", spec.BootDiskSize,
 		"--image-family", spec.ImageFamily,
 		"--image-project", spec.ImageProject,
+		// The agent must find no Google credential in the VM: without these,
+		// gcloud attaches the project's default service account and every
+		// client library picks it up through the metadata server.
+		"--no-service-account",
+		"--no-scopes",
 		"--labels", labels,
 		"--metadata", metadata,
 	)

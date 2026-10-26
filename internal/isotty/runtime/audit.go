@@ -76,6 +76,8 @@ type VMEventRecord struct {
 	URL            string `json:"url,omitempty"`
 	Repo           string `json:"repo,omitempty"`
 	Target         string `json:"target,omitempty"`
+	Account        string `json:"account,omitempty"`
+	Scopes         string `json:"scopes,omitempty"`
 }
 
 type RemoteTarget struct {
@@ -163,6 +165,17 @@ func NewGitHubVMEvent(projectHash, operation, repo, target string) (VMEventRecor
 	}
 	record.Repo = repo
 	record.Target = target
+	return record, nil
+}
+
+// NewGoogleVMEvent records an access token the gateway minted for the VM.
+func NewGoogleVMEvent(projectHash, serviceAccount string, scopes []string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, "google-token")
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.Account = serviceAccount
+	record.Scopes = strings.Join(scopes, ",")
 	return record, nil
 }
 
@@ -547,6 +560,12 @@ func formatVMEvent(record VMEventRecord) string {
 	}
 	if record.Target != "" {
 		parts = append(parts, "target="+record.Target)
+	}
+	if record.Account != "" {
+		parts = append(parts, "account="+record.Account)
+	}
+	if record.Scopes != "" {
+		parts = append(parts, "scopes="+record.Scopes)
 	}
 	return strings.Join(parts, " ")
 }
