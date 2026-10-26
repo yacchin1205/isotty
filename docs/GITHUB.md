@@ -224,6 +224,13 @@ marked write above, is recorded in the VM event log
 issue or run it touched, so `isotty audit logs` shows what the VM changed on
 GitHub.
 
+The same log already carries every `isotty-github` invocation, reads
+included, as an exec record with its arguments (see [AUDIT.md](AUDIT.md)), so
+the two together say what the VM asked for and what reached GitHub. This is
+the VM's own account of its GitHub use, not an enforcement of the pin: the
+relay enforces the pin, and the record exists so the human can see it was
+used as intended.
+
 ## Lifecycle
 
 The relay lives exactly as long as the attach session, like the rest of the
