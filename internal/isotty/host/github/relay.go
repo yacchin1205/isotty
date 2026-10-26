@@ -8,8 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
 	"regexp"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 )
@@ -100,8 +104,8 @@ type relay struct {
 	token       string
 	cfg         ProjectConfig
 	onWrite     func(WriteEvent) error
-	gitUpstream string
-	apiUpstream string
+	gitUpstream *url.URL
+	apiUpstream *url.URL
 	// git must see GitHub's redirects itself (a renamed repository is not
 	// pinned under its new name); the REST client follows them because logs
 	// and artifacts are served from a signed URL on another host, which the
@@ -117,18 +121,29 @@ func Handler(token string, cfg ProjectConfig, onWrite func(WriteEvent) error) ht
 }
 
 func newHandler(token string, cfg ProjectConfig, onWrite func(WriteEvent) error, gitUpstream, apiUpstream string) http.Handler {
+	git, err := url.Parse(gitUpstream)
+	if err != nil {
+		panic(err)
+	}
+	api, err := url.Parse(apiUpstream)
+	if err != nil {
+		panic(err)
+	}
+	// Bodies may be large (packs, artifacts), so only the wait for GitHub's
+	// first byte is bounded, not the transfer.
+	transport := &http.Transport{ResponseHeaderTimeout: 60 * time.Second}
 	r := &relay{
 		token:       token,
 		cfg:         cfg,
 		onWrite:     onWrite,
-		gitUpstream: gitUpstream,
-		apiUpstream: apiUpstream,
-		gitClient: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		gitUpstream: git,
+		apiUpstream: api,
+		gitClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}},
 		// The signed URL a redirect points at needs no token, and must not see
 		// it; Go only drops the header on its own when the domain changes.
-		apiClient: &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		apiClient: &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return errors.New("stopped after 10 redirects")
 			}
@@ -167,7 +182,11 @@ func gitRepo(req *http.Request) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return req.PathValue("owner") + "/" + name, true
+	repo := req.PathValue("owner") + "/" + name
+	if ValidateRepo(repo) != nil {
+		return "", false
+	}
+	return repo, true
 }
 
 func (r *relay) gitInfoRefs(w http.ResponseWriter, req *http.Request) {
@@ -189,7 +208,7 @@ func (r *relay) gitInfoRefs(w http.ResponseWriter, req *http.Request) {
 	if !r.pinned(w, repo, required) {
 		return
 	}
-	r.forwardGit(w, req, repo, "/info/refs?"+req.URL.RawQuery, false)
+	r.forwardGit(w, req, repo, "/info/refs", req.URL.RawQuery, false)
 }
 
 func (r *relay) gitService(w http.ResponseWriter, req *http.Request) {
@@ -210,11 +229,14 @@ func (r *relay) gitService(w http.ResponseWriter, req *http.Request) {
 	if push {
 		suffix = "/git-receive-pack"
 	}
-	r.forwardGit(w, req, repo, suffix, push)
+	r.forwardGit(w, req, repo, suffix, "", push)
 }
 
-func (r *relay) forwardGit(w http.ResponseWriter, req *http.Request, repo, suffix string, push bool) {
-	upstream, err := http.NewRequestWithContext(req.Context(), req.Method, r.gitUpstream+"/"+repo+".git"+suffix, req.Body)
+func (r *relay) forwardGit(w http.ResponseWriter, req *http.Request, repo, suffix, query string, push bool) {
+	target := *r.gitUpstream
+	target.Path = r.gitUpstream.Path + "/" + repo + ".git" + suffix
+	target.RawQuery = query
+	upstream, err := http.NewRequestWithContext(req.Context(), req.Method, target.String(), req.Body)
 	if err != nil {
 		panic(err)
 	}
@@ -250,8 +272,27 @@ func (r *relay) forwardGit(w http.ResponseWriter, req *http.Request, repo, suffi
 	copyResponse(w, resp, body)
 }
 
+// cleanAPIPath rejects what the allowlist patterns cannot see: GitHub resolves
+// dot segments, so a percent-encoded ".." inside a wildcard would walk out of
+// the pinned repository, and an encoded "?" would add query parameters.
+func cleanAPIPath(p string) (string, bool) {
+	if p == "" || p[0] != '/' || path.Clean(p) != p || strings.ContainsAny(p, "?#") {
+		return "", false
+	}
+	for _, c := range p {
+		if unicode.IsControl(c) {
+			return "", false
+		}
+	}
+	return p, true
+}
+
 func (r *relay) api(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api")
+	path, ok := cleanAPIPath(strings.TrimPrefix(req.URL.Path, "/api"))
+	if !ok {
+		gateway.WriteError(w, http.StatusBadRequest, "the path is not a plain API path")
+		return
+	}
 	var route *apiRoute
 	var match []string
 	for i := range apiRoutes {
@@ -298,15 +339,14 @@ func (r *relay) api(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	upstreamURL := r.apiUpstream + path
-	if req.URL.RawQuery != "" {
-		upstreamURL += "?" + req.URL.RawQuery
-	}
+	upstreamURL := *r.apiUpstream
+	upstreamURL.Path = r.apiUpstream.Path + path
+	upstreamURL.RawQuery = req.URL.RawQuery
 	var reqBody io.Reader
 	if body != nil {
 		reqBody = bytes.NewReader(body)
 	}
-	upstream, err := http.NewRequestWithContext(req.Context(), req.Method, upstreamURL, reqBody)
+	upstream, err := http.NewRequestWithContext(req.Context(), req.Method, upstreamURL.String(), reqBody)
 	if err != nil {
 		panic(err)
 	}
