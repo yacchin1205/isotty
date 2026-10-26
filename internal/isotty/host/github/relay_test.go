@@ -6,9 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+var repoLookup = regexp.MustCompile(`^/repos/[^/]+/[^/]+$`)
 
 type upstreamCall struct {
 	Method, Path, Query, Auth, Accept, Body string
@@ -27,6 +30,12 @@ func (f *fakeGitHub) handler(t *testing.T) http.Handler {
 		f.calls = append(f.calls, upstreamCall{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("Accept"), string(body)})
 		if answer, ok := f.answers[r.Method+" "+r.URL.Path]; ok {
 			answer(w, r)
+			return
+		}
+		// A bare repository lookup is the relay's visibility check; an
+		// unknown repository is private or absent, as on GitHub.
+		if repoLookup.MatchString(r.URL.Path) {
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -96,8 +105,8 @@ func TestRelayGit(t *testing.T) {
 		t.Fatalf("push to read-only repo = %d %s", status, body)
 	}
 	status, body = do(t, "GET", relay.URL+"/github/git/other/repo.git/info/refs?service=git-upload-pack", "")
-	if status != 403 || !strings.Contains(body, "not among the repositories pinned") {
-		t.Fatalf("unpinned fetch = %d %s", status, body)
+	if status != 403 || !strings.Contains(body, "not among the repositories pinned") || !strings.Contains(body, "not public") {
+		t.Fatalf("unpinned private fetch = %d %s", status, body)
 	}
 	status, _ = do(t, "GET", relay.URL+"/github/git/me/project.git/info/refs?service=git-upload-archive", "")
 	if status != 400 {
@@ -274,5 +283,64 @@ func TestRelayFollowsLogRedirectWithoutToken(t *testing.T) {
 	status, body := do(t, "GET", relay.URL+"/github/api/repos/org/lib/actions/jobs/9/logs", "")
 	if status != 200 || body != "log line\n" {
 		t.Fatalf("log = %d %q", status, body)
+	}
+}
+
+// TestRelayReadsPublicRepositoriesWithoutToken: a repository outside the pin
+// is readable when GitHub serves it to anyone, and then without the token;
+// writes still need a pin, and a private one stays refused.
+func TestRelayReadsPublicRepositoriesWithoutToken(t *testing.T) {
+	relay, git, api := newTestRelay(t, testPins, nil)
+	api.answers["GET /repos/pub/lic"] = func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("visibility check carried the token")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"private":false}`))
+	}
+	api.answers["GET /repos/sec/ret"] = func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}
+
+	status, _ := do(t, "GET", relay.URL+"/github/api/repos/pub/lic/pulls", "")
+	if status != 200 {
+		t.Fatalf("public pulls status = %d", status)
+	}
+	if c := api.last(); c.Path != "/repos/pub/lic/pulls" || c.Auth != "" {
+		t.Fatalf("public read upstream call = %+v", c)
+	}
+	status, _ = do(t, "GET", relay.URL+"/github/git/pub/lic.git/info/refs?service=git-upload-pack", "")
+	if status != 200 {
+		t.Fatalf("public fetch status = %d", status)
+	}
+	if c := git.last(); c.Auth != "" {
+		t.Fatalf("public fetch carried the token: %+v", c)
+	}
+	visibilityChecks := 0
+	for _, c := range api.calls {
+		if c.Path == "/repos/pub/lic" {
+			visibilityChecks++
+		}
+	}
+	if visibilityChecks != 1 {
+		t.Fatalf("visibility checked %d times, want once", visibilityChecks)
+	}
+
+	status, body := do(t, "POST", relay.URL+"/github/api/repos/pub/lic/issues", `{"title":"t"}`)
+	if status != 403 || !strings.Contains(body, "writes need a pin") {
+		t.Fatalf("public write = %d %s", status, body)
+	}
+	status, body = do(t, "POST", relay.URL+"/github/git/pub/lic.git/git-receive-pack", "pack")
+	if status != 403 {
+		t.Fatalf("public push = %d %s", status, body)
+	}
+	status, body = do(t, "GET", relay.URL+"/github/api/repos/sec/ret/pulls", "")
+	if status != 403 || !strings.Contains(body, "not public") {
+		t.Fatalf("private unpinned read = %d %s", status, body)
+	}
+	for _, c := range api.calls {
+		if c.Path == "/repos/sec/ret/pulls" || c.Path == "/repos/pub/lic/issues" {
+			t.Fatalf("refused request reached the upstream: %+v", c)
+		}
 	}
 }

@@ -39,13 +39,15 @@ isotty-github repo view
 they are, and every git argument passes through. Every other command acts on
 the repository behind the current directory's `origin`; `--repo owner/name`
 picks another pinned one. Commit, branch, diff, log and the rest are plain
-`git`, as always. Public repositories outside the pin can be cloned with
-plain `git`.
+`git`, as always. Public repositories outside the pin can be read with
+`--repo owner/name` (pull requests, issues, runs, settings) and fetched;
+plain `git clone` works for them too.
 
 ## What you may do
 
-- Only the pinned repositories, and writes only where the pin says `write`.
-  `isotty-github status` lists them; a refusal names the reason.
+- Writes only to the pinned repositories, and only where the pin says
+  `write`; reads on those and on any public repository. `isotty-github
+  status` lists the pins; a refusal names the reason.
 - The commands above are the whole operation set. There is no merge, no
   approve, no close, no workflow dispatch and no listing of repositories or
   organizations; ask the human for those.
