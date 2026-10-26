@@ -166,6 +166,31 @@ isotty-notes create 'myproject/design' --tags '#myproject' < memo.md
 
 See [ep_weave design](docs/EPWEAVE.md).
 
+GitHub:
+
+The agent in the VM can push, fetch and work with pull requests, issues and workflow runs of the repositories you name, through a relay that `isotty attach` provides with your GitHub token.
+The VM never holds the token and cannot reach any other repository.
+
+```bash
+isotty host github enable            # the repository behind origin, write access
+isotty up
+```
+
+The token lives on the host in `~/.isotty/github.yaml`; the project setting is stored in:
+
+```text
+./.isotty/github.yaml
+```
+
+Inside the VM:
+
+```bash
+isotty-github push -u origin HEAD
+isotty-github pr create --title 'Add relay' --base main < body.md
+```
+
+See [GitHub design](docs/GITHUB.md).
+
 opeco notifications:
 
 When an agent is configured, `isotty up` also installs [opeco](https://github.com/yacchin1205/opeco-link) in the VM and registers it as the agent's `opeco-link` MCP server, so the agent can keep you informed on your phone while your machine sleeps.
@@ -280,6 +305,7 @@ IsoTTY stores local state under:
 * [Sync design](docs/SYNC.md)
 * [Forward design](docs/FORWARD.md)
 * [ep_weave design](docs/EPWEAVE.md)
+* [GitHub design](docs/GITHUB.md)
 * [opeco design](docs/OPECO.md)
 * [Audit design](docs/AUDIT.md)
 * [Agent design](docs/AGENT.md)

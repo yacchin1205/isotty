@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 )
 
 const openTimeout = 5 * time.Second
@@ -29,17 +31,17 @@ func OpenHandler(qrPort int, open func(context.Context, string) error, opened fu
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+			gateway.WriteError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 			return
 		}
 		if !strings.HasPrefix(req.URL, allowedPrefix) {
-			writeError(w, http.StatusForbidden, fmt.Sprintf("only URLs under %s can be opened on the host", allowedPrefix))
+			gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("only URLs under %s can be opened on the host", allowedPrefix))
 			return
 		}
 		// The launch is deliberately independent of the request context: a
 		// client that disconnects must not cancel a browser that is opening.
 		if err := open(context.Background(), req.URL); err != nil {
-			writeError(w, http.StatusBadGateway, "opening the browser on the host failed: "+err.Error())
+			gateway.WriteError(w, http.StatusBadGateway, "opening the browser on the host failed: "+err.Error())
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -72,12 +74,4 @@ func OpenInBrowser(ctx context.Context, url string) error {
 		return fmt.Errorf("%s: %w", command.Args[0], err)
 	}
 	return nil
-}
-
-func writeError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {
-		panic(err)
-	}
 }

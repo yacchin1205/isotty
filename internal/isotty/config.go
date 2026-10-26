@@ -11,6 +11,7 @@ import (
 
 	"github.com/yazawa/isotty/internal/isotty/host"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
+	"github.com/yazawa/isotty/internal/isotty/host/github"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
@@ -25,6 +26,8 @@ type Config struct {
 	VM           vmcfg.VMConfig
 	// Epweave is nil when the project has not enabled ep_weave.
 	Epweave *epweave.ProjectConfig
+	// GitHub is nil when the project has not enabled the GitHub relay.
+	GitHub *github.ProjectConfig
 }
 
 func LoadConfig(projectPath string) (Config, error) {
@@ -59,6 +62,10 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	githubConfig, err := host.LoadGitHubProjectConfig(projectPath, projectHash, homeDir)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		ProjectPath:  projectPath,
@@ -69,6 +76,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		Runtime:      runtimeConfig,
 		VM:           vmConfig,
 		Epweave:      epweaveConfig,
+		GitHub:       githubConfig,
 	}, nil
 }
 

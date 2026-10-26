@@ -191,3 +191,14 @@ func TestParseVMEventsEpweave(t *testing.T) {
 		t.Fatalf("Message = %q", events[0].Message)
 	}
 }
+
+func TestParseVMEventsGitHub(t *testing.T) {
+	output := `{"time":"2026-10-26T01:02:03Z","type":"github-pr-create","client_hostname":"macbook-pro","client_user":"yazawa","project_hash":"abc","repo":"yacchin1205/isotty","target":"42"}`
+	events, err := parseVMEvents(output)
+	if err != nil {
+		t.Fatalf("parseVMEvents returned error: %v", err)
+	}
+	if events[0].Message != `github-pr-create client=macbook-pro user=yazawa repo=yacchin1205/isotty target=42` {
+		t.Fatalf("Message = %q", events[0].Message)
+	}
+}

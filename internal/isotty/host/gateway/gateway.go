@@ -5,6 +5,8 @@
 package gateway
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -53,4 +55,47 @@ func (g *Gateway) Close() error {
 		return fmt.Errorf("host gateway: %w", err)
 	}
 	return nil
+}
+
+// WriteJSON answers a gateway request; every service answers in JSON, errors
+// included, so the VM clients have one shape to parse.
+func WriteJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		panic(err)
+	}
+}
+
+func WriteError(w http.ResponseWriter, status int, message string) {
+	WriteJSON(w, status, map[string]string{"error": message})
+}
+
+const (
+	// sshd keeps the first value it reads and includes sshd_config.d/*.conf
+	// in lexical order; the cloud image's 50-cloudimg-settings.conf sets
+	// ClientAliveInterval 120, so this file must sort before it.
+	sshdConfigPath = "/etc/ssh/sshd_config.d/00-isotty.conf"
+	// Until sshd notices the dead peer it keeps the session's -R listener,
+	// and the VM clients hang on it instead of failing.
+	sshdKeepalive = "ClientAliveInterval 15\nClientAliveCountMax 3\n"
+)
+
+// KeepaliveCommands make a dead attach session release the gateway's VM
+// port within about 45 seconds; every service's setup runs them.
+func KeepaliveCommands() []string {
+	return []string{
+		WriteFileCommand(sshdConfigPath, sshdKeepalive, true),
+		"sudo systemctl reload ssh",
+	}
+}
+
+// WriteFileCommand ships the content as base64 so no shell quoting applies to it.
+func WriteFileCommand(path, content string, sudo bool) string {
+	tee := "tee"
+	if sudo {
+		tee = "sudo tee"
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(content))
+	return fmt.Sprintf("printf %%s %s | base64 -d | %s %s >/dev/null", encoded, tee, path)
 }
