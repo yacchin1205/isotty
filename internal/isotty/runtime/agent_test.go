@@ -61,3 +61,13 @@ func TestAgentConfigIsProjectLocal(t *testing.T) {
 		t.Fatalf("expected %s to exist: %v", filepath.Base(AgentConfigPath(projectDir)), err)
 	}
 }
+
+func TestAgentSkillDirs(t *testing.T) {
+	dirs := AgentSkillDirs([]string{"codex", "claude"})
+	if len(dirs) != 2 || dirs[0] != ".codex/skills" || dirs[1] != ".claude/skills" {
+		t.Fatalf("AgentSkillDirs() = %v", dirs)
+	}
+	if got := AgentSkillDirs(nil); len(got) != 0 {
+		t.Fatalf("AgentSkillDirs(nil) = %v", got)
+	}
+}

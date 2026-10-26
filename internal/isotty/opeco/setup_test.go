@@ -34,6 +34,8 @@ func TestOpecoSetupCommand(t *testing.T) {
 		"sha256sum --ignore-missing -c checksums.txt",
 		"sudo install -m 0755",
 		`env="{\"BROWSER\": \"$open_client\"}"`,
+		`install_skill "$HOME/.claude/skills"`,
+		`install_skill "$HOME/.codex/skills"`,
 	} {
 		if !strings.Contains(string(script), want) {
 			t.Fatalf("script missing %q:\n%s", want, script)

@@ -66,7 +66,8 @@ On every `isotty up`:
   opeco's agent hooks merged into `~/.claude/settings.json`, and opeco's
   skill under `~/.claude/skills/`
 * for Codex: the same server and environment in `~/.codex/config.toml`
-  between marker comments, and opeco's hooks merged into `~/.codex/hooks.json`
+  between marker comments, opeco's hooks merged into `~/.codex/hooks.json`,
+  and opeco's skill under `~/.codex/skills/`
 
 The hooks and the skill are fetched from the opeco repository at the same
 release, so opeco stays the only place that defines them.

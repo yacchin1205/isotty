@@ -120,8 +120,8 @@ change means running `isotty host google enable` on the host again.
   `exec` runs the command with `GOOGLE_OAUTH_ACCESS_TOKEN` set, so the
   token appears in no command line and no shell history. `token` prints it
   for the rare tool that cannot take it from the environment.
-* `~/.claude/skills/isotty-google/SKILL.md` when `agent.yaml` includes
-  `claude`
+* the `isotty-google` skill for each agent in `agent.yaml`, under
+  `~/.claude/skills/` for Claude and `~/.codex/skills/` for Codex
 
 Tools must accept the token from that variable. For the `googleapis` Node
 library that is an `OAuth2` client with `setCredentials({access_token})` in

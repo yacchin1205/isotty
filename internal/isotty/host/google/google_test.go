@@ -292,14 +292,14 @@ func TestHandlerWithholdsTokenWhenAuditFails(t *testing.T) {
 }
 
 func TestSetupCommand(t *testing.T) {
-	command := SetupCommand(true)
-	for _, want := range []string{"set -euo pipefail", "sudo tee " + ClientPath, "sudo chmod 755 " + ClientPath, "systemctl reload ssh", ClaudeSkillDir + "/SKILL.md"} {
+	command := SetupCommand([]string{"claude", "codex"})
+	for _, want := range []string{"set -euo pipefail", "sudo tee " + ClientPath, "sudo chmod 755 " + ClientPath, "systemctl reload ssh", ".claude/skills/" + SkillName + "/SKILL.md", ".codex/skills/" + SkillName + "/SKILL.md"} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("SetupCommand() missing %q:\n%s", want, command)
 		}
 	}
-	if strings.Contains(SetupCommand(false), "SKILL.md") {
-		t.Fatal("SetupCommand() should not install the skill without Claude")
+	if strings.Contains(SetupCommand(nil), "SKILL.md") {
+		t.Fatal("SetupCommand() should not install the skill without an agent")
 	}
 	if rendered := render(clientScript); !strings.Contains(rendered, "http://127.0.0.1:61001/google") || strings.Contains(rendered, "__ISOTTY_") {
 		t.Fatalf("rendered client script not substituted:\n%s", rendered)

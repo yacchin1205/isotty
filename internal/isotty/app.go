@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -1068,37 +1067,34 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		return State{}, err
 	}
 	if cfg.Epweave != nil {
-		installClaudeSkill := slices.Contains(cfg.Runtime.Agents, "claude")
 		if err := a.runPhase("Installing ep_weave client", func() error {
 			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
 				ProjectID:    state.GCPProjectID,
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
-			}, epweave.SetupCommand(*cfg.Epweave, installClaudeSkill), a.debug)
+			}, epweave.SetupCommand(*cfg.Epweave, cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}
 	}
 	if cfg.GitHub != nil {
-		installClaudeSkill := slices.Contains(cfg.Runtime.Agents, "claude")
 		if err := a.runPhase("Installing GitHub client", func() error {
 			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
 				ProjectID:    state.GCPProjectID,
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
-			}, github.SetupCommand(installClaudeSkill), a.debug)
+			}, github.SetupCommand(cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}
 	}
 	if cfg.Google != nil {
-		installClaudeSkill := slices.Contains(cfg.Runtime.Agents, "claude")
 		if err := a.runPhase("Installing Google client", func() error {
 			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
 				ProjectID:    state.GCPProjectID,
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
-			}, google.SetupCommand(installClaudeSkill), a.debug)
+			}, google.SetupCommand(cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}

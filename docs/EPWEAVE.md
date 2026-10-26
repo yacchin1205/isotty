@@ -125,7 +125,8 @@ was written but the audit record was not.
   `ClientAliveCountMax 3`; the `00-` prefix matters because sshd keeps the
   first value it reads and the cloud image's `50-cloudimg-settings.conf`
   sets `ClientAliveInterval 120`
-* `~/.claude/skills/isotty-notes/SKILL.md` when `agent.yaml` includes `claude`
+* the `isotty-notes` skill for each agent in `agent.yaml`, under
+  `~/.claude/skills/` for Claude and `~/.codex/skills/` for Codex
 
 Running on every `up` means enabling ep_weave on an existing VM only needs
 another `isotty up`.
