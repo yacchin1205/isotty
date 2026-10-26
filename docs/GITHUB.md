@@ -45,12 +45,19 @@ agent in VM --isotty-github--> 127.0.0.1:61001/github ==ssh -R==> host gateway i
   `.git/config` is synced with the host, and an implicit path makes the
   boundary invisible to the agent and the audit log alike.
 
-Public repositories need no credential and are not the relay's concern; the
-VM clones them with plain `git` directly.
+Public repositories are readable through the relay too, so `isotty-github`
+works on a dependency's issues or pull requests as well as on the project's
+own. The relay asks api.github.com about a repository outside the pin
+without a credential, and when GitHub serves it to anyone, relays reads for
+it the same way, without the token. The token is thus used for the pinned
+repositories only. Unauthenticated reads share GitHub's limit of 60 requests
+per hour per address; plain `git clone` of a public repository works
+directly and is not counted.
 
 ## Operations
 
-The relay allows exactly these, each on one pinned repository:
+The relay allows exactly these, each on one pinned repository or, for a read,
+on a public one:
 
 | operation | access | GitHub calls |
 |---|---|---|
@@ -77,7 +84,8 @@ The relay allows exactly these, each on one pinned repository:
 
 The list is an allowlist of path patterns and methods, not a pass-through of
 `/repos/{o}/{r}/`. A write operation is forwarded only when the repository is
-pinned as `write`; a read operation when it is pinned at all. The JSON body
+pinned as `write`; a read operation when it is pinned at all or the
+repository is public. The JSON body
 of a write may carry only the fields named for it, so `pr edit` cannot close
 a pull request by sending `state`, although the same endpoint would accept
 it. Logs and
@@ -242,8 +250,10 @@ failed push or comment did not happen, and the commits and the text stay in
 ## Security Posture
 
 * the GitHub token never leaves the host
-* the VM reaches only the pinned repositories, only through the operations
-  listed above, and writes only where the pin says `write`
+* the VM reaches only the pinned repositories and public ones, only through
+  the operations listed above, and writes only where the pin says `write`
+* the token is used only for the pinned repositories; public repositories
+  are read without it
 * the repository list and its access levels are pinned on the host; the
   synced copy cannot widen them
 * the gateway binds to `127.0.0.1` on both ends and lives only while attached

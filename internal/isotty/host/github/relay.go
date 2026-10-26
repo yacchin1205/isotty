@@ -12,6 +12,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -112,6 +113,11 @@ type relay struct {
 	// VM must not talk to directly.
 	gitClient *http.Client
 	apiClient *http.Client
+
+	// public remembers, per repository, whether GitHub answers for it
+	// without a credential; see allowed.
+	publicMu sync.Mutex
+	public   map[string]bool
 }
 
 // Handler relays the allowed operations for the VM; the host gateway mounts
@@ -138,6 +144,7 @@ func newHandler(token string, cfg ProjectConfig, onWrite func(WriteEvent) error,
 		onWrite:     onWrite,
 		gitUpstream: git,
 		apiUpstream: api,
+		public:      map[string]bool{},
 		gitClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}},
@@ -162,19 +169,78 @@ func newHandler(token string, cfg ProjectConfig, onWrite func(WriteEvent) error,
 	return mux
 }
 
-// pinned answers the request itself when the repository is not pinned at the
-// required level and reports whether the caller may continue.
-func (r *relay) pinned(w http.ResponseWriter, repo string, required Access) bool {
-	access, ok := r.cfg.Access(repo)
-	if !ok {
-		gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("%s is not among the repositories pinned for this project (%s)", repo, strings.Join(r.cfg.SortedRepos(), ", ")))
-		return false
+// allowed answers the request itself when it may not be forwarded. It
+// reports whether the relay forwards it and whether the token goes along:
+// pinned repositories get the token; a public repository that is not pinned
+// is read without it, so the token is never used outside the pin.
+func (r *relay) allowed(w http.ResponseWriter, repo string, required Access) (forward, withToken bool) {
+	access, pinned := r.cfg.Access(repo)
+	if pinned {
+		if required == AccessWrite && access != AccessWrite {
+			gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("%s is pinned read-only for this project", repo))
+			return false, false
+		}
+		return true, true
 	}
-	if required == AccessWrite && access != AccessWrite {
-		gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("%s is pinned read-only for this project", repo))
-		return false
+	if required == AccessWrite {
+		gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("%s is not among the repositories pinned for this project (%s); writes need a pin", repo, strings.Join(r.cfg.SortedRepos(), ", ")))
+		return false, false
 	}
-	return true
+	public, err := r.isPublic(repo)
+	if err != nil {
+		gateway.WriteError(w, http.StatusBadGateway, fmt.Sprintf("could not tell whether %s is public: %v", repo, err))
+		return false, false
+	}
+	if !public {
+		gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("%s is not among the repositories pinned for this project (%s) and is not public", repo, strings.Join(r.cfg.SortedRepos(), ", ")))
+		return false, false
+	}
+	return true, false
+}
+
+// isPublic asks api.github.com about the repository without a credential,
+// which is the same view the VM would have on its own; a private repository
+// the token could see is still not public.
+func (r *relay) isPublic(repo string) (bool, error) {
+	r.publicMu.Lock()
+	defer r.publicMu.Unlock()
+	if public, ok := r.public[repo]; ok {
+		return public, nil
+	}
+	target := *r.apiUpstream
+	target.Path = r.apiUpstream.Path + "/repos/" + repo
+	req, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	if err != nil {
+		panic(err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", apiVersion)
+	resp, err := r.apiClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxWriteResp))
+	if err != nil {
+		return false, err
+	}
+	var public bool
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var info struct {
+			Private *bool `json:"private"`
+		}
+		if err := json.Unmarshal(body, &info); err != nil || info.Private == nil {
+			return false, fmt.Errorf("repository answer does not say whether it is private: %s", strings.TrimSpace(string(body)))
+		}
+		public = !*info.Private
+	case http.StatusNotFound:
+		public = false
+	default:
+		return false, fmt.Errorf("api.github.com answered %d", resp.StatusCode)
+	}
+	r.public[repo] = public
+	return public, nil
 }
 
 func gitRepo(req *http.Request) (string, bool) {
@@ -205,10 +271,11 @@ func (r *relay) gitInfoRefs(w http.ResponseWriter, req *http.Request) {
 		gateway.WriteError(w, http.StatusBadRequest, "only the smart HTTP protocol is relayed; service must be git-upload-pack or git-receive-pack")
 		return
 	}
-	if !r.pinned(w, repo, required) {
+	forward, withToken := r.allowed(w, repo, required)
+	if !forward {
 		return
 	}
-	r.forwardGit(w, req, repo, "/info/refs", req.URL.RawQuery, false)
+	r.forwardGit(w, req, repo, "/info/refs", req.URL.RawQuery, false, withToken)
 }
 
 func (r *relay) gitService(w http.ResponseWriter, req *http.Request) {
@@ -222,17 +289,18 @@ func (r *relay) gitService(w http.ResponseWriter, req *http.Request) {
 	if push {
 		required = AccessWrite
 	}
-	if !r.pinned(w, repo, required) {
+	forward, withToken := r.allowed(w, repo, required)
+	if !forward {
 		return
 	}
 	suffix := "/git-upload-pack"
 	if push {
 		suffix = "/git-receive-pack"
 	}
-	r.forwardGit(w, req, repo, suffix, "", push)
+	r.forwardGit(w, req, repo, suffix, "", push, withToken)
 }
 
-func (r *relay) forwardGit(w http.ResponseWriter, req *http.Request, repo, suffix, query string, push bool) {
+func (r *relay) forwardGit(w http.ResponseWriter, req *http.Request, repo, suffix, query string, push, withToken bool) {
 	target := *r.gitUpstream
 	target.Path = r.gitUpstream.Path + "/" + repo + ".git" + suffix
 	target.RawQuery = query
@@ -246,7 +314,9 @@ func (r *relay) forwardGit(w http.ResponseWriter, req *http.Request, repo, suffi
 			upstream.Header.Set(name, value)
 		}
 	}
-	upstream.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("x-access-token:"+r.token)))
+	if withToken {
+		upstream.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("x-access-token:"+r.token)))
+	}
 	resp, err := r.gitClient.Do(upstream)
 	if err != nil {
 		gateway.WriteError(w, http.StatusBadGateway, "github.com request failed: "+err.Error())
@@ -321,7 +391,8 @@ func (r *relay) api(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	repo := owner + "/" + name
-	if !r.pinned(w, repo, route.access) {
+	forward, withToken := r.allowed(w, repo, route.access)
+	if !forward {
 		return
 	}
 
@@ -358,7 +429,9 @@ func (r *relay) api(w http.ResponseWriter, req *http.Request) {
 		upstream.Header.Set("Content-Type", "application/json")
 	}
 	upstream.Header.Set("X-GitHub-Api-Version", apiVersion)
-	upstream.Header.Set("Authorization", "Bearer "+r.token)
+	if withToken {
+		upstream.Header.Set("Authorization", "Bearer "+r.token)
+	}
 	resp, err := r.apiClient.Do(upstream)
 	if err != nil {
 		gateway.WriteError(w, http.StatusBadGateway, "api.github.com request failed: "+err.Error())
