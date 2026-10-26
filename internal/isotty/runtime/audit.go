@@ -78,6 +78,9 @@ type VMEventRecord struct {
 	Target         string `json:"target,omitempty"`
 	Account        string `json:"account,omitempty"`
 	Scopes         string `json:"scopes,omitempty"`
+	Script         string `json:"script,omitempty"`
+	Function       string `json:"function,omitempty"`
+	Parameters     string `json:"parameters,omitempty"`
 }
 
 type RemoteTarget struct {
@@ -179,6 +182,21 @@ func NewGoogleVMEvent(projectHash, serviceAccount string, scopes []string) (VMEv
 	}
 	record.Account = serviceAccount
 	record.Scopes = strings.Join(scopes, ",")
+	return record, nil
+}
+
+// NewGASVMEvent records an Apps Script function the relay ran for the VM as
+// the account, with its arguments and how the run ended.
+func NewGASVMEvent(projectHash, account, script, function, parameters, result string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, "gas-run")
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.Account = account
+	record.Script = script
+	record.Function = function
+	record.Parameters = parameters
+	record.Result = result
 	return record, nil
 }
 
@@ -573,6 +591,9 @@ func formatVMEvent(record VMEventRecord) string {
 	add("target", record.Target)
 	add("account", record.Account)
 	add("scopes", record.Scopes)
+	add("script", record.Script)
+	add("function", record.Function)
+	add("parameters", record.Parameters)
 	return strings.Join(parts, " ")
 }
 

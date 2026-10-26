@@ -11,6 +11,7 @@ import (
 
 	"github.com/yazawa/isotty/internal/isotty/host"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
+	"github.com/yazawa/isotty/internal/isotty/host/gas"
 	"github.com/yazawa/isotty/internal/isotty/host/github"
 	"github.com/yazawa/isotty/internal/isotty/host/google"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
@@ -31,6 +32,8 @@ type Config struct {
 	GitHub *github.ProjectConfig
 	// Google is nil when the project has not enabled the Google token gateway.
 	Google *google.ProjectConfig
+	// GAS is nil when the project has not enabled the Apps Script relay.
+	GAS *gas.ProjectConfig
 }
 
 func LoadConfig(projectPath string) (Config, error) {
@@ -73,6 +76,10 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	gasConfig, err := host.LoadGASProjectConfig(projectPath, projectHash, homeDir)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		ProjectPath:  projectPath,
@@ -85,6 +92,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		Epweave:      epweaveConfig,
 		GitHub:       githubConfig,
 		Google:       googleConfig,
+		GAS:          gasConfig,
 	}, nil
 }
 

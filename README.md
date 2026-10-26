@@ -221,6 +221,31 @@ isotty-google exec -- node tools/document-cli.js get <document-id>
 
 See [Google design](docs/GOOGLE.md).
 
+Apps Script:
+
+The agent in the VM can run functions of the Google Apps Script projects you name, as you, through a relay that `isotty attach` provides with your login.
+The VM never holds the token and cannot reach any other script.
+
+```bash
+isotty host gas add --script <script-id> --client ~/Downloads/client_secret.json \
+    --scope https://www.googleapis.com/auth/spreadsheets
+isotty up
+```
+
+The login lives on the host in `~/.isotty/gas/`; the project setting is stored in:
+
+```text
+./.isotty/gas.yaml
+```
+
+Inside the VM:
+
+```bash
+isotty-gas run <script-id> sendRequests '["<sheet-id>", "2026-10"]'
+```
+
+See [Apps Script design](docs/GAS.md).
+
 opeco notifications:
 
 When an agent is configured, `isotty up` also installs [opeco](https://github.com/yacchin1205/opeco-link) in the VM and registers it as the agent's `opeco-link` MCP server, so the agent can keep you informed on your phone while your machine sleeps.
@@ -337,6 +362,7 @@ IsoTTY stores local state under:
 * [ep_weave design](docs/EPWEAVE.md)
 * [GitHub design](docs/GITHUB.md)
 * [Google design](docs/GOOGLE.md)
+* [Apps Script design](docs/GAS.md)
 * [opeco design](docs/OPECO.md)
 * [Audit design](docs/AUDIT.md)
 * [Agent design](docs/AGENT.md)

@@ -16,9 +16,11 @@ var agentHomePaths = map[string][]string{
 	"codex":  {".codex"},
 }
 
+// agentHomeExcludes leave out what the agent downloads again on its own:
+// caches, and for Codex the app-server binaries it keeps under packages.
 var agentHomeExcludes = map[string][]string{
 	"claude": {".claude/cache"},
-	"codex":  {".codex/.tmp", ".codex/cache", ".codex/plugins/cache"},
+	"codex":  {".codex/.tmp", ".codex/cache", ".codex/plugins/cache", ".codex/packages"},
 }
 
 const agentAuthKeyFile = "agents.key"

@@ -17,6 +17,7 @@ import (
 
 	"github.com/yazawa/isotty/internal/isotty/host"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
+	"github.com/yazawa/isotty/internal/isotty/host/gas"
 	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 	"github.com/yazawa/isotty/internal/isotty/host/github"
 	"github.com/yazawa/isotty/internal/isotty/host/google"
@@ -111,6 +112,10 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host google enable [--key <service-account.json>] --scope <scope>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host google disable")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host google show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host gas add --script <id>... --client <client_secret.json> --scope <url>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host gas remove --script <id>")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host gas clear")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host gas show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt add <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt remove <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt list")
@@ -330,6 +335,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 	var epweaveCfg *epweave.ProjectConfig
 	var githubCfg *github.ProjectConfig
 	var googleCfg *google.ProjectConfig
+	var gasCfg *gas.ProjectConfig
 	var agents []string
 	if !noHost {
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/forward.yaml"); err != nil {
@@ -379,6 +385,19 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 			googleCfg = &verified
 		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/gas.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			synced, err := gas.ParseProjectConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote gas config: %w", err)
+			}
+			verified, err := gas.VerifyPinned(homeDir, projectHash, synced)
+			if err != nil {
+				return err
+			}
+			gasCfg = &verified
+		}
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/agent.yaml"); err != nil {
 			return err
 		} else if data != nil {
@@ -400,7 +419,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 		}
 	}
-	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg, googleCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg, googleCfg, gasCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -417,6 +436,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	var epweaveCfg *epweave.ProjectConfig
 	var githubCfg *github.ProjectConfig
 	var googleCfg *google.ProjectConfig
+	var gasCfg *gas.ProjectConfig
 	var agents []string
 	if !noHost {
 		var err error
@@ -437,6 +457,10 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 			return err
 		}
 		googleCfg, err = host.LoadGoogleProjectConfig(projectPath, state.ProjectHash, homeDir)
+		if err != nil {
+			return err
+		}
+		gasCfg, err = host.LoadGASProjectConfig(projectPath, state.ProjectHash, homeDir)
 		if err != nil {
 			return err
 		}
@@ -462,7 +486,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg, googleCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg, googleCfg, gasCfg)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -487,7 +511,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, googleCfg *google.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -526,6 +550,14 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		}
 		mux.Handle("/google/", http.StripPrefix("/google", handler))
 		services = append(services, "Google")
+	}
+	if gasCfg != nil {
+		handler, err := a.gasHandler(*gasCfg, projectHash, record)
+		if err != nil {
+			return err
+		}
+		mux.Handle("/gas/", http.StripPrefix("/gas", handler))
+		services = append(services, "Apps Script")
 	}
 	if qr, ok := forwardCfg.Forwards[opecoForwardName]; ok {
 		mux.Handle("/open", opeco.OpenHandler(qr.RemotePort, opeco.OpenInBrowser, func(url string) {
@@ -666,6 +698,26 @@ func (a *App) googleHandler(cfg google.ProjectConfig, projectHash string, record
 	}
 	return google.Handler(issuer, func(event google.MintEvent) error {
 		vmEvent, err := runtimecfg.NewGoogleVMEvent(projectHash, event.ServiceAccount, event.Scopes)
+		if err != nil {
+			return err
+		}
+		return record(vmEvent)
+	}), nil
+}
+
+// gasHandler runs functions of the pinned Apps Script projects with the
+// host logins, recording every run in the VM event log.
+func (a *App) gasHandler(cfg gas.ProjectConfig, projectHash string, record func(runtimecfg.VMEventRecord) error) (http.Handler, error) {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return nil, err
+	}
+	creds, err := gas.LoadCredentials(homeDir, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return gas.Handler(gas.NewRunner(cfg, creds), func(event gas.RunEvent) error {
+		vmEvent, err := runtimecfg.NewGASVMEvent(projectHash, event.Account, event.Script, event.Function, event.Parameters, event.Result)
 		if err != nil {
 			return err
 		}
@@ -1095,6 +1147,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
 			}, google.SetupCommand(cfg.Runtime.Agents), a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	}
+	if cfg.GAS != nil {
+		if err := a.runPhase("Installing Apps Script client", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, gas.SetupCommand(cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}
