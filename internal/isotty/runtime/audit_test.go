@@ -214,6 +214,17 @@ func TestParseVMEventsGoogle(t *testing.T) {
 	}
 }
 
+func TestParseVMEventsGAS(t *testing.T) {
+	output := `{"time":"2026-10-26T01:02:03Z","type":"gas-run","client_hostname":"macbook-pro","client_user":"yazawa","project_hash":"abc","result":"done","account":"human@example.com","script":"1AbC","function":"sendRequests","parameters":"[\"sheet-1\",3]"}`
+	events, err := parseVMEvents(output)
+	if err != nil {
+		t.Fatalf("parseVMEvents returned error: %v", err)
+	}
+	if events[0].Message != `gas-run client=macbook-pro user=yazawa result=done account=human@example.com script=1AbC function=sendRequests parameters="[\"sheet-1\",3]"` {
+		t.Fatalf("Message = %q", events[0].Message)
+	}
+}
+
 func TestParseAuditEventsKeepsQuotedArgumentsWhole(t *testing.T) {
 	output := `----
 time->Wed May 14 01:02:03 2026
