@@ -13,7 +13,7 @@ import (
 
 func Run(projectPath, projectHash, homeDir string, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("host requires a subcommand: forward, epweave, github, google, or gas")
+		return errors.New("host requires a subcommand: forward, epweave, github, gitlab, google, or gas")
 	}
 
 	switch args[0] {
@@ -23,6 +23,8 @@ func Run(projectPath, projectHash, homeDir string, args []string, stdout, stderr
 		return runEpweave(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
 	case "github":
 		return runGitHub(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
+	case "gitlab":
+		return runGitLab(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
 	case "google":
 		return runGoogle(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
 	case "gas":
