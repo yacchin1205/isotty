@@ -27,23 +27,10 @@ func TestParseProjectConfig(t *testing.T) {
 		"repos:\n  not-a-repo: write\n",
 		"repos:\n  a/b: admin\n",
 		"repos:\n  a/b: write\nextra: 1\n",
+		"repos:\n  a/b: write\n  A/B: read\n",
 	} {
 		if _, err := ParseProjectConfig([]byte(bad)); err == nil {
 			t.Fatalf("ParseProjectConfig(%q) should fail", bad)
-		}
-	}
-}
-
-func TestParseRepoSpec(t *testing.T) {
-	if repo, access, err := ParseRepoSpec("a/b"); err != nil || repo != "a/b" || access != AccessWrite {
-		t.Fatalf("ParseRepoSpec(a/b) = %q, %q, %v", repo, access, err)
-	}
-	if repo, access, err := ParseRepoSpec("a/b:read"); err != nil || repo != "a/b" || access != AccessRead {
-		t.Fatalf("ParseRepoSpec(a/b:read) = %q, %q, %v", repo, access, err)
-	}
-	for _, bad := range []string{"a", "a/b:admin", "a/b/c", ""} {
-		if _, _, err := ParseRepoSpec(bad); err == nil {
-			t.Fatalf("ParseRepoSpec(%q) should fail", bad)
 		}
 	}
 }
@@ -64,8 +51,23 @@ func TestProjectConfigRoundTrip(t *testing.T) {
 	if err := RemoveProjectConfig(dir); err != nil {
 		t.Fatalf("RemoveProjectConfig() error = %v", err)
 	}
-	if err := RemoveProjectConfig(dir); err == nil || !strings.Contains(err.Error(), "not enabled") {
+	if err := RemoveProjectConfig(dir); err != nil {
 		t.Fatalf("second RemoveProjectConfig() error = %v", err)
+	}
+}
+
+func TestPutAndDeleteIgnoreCase(t *testing.T) {
+	var cfg ProjectConfig
+	cfg.Put("Some-Org/Lib", AccessRead)
+	cfg.Put("some-org/lib", AccessWrite)
+	if len(cfg.Repos) != 1 || cfg.Repos["some-org/lib"] != AccessWrite {
+		t.Fatalf("Put() left %#v; want one entry at write", cfg.Repos)
+	}
+	if !cfg.Delete("SOME-ORG/LIB") || len(cfg.Repos) != 0 {
+		t.Fatalf("Delete() left %#v", cfg.Repos)
+	}
+	if cfg.Delete("some-org/lib") {
+		t.Fatal("Delete() reported an unpinned repository as removed")
 	}
 }
 

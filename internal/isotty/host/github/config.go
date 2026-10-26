@@ -15,12 +15,25 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// Access is what the human allows the VM on a repository. Each level
+// includes the ones before it: read is fetch and the reads; comment adds
+// opening and commenting on pull requests and issues, which GitHub lets
+// anyone who can see a repository do; write adds push and the Actions
+// operations, which need push permission on GitHub.
 type Access string
 
 const (
-	AccessRead  Access = "read"
-	AccessWrite Access = "write"
+	AccessRead    Access = "read"
+	AccessComment Access = "comment"
+	AccessWrite   Access = "write"
 )
+
+var accessOrder = map[Access]int{AccessRead: 0, AccessComment: 1, AccessWrite: 2}
+
+// Covers reports whether the level allows what required asks for.
+func (a Access) Covers(required Access) bool {
+	return accessOrder[a] >= accessOrder[required]
+}
 
 // HostConfig holds the GitHub token. It lives on the host only and is never
 // synced into the VM; only the relay uses it.
@@ -29,7 +42,7 @@ type HostConfig struct {
 }
 
 // ProjectConfig names the repositories the VM may reach, as "owner/name",
-// with the access level of each. Write implies read.
+// with the access level of each.
 type ProjectConfig struct {
 	Repos map[string]Access `json:"repos"`
 }
@@ -106,13 +119,10 @@ func SaveProjectConfig(projectPath string, cfg ProjectConfig) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// RemoveProjectConfig is what an empty list means: no config at all.
 func RemoveProjectConfig(projectPath string) error {
-	path := ProjectConfigPath(projectPath)
-	if err := os.Remove(path); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("GitHub is not enabled for this project (%s does not exist)", path)
-		}
-		return fmt.Errorf("remove %s: %w", path, err)
+	if err := os.Remove(ProjectConfigPath(projectPath)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove %s: %w", ProjectConfigPath(projectPath), err)
 	}
 	return nil
 }
@@ -128,8 +138,33 @@ func (c ProjectConfig) validate() error {
 		if err := ValidateAccess(access); err != nil {
 			return fmt.Errorf("%s: %w", repo, err)
 		}
+		for other := range c.Repos {
+			if other != repo && strings.EqualFold(other, repo) {
+				return fmt.Errorf("%s and %s name the same repository", repo, other)
+			}
+		}
 	}
 	return nil
+}
+
+// Put replaces the entry for the repository, whatever its case, or adds one.
+func (c *ProjectConfig) Put(repo string, access Access) {
+	c.Delete(repo)
+	if c.Repos == nil {
+		c.Repos = map[string]Access{}
+	}
+	c.Repos[repo] = access
+}
+
+// Delete reports whether the repository was pinned.
+func (c *ProjectConfig) Delete(repo string) bool {
+	for pinned := range c.Repos {
+		if strings.EqualFold(pinned, repo) {
+			delete(c.Repos, pinned)
+			return true
+		}
+	}
+	return false
 }
 
 // Access returns the level pinned for owner/name; GitHub repository names
@@ -160,25 +195,8 @@ func ValidateRepo(repo string) error {
 }
 
 func ValidateAccess(access Access) error {
-	switch access {
-	case AccessRead, AccessWrite:
-		return nil
-	default:
-		return fmt.Errorf("invalid access %q: expected read or write", access)
+	if _, ok := accessOrder[access]; !ok {
+		return fmt.Errorf("invalid access %q: expected read, comment or write", access)
 	}
-}
-
-// ParseRepoSpec splits "owner/name[:read|write]"; the access defaults to write.
-func ParseRepoSpec(spec string) (string, Access, error) {
-	repo, access := spec, AccessWrite
-	if i := strings.LastIndex(spec, ":"); i >= 0 {
-		repo, access = spec[:i], Access(spec[i+1:])
-	}
-	if err := ValidateRepo(repo); err != nil {
-		return "", "", err
-	}
-	if err := ValidateAccess(access); err != nil {
-		return "", "", fmt.Errorf("%s: %w", spec, err)
-	}
-	return repo, access, nil
+	return nil
 }

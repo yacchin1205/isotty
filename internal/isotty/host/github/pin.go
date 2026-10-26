@@ -19,11 +19,11 @@ func VerifyPinned(homeDir, projectHash string, synced ProjectConfig) (ProjectCon
 		return ProjectConfig{}, err
 	}
 	if !ok {
-		return ProjectConfig{}, fmt.Errorf("GitHub is configured in .isotty/github.yaml but not pinned on this host; run `isotty host github enable` here to accept it")
+		return ProjectConfig{}, fmt.Errorf("GitHub is configured in .isotty/github.yaml but not pinned on this host; run `isotty host github add` here for each repository to accept it")
 	}
 	if !maps.Equal(pinned.Repos, synced.Repos) {
 		return ProjectConfig{}, fmt.Errorf(
-			".isotty/github.yaml (%s) differs from the repositories pinned on this host (%s); the file is synced from the VM, so something in the VM may have edited it. Review it, then run `isotty host github enable` again to accept the new value",
+			".isotty/github.yaml (%s) differs from the repositories pinned on this host (%s); the file is synced from the VM, so something in the VM may have edited it. Review it, then run `isotty host github add` or `remove` to accept the change",
 			synced.summary(), pinned.summary(),
 		)
 	}

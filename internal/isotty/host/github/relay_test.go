@@ -101,7 +101,7 @@ func TestRelayGit(t *testing.T) {
 	}
 
 	status, body := do(t, "POST", relay.URL+"/github/git/org/lib.git/git-receive-pack", "pack", "Content-Type", "application/x-git-receive-pack-request")
-	if status != 403 || !strings.Contains(body, "read-only") {
+	if status != 403 || !strings.Contains(body, "pinned as read") {
 		t.Fatalf("push to read-only repo = %d %s", status, body)
 	}
 	status, body = do(t, "GET", relay.URL+"/github/git/other/repo.git/info/refs?service=git-upload-pack", "")
@@ -221,7 +221,7 @@ func TestRelayAPIWrites(t *testing.T) {
 		t.Fatalf("cancel with body = %d %s", status, body)
 	}
 	status, body = do(t, "POST", relay.URL+"/github/api/repos/org/lib/issues", `{"title":"t"}`)
-	if status != 403 || !strings.Contains(body, "read-only") {
+	if status != 403 || !strings.Contains(body, "pinned as read") {
 		t.Fatalf("write to read-only repo = %d %s", status, body)
 	}
 	for _, denied := range []struct{ method, path string }{
@@ -342,5 +342,34 @@ func TestRelayReadsPublicRepositoriesWithoutToken(t *testing.T) {
 		if c.Path == "/repos/sec/ret/pulls" || c.Path == "/repos/pub/lic/issues" {
 			t.Fatalf("refused request reached the upstream: %+v", c)
 		}
+	}
+}
+
+func TestRelayCommentLevel(t *testing.T) {
+	var events []WriteEvent
+	cfg := ProjectConfig{Repos: map[string]Access{"org/upstream": AccessComment}}
+	relay, git, api := newTestRelay(t, cfg, func(e WriteEvent) error { events = append(events, e); return nil })
+	api.answers["POST /repos/org/upstream/pulls"] = func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"number":5}`))
+	}
+
+	status, body := do(t, "POST", relay.URL+"/github/api/repos/org/upstream/pulls", `{"title":"t","head":"me:b","base":"main"}`)
+	if status != 201 || !strings.Contains(body, `"number":5`) {
+		t.Fatalf("pr create = %d %s", status, body)
+	}
+	status, body = do(t, "POST", relay.URL+"/github/api/repos/org/upstream/actions/runs/7/rerun", "")
+	if status != 403 || !strings.Contains(body, "pinned as comment") || !strings.Contains(body, "needs write") {
+		t.Fatalf("rerun = %d %s", status, body)
+	}
+	status, body = do(t, "GET", relay.URL+"/github/git/org/upstream.git/info/refs?service=git-receive-pack", "")
+	if status != 403 || !strings.Contains(body, "needs write") {
+		t.Fatalf("push = %d %s", status, body)
+	}
+	if len(git.calls) != 0 || len(api.calls) != 1 {
+		t.Fatalf("upstream calls: git %d api %d; want only the pull request", len(git.calls), len(api.calls))
+	}
+	if len(events) != 1 || events[0].Operation != "pr-create" || events[0].Target != "5" {
+		t.Fatalf("events = %+v", events)
 	}
 }

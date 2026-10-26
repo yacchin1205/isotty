@@ -117,7 +117,7 @@ def cmd_git(command, git_args):
     result = subprocess.run(['git', *rewrite, command, *git_args], env=env)
     if result.returncode != 0:
         print('isotty-github: git failed. A "403" means the repository is not pinned for this '
-              'project or is pinned read-only; `isotty-github status` lists what this VM may reach. '
+              'project or not pinned as write; `isotty-github status` lists what this VM may reach. '
               'A connection error means the host is not attached.', file=sys.stderr)
     raise SystemExit(result.returncode)
 

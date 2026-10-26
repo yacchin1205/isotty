@@ -178,7 +178,7 @@ The agent in the VM can push, fetch and work with pull requests, issues and work
 The VM never holds the token and cannot reach any other repository.
 
 ```bash
-isotty host github enable            # the repository behind origin, write access
+isotty host github add --remote origin --allow write
 isotty up
 ```
 

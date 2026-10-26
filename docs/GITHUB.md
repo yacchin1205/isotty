@@ -66,14 +66,14 @@ on a public one:
 | pr list | read | `GET /repos/{o}/{r}/pulls` |
 | pr view | read | `GET /repos/{o}/{r}/pulls/{n}`, its reviews and comments; the diff on request |
 | pr checks | read | `GET /repos/{o}/{r}/commits/{sha}/check-runs` |
-| pr create | write | `POST /repos/{o}/{r}/pulls` |
-| pr comment | write | `POST /repos/{o}/{r}/issues/{n}/comments` |
-| pr edit | write | `PATCH /repos/{o}/{r}/pulls/{n}` (title, body) |
+| pr create | comment | `POST /repos/{o}/{r}/pulls` |
+| pr comment | comment | `POST /repos/{o}/{r}/issues/{n}/comments` |
+| pr edit | comment | `PATCH /repos/{o}/{r}/pulls/{n}` (title, body) |
 | issue list | read | `GET /repos/{o}/{r}/issues` |
 | issue view | read | `GET /repos/{o}/{r}/issues/{n}` and its comments |
-| issue create | write | `POST /repos/{o}/{r}/issues` |
-| issue comment | write | `POST /repos/{o}/{r}/issues/{n}/comments` |
-| issue edit | write | `PATCH /repos/{o}/{r}/issues/{n}` (title, body, labels) |
+| issue create | comment | `POST /repos/{o}/{r}/issues` |
+| issue comment | comment | `POST /repos/{o}/{r}/issues/{n}/comments` |
+| issue edit | comment | `PATCH /repos/{o}/{r}/issues/{n}` (title, body, labels) |
 | run list | read | `GET /repos/{o}/{r}/actions/runs` |
 | run view | read | `GET /repos/{o}/{r}/actions/runs/{id}` and its jobs |
 | run log | read | `GET /repos/{o}/{r}/actions/jobs/{id}/logs` |
@@ -83,9 +83,13 @@ on a public one:
 | repo view | read | `GET /repos/{o}/{r}`, branch protection and rules, Actions permissions, environments and their protection rules, Pages, the names of Actions secrets |
 
 The list is an allowlist of path patterns and methods, not a pass-through of
-`/repos/{o}/{r}/`. A write operation is forwarded only when the repository is
-pinned as `write`; a read operation when it is pinned at all or the
-repository is public. The JSON body
+`/repos/{o}/{r}/`. The access levels nest: `read` allows the read operations,
+`comment` adds those marked comment, `write` adds those marked write. A read
+operation is also forwarded for a public repository that is not pinned. The
+levels follow GitHub's own line: opening and commenting on pull requests and
+issues is open to anyone who can see a repository, while push and the
+Actions operations need push permission, so a fork workflow pins the fork as
+`write` and the upstream as `comment`. The JSON body
 of a write may carry only the fields named for it, so `pr edit` cannot close
 a pull request by sending `state`, although the same endpoint would accept
 it. Logs and
@@ -138,43 +142,51 @@ Project config, synced with the rest of `.isotty/`:
 ```yaml
 repos:
   yacchin1205/isotty: write
+  some-org/upstream: comment
   some-org/shared-lib: read
 ```
 
 ```bash
-isotty host github enable                              # the repository behind origin, write
-isotty host github enable --remote upstream:read       # plus another remote's repository
-isotty host github enable --repo owner/name:read       # plus a repository not among the remotes
+isotty host github add --remote origin --allow write      # the repository behind origin
+isotty host github add --remote upstream --allow comment  # another remote's repository
+isotty host github add --repo owner/name                  # a repository not among the remotes, read
+isotty host github remove --repo owner/name
 isotty host github show
-isotty host github disable
+isotty host github clear
 ```
 
-`enable` resolves `origin`, and any `--remote`, from the project's
-`.git/config` on the host at that moment and writes the resulting
-`owner/name` list; the remote names themselves are never stored. The access
-suffix defaults to `write`. The list is written whole on every `enable`, so
-`show` always prints the complete set the VM can reach. `enable` fails when
-origin is missing or not on github.com.
+`add` and `remove` edit the list; every repository named in one `add` gets
+the level of `--allow`, which defaults to `read`, and adding a repository
+that is already listed replaces its level. `add` resolves a `--remote` from
+the project's `.git/config` on the host at that moment and stores the
+resulting `owner/name`; the remote names themselves are never stored.
+Before pinning, `add` asks
+api.github.com for the repository with the host token, so a repository the
+token cannot see, or cannot push to when `write` is asked, is refused rather
+than discovered later in the VM; the name is stored as GitHub spells it.
+Removing the last repository removes the file.
 
 A remote name is resolved once, on purpose: `.git/` is synced two-way, so the
 agent can point `origin` elsewhere. Pinning the resolved repository means such
 a change only makes the next `isotty-github` call fail as unpinned; it cannot
 widen what the relay forwards. When the human really moves the project, they
-run `enable` again.
+`add` the new repository and `remove` the old one.
 
 ### Pin
 
 For the same reason an agent could add a repository to the synced
-`github.yaml`, so `isotty host github enable` also records the accepted list
-on the host:
+`github.yaml`, so `add` and `remove` also keep the accepted list on the
+host:
 
 ```text
 ~/.isotty/projects/<project-hash>.github.yaml
 ```
 
 `up`, `attach` and `attach --target` compare the synced file with the pin
-and refuse to continue when they differ or when no pin exists. Accepting a
-change means running `isotty host github enable` on the host again.
+and refuse to continue when they differ or when no pin exists. `add` and
+`remove` work from the pin, not from the synced file, so a change made in
+the VM is never accepted by accident; the human states each repository on
+the host.
 
 ## VM Side
 
@@ -226,8 +238,8 @@ attached.
 
 ## Audit
 
-Every write, a `git-receive-pack` and each `pr`, `issue` and `run` command
-marked write above, is recorded in the VM event log
+Every change, a `git-receive-pack` and each `pr`, `issue` and `run` command
+marked comment or write above, is recorded in the VM event log
 (`/var/log/isotty/events.jsonl`) with the repository and the pull request,
 issue or run it touched, so `isotty audit logs` shows what the VM changed on
 GitHub.
@@ -251,7 +263,7 @@ failed push or comment did not happen, and the commits and the text stay in
 
 * the GitHub token never leaves the host
 * the VM reaches only the pinned repositories and public ones, only through
-  the operations listed above, and writes only where the pin says `write`
+  the operations listed above, and changes only what the pin's level allows
 * the token is used only for the pinned repositories; public repositories
   are read without it
 * the repository list and its access levels are pinned on the host; the

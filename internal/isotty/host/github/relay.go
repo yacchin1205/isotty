@@ -72,11 +72,11 @@ var apiRoutes = []apiRoute{
 	read("GET", "/repos/{o}/{r}/environments"),
 	read("GET", "/repos/{o}/{r}/pages"),
 	read("GET", "/repos/{o}/{r}/actions/secrets"),
-	write("POST", "/repos/{o}/{r}/pulls", "pr-create", "title", "head", "base", "body", "draft"),
-	write("PATCH", "/repos/{o}/{r}/pulls/{n}", "pr-edit", "title", "body"),
-	write("POST", "/repos/{o}/{r}/issues", "issue-create", "title", "body", "labels"),
-	write("PATCH", "/repos/{o}/{r}/issues/{n}", "issue-edit", "title", "body", "labels"),
-	write("POST", "/repos/{o}/{r}/issues/{n}/comments", "comment", "body"),
+	comment("POST", "/repos/{o}/{r}/pulls", "pr-create", "title", "head", "base", "body", "draft"),
+	comment("PATCH", "/repos/{o}/{r}/pulls/{n}", "pr-edit", "title", "body"),
+	comment("POST", "/repos/{o}/{r}/issues", "issue-create", "title", "body", "labels"),
+	comment("PATCH", "/repos/{o}/{r}/issues/{n}", "issue-edit", "title", "body", "labels"),
+	comment("POST", "/repos/{o}/{r}/issues/{n}/comments", "comment", "body"),
 	write("POST", "/repos/{o}/{r}/actions/runs/{n}/rerun", "run-rerun"),
 	write("POST", "/repos/{o}/{r}/actions/runs/{n}/rerun-failed-jobs", "run-rerun"),
 	write("POST", "/repos/{o}/{r}/actions/runs/{n}/cancel", "run-cancel"),
@@ -86,9 +86,16 @@ func read(method, path string) apiRoute {
 	return apiRoute{method: method, pattern: compileRoute(path), access: AccessRead}
 }
 
+func comment(method, path, operation string, fields ...string) apiRoute {
+	return apiRoute{method: method, pattern: compileRoute(path), access: AccessComment, operation: operation, fields: fields}
+}
+
 func write(method, path, operation string, fields ...string) apiRoute {
 	return apiRoute{method: method, pattern: compileRoute(path), access: AccessWrite, operation: operation, fields: fields}
 }
+
+// changes reports whether the route writes to GitHub, whatever level it needs.
+func (r apiRoute) changes() bool { return r.access != AccessRead }
 
 func compileRoute(path string) *regexp.Regexp {
 	expr := strings.NewReplacer(
@@ -176,13 +183,13 @@ func newHandler(token string, cfg ProjectConfig, onWrite func(WriteEvent) error,
 func (r *relay) allowed(w http.ResponseWriter, repo string, required Access) (forward, withToken bool) {
 	access, pinned := r.cfg.Access(repo)
 	if pinned {
-		if required == AccessWrite && access != AccessWrite {
-			gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("%s is pinned read-only for this project", repo))
+		if !access.Covers(required) {
+			gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("%s is pinned as %s for this project; this operation needs %s", repo, access, required))
 			return false, false
 		}
 		return true, true
 	}
-	if required == AccessWrite {
+	if required != AccessRead {
 		gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("%s is not among the repositories pinned for this project (%s); writes need a pin", repo, strings.Join(r.cfg.SortedRepos(), ", ")))
 		return false, false
 	}
@@ -397,7 +404,7 @@ func (r *relay) api(w http.ResponseWriter, req *http.Request) {
 	}
 
 	var body []byte
-	if route.access == AccessWrite {
+	if route.changes() {
 		var err error
 		body, err = io.ReadAll(http.MaxBytesReader(w, req.Body, maxWriteBody))
 		if err != nil {
@@ -438,7 +445,7 @@ func (r *relay) api(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	if route.access != AccessWrite || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if !route.changes() || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		copyResponse(w, resp, nil)
 		return
 	}

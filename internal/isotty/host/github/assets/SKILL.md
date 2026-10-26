@@ -7,9 +7,9 @@ description: Push, fetch and work with pull requests, issues and workflow runs o
 
 This VM holds no GitHub credential and `gh` is not installed. GitHub is
 reached through a relay that `isotty attach` provides on the host, for the
-repositories pinned in `/workspace/.isotty/github.yaml` only, each as `read`
-or `write`. Plain `git push` to github.com fails for lack of a credential;
-that is expected.
+repositories pinned in `/workspace/.isotty/github.yaml` only, each as `read`,
+`comment` or `write`. Plain `git push` to github.com fails for lack of a
+credential; that is expected.
 
 ```
 isotty-github status
@@ -45,9 +45,10 @@ plain `git clone` works for them too.
 
 ## What you may do
 
-- Writes only to the pinned repositories, and only where the pin says
-  `write`; reads on those and on any public repository. `isotty-github
-  status` lists the pins; a refusal names the reason.
+- Reads on the pinned repositories and on any public one. Opening and
+  commenting on pull requests and issues where the pin says `comment` or
+  `write`; push and `run rerun`/`run cancel` only where it says `write`.
+  `isotty-github status` lists the pins; a refusal names the reason.
 - The commands above are the whole operation set. There is no merge, no
   approve, no close, no workflow dispatch and no listing of repositories or
   organizations; ask the human for those.
