@@ -187,7 +187,7 @@ func TestParseVMEventsEpweave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseVMEvents returned error: %v", err)
 	}
-	if events[0].Message != `epweave-create client=macbook-pro user=yazawa title="isotty-test/動作確認" pad=ea96a25b` {
+	if events[0].Message != `epweave-create client=macbook-pro user=yazawa title=isotty-test/動作確認 pad=ea96a25b` {
 		t.Fatalf("Message = %q", events[0].Message)
 	}
 }
@@ -200,5 +200,55 @@ func TestParseVMEventsGitHub(t *testing.T) {
 	}
 	if events[0].Message != `github-pr-create client=macbook-pro user=yazawa repo=yacchin1205/isotty target=42` {
 		t.Fatalf("Message = %q", events[0].Message)
+	}
+}
+
+func TestParseVMEventsGoogle(t *testing.T) {
+	output := `{"time":"2026-10-26T01:02:03Z","type":"google-token","client_hostname":"macbook-pro","client_user":"yazawa","project_hash":"abc","account":"docs-reader@p.iam.gserviceaccount.com","scopes":"documents.readonly,spreadsheets.readonly"}`
+	events, err := parseVMEvents(output)
+	if err != nil {
+		t.Fatalf("parseVMEvents returned error: %v", err)
+	}
+	if events[0].Message != `google-token client=macbook-pro user=yazawa account=docs-reader@p.iam.gserviceaccount.com scopes=documents.readonly,spreadsheets.readonly` {
+		t.Fatalf("Message = %q", events[0].Message)
+	}
+}
+
+func TestParseAuditEventsKeepsQuotedArgumentsWhole(t *testing.T) {
+	output := `----
+time->Wed May 14 01:02:03 2026
+type=SYSCALL msg=audit(05/14/2026 01:02:03.123:4242): arch=x86_64 syscall=execve success=yes exit=0 exe="/usr/bin/python3" key="isotty-exec"
+type=EXECVE msg=audit(05/14/2026 01:02:03.123:4242): argc=3 a0="python3" a1="-c" a2="print(1) a0=sh a1=-c a2=evil"
+`
+	events, err := parseAuditEvents(output, "exec")
+	if err != nil {
+		t.Fatalf("parseAuditEvents returned error: %v", err)
+	}
+	if events[0].Command != `python3 -c print(1) a0=sh a1=-c a2=evil` {
+		t.Fatalf("Command = %q", events[0].Command)
+	}
+}
+
+func TestFormatVMEventQuotesUnsafeValues(t *testing.T) {
+	record := VMEventRecord{Type: "github-pr-edit", ClientUser: "yazawa", Repo: "o/r", Target: "1 target=99\x1b[31m"}
+	got := formatVMEvent(record)
+	if got != `github-pr-edit user=yazawa repo=o/r target="1 target=99\x1b[31m"` {
+		t.Fatalf("formatVMEvent() = %q", got)
+	}
+}
+
+func TestQueryAuditLogsRefusesWhenRulesMissing(t *testing.T) {
+	target := RemoteTarget{
+		Capture: func(command string) (string, error) {
+			if strings.Contains(command, "auditctl -l") {
+				return "active\n-a always,exit -F arch=b64 -S execve -F key=isotty-exec\n", nil
+			}
+			t.Fatalf("unexpected query %q", command)
+			return "", nil
+		},
+		ExitCode: func(error) int { return 1 },
+	}
+	if _, err := QueryAuditLogs(target, "today"); err == nil || !strings.Contains(err.Error(), "isotty-connect") {
+		t.Fatalf("QueryAuditLogs() error = %v, want missing-rule error", err)
 	}
 }

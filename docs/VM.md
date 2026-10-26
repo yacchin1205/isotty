@@ -116,6 +116,8 @@ The VM backend assumes:
 
 * no local home directory mount
 * no SSH agent forwarding by default
+* no service account attached to the VM and no access scopes, so nothing in
+  the VM can obtain a Google credential from the metadata server
 * no automatic credential copying from the host; logins made in the VM are
   kept per project, see [Agent design](AGENT.md)
 

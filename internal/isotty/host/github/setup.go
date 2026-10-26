@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/yazawa/isotty/internal/isotty/host/gateway"
+	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 )
 
 //go:embed assets/isotty-github.py
@@ -15,14 +16,14 @@ var clientScript string
 var skill string
 
 const (
-	ClientPath     = "/usr/local/bin/isotty-github"
-	ClaudeSkillDir = ".claude/skills/isotty-github"
+	ClientPath = "/usr/local/bin/isotty-github"
+	SkillName  = "isotty-github"
 )
 
 // SetupCommand installs the VM-side client, git if the image lacks it, the
-// sshd keepalive and, for projects that run Claude, the skill describing the
+// sshd keepalive and, for each configured agent, the skill describing the
 // client. It runs on every `isotty up`.
-func SetupCommand(installClaudeSkill bool) string {
+func SetupCommand(agents []string) string {
 	parts := []string{
 		"set -euo pipefail",
 		"command -v git >/dev/null || (sudo apt-get update && sudo apt-get install -y git)",
@@ -30,12 +31,7 @@ func SetupCommand(installClaudeSkill bool) string {
 		"sudo chmod 755 " + ClientPath,
 	}
 	parts = append(parts, gateway.KeepaliveCommands()...)
-	if installClaudeSkill {
-		parts = append(parts,
-			"mkdir -p \"$HOME\"/"+ClaudeSkillDir,
-			gateway.WriteFileCommand("\"$HOME\"/"+ClaudeSkillDir+"/SKILL.md", render(skill), false),
-		)
-	}
+	parts = append(parts, gateway.SkillCommands(runtimecfg.AgentSkillDirs(agents), SkillName, render(skill))...)
 	return strings.Join(parts, " && ")
 }
 

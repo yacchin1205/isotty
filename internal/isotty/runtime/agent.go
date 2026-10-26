@@ -236,3 +236,24 @@ func saveAgents(projectPath string, agents []string) error {
 	}
 	return os.WriteFile(path, data, 0o644)
 }
+
+// agentSkillDirs is where each agent discovers skills, relative to the home
+// directory. Claude Code and Codex read the same SKILL.md layout.
+var agentSkillDirs = map[string]string{
+	"claude": ".claude/skills",
+	"codex":  ".codex/skills",
+}
+
+// AgentSkillDirs returns the skill directories of the configured agents, in
+// agent order, so a VM client's skill reaches every agent that may use it.
+func AgentSkillDirs(agents []string) []string {
+	dirs := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		dir, ok := agentSkillDirs[agent]
+		if !ok {
+			panic(fmt.Sprintf("unsupported agent %q", agent))
+		}
+		dirs = append(dirs, dir)
+	}
+	return dirs
+}

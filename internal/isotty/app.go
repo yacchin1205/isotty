@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +19,7 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
 	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 	"github.com/yazawa/isotty/internal/isotty/host/github"
+	"github.com/yazawa/isotty/internal/isotty/host/google"
 	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
@@ -108,6 +108,9 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host github enable [--remote <name>[:read|write]]... [--repo <owner/name>[:read|write]]...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host github disable")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host github show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host google enable [--key <service-account.json>] --scope <scope>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host google disable")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host google show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt add <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt remove <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt list")
@@ -326,6 +329,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 	forwardCfg := host.ForwardConfig{Forwards: map[string]host.Forward{}}
 	var epweaveCfg *epweave.ProjectConfig
 	var githubCfg *github.ProjectConfig
+	var googleCfg *google.ProjectConfig
 	var agents []string
 	if !noHost {
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/forward.yaml"); err != nil {
@@ -362,6 +366,19 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 			githubCfg = &verified
 		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/google.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			synced, err := google.ParseProjectConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote google config: %w", err)
+			}
+			verified, err := google.VerifyPinned(homeDir, projectHash, synced)
+			if err != nil {
+				return err
+			}
+			googleCfg = &verified
+		}
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/agent.yaml"); err != nil {
 			return err
 		} else if data != nil {
@@ -383,7 +400,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 		}
 	}
-	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg, googleCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -399,6 +416,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	forwardCfg := host.ForwardConfig{Forwards: map[string]host.Forward{}}
 	var epweaveCfg *epweave.ProjectConfig
 	var githubCfg *github.ProjectConfig
+	var googleCfg *google.ProjectConfig
 	var agents []string
 	if !noHost {
 		var err error
@@ -415,6 +433,10 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 			return err
 		}
 		githubCfg, err = host.LoadGitHubProjectConfig(projectPath, state.ProjectHash, homeDir)
+		if err != nil {
+			return err
+		}
+		googleCfg, err = host.LoadGoogleProjectConfig(projectPath, state.ProjectHash, homeDir)
 		if err != nil {
 			return err
 		}
@@ -440,7 +462,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg, googleCfg)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -465,7 +487,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, googleCfg *google.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -496,6 +518,14 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		}
 		mux.Handle("/github/", http.StripPrefix("/github", handler))
 		services = append(services, "GitHub")
+	}
+	if googleCfg != nil {
+		handler, err := a.googleHandler(*googleCfg, projectHash, record)
+		if err != nil {
+			return err
+		}
+		mux.Handle("/google/", http.StripPrefix("/google", handler))
+		services = append(services, "Google")
 	}
 	if qr, ok := forwardCfg.Forwards[opecoForwardName]; ok {
 		mux.Handle("/open", opeco.OpenHandler(qr.RemotePort, opeco.OpenInBrowser, func(url string) {
@@ -612,6 +642,30 @@ func (a *App) githubHandler(cfg github.ProjectConfig, projectHash string, record
 	}
 	return github.Handler(hostCfg.Token, cfg, func(event github.WriteEvent) error {
 		vmEvent, err := runtimecfg.NewGitHubVMEvent(projectHash, event.Operation, event.Repo, event.Target)
+		if err != nil {
+			return err
+		}
+		return record(vmEvent)
+	}), nil
+}
+
+// googleHandler issues tokens for the pinned service account from the key on
+// the host, recording every mint in the VM event log.
+func (a *App) googleHandler(cfg google.ProjectConfig, projectHash string, record func(runtimecfg.VMEventRecord) error) (http.Handler, error) {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return nil, err
+	}
+	key, err := google.LoadKey(homeDir, cfg.ServiceAccount)
+	if err != nil {
+		return nil, err
+	}
+	issuer, err := google.NewIssuer(key, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return google.Handler(issuer, func(event google.MintEvent) error {
+		vmEvent, err := runtimecfg.NewGoogleVMEvent(projectHash, event.ServiceAccount, event.Scopes)
 		if err != nil {
 			return err
 		}
@@ -1013,25 +1067,34 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		return State{}, err
 	}
 	if cfg.Epweave != nil {
-		installClaudeSkill := slices.Contains(cfg.Runtime.Agents, "claude")
 		if err := a.runPhase("Installing ep_weave client", func() error {
 			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
 				ProjectID:    state.GCPProjectID,
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
-			}, epweave.SetupCommand(*cfg.Epweave, installClaudeSkill), a.debug)
+			}, epweave.SetupCommand(*cfg.Epweave, cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}
 	}
 	if cfg.GitHub != nil {
-		installClaudeSkill := slices.Contains(cfg.Runtime.Agents, "claude")
 		if err := a.runPhase("Installing GitHub client", func() error {
 			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
 				ProjectID:    state.GCPProjectID,
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
-			}, github.SetupCommand(installClaudeSkill), a.debug)
+			}, github.SetupCommand(cfg.Runtime.Agents), a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	}
+	if cfg.Google != nil {
+		if err := a.runPhase("Installing Google client", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, google.SetupCommand(cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}
@@ -1120,7 +1183,7 @@ func (a *App) restoreAgentAuth(cfg Config, state State) error {
 			continue
 		}
 		if err := a.runPhase("Restoring %s login state", func() error {
-			return vmcfg.RunGCPRemoteCommandWithInput(conn, runtimecfg.UnpackHomeCommand(), bytes.NewReader(archive))
+			return vmcfg.RunGCPRemoteCommandWithInput(conn, runtimecfg.UnpackAgentAuthCommand(agent), bytes.NewReader(archive))
 		}, agent); err != nil {
 			return fmt.Errorf("restore %s login state: %w", agent, err)
 		}
@@ -1187,16 +1250,27 @@ func (a *App) printAuditEvent(event runtimecfg.AuditEvent) {
 	timestamp := event.Time.Format(time.RFC3339)
 	switch event.Kind {
 	case "exec":
-		fmt.Fprintf(a.stdout, "%s exec %s\n", timestamp, event.Command)
+		fmt.Fprintf(a.stdout, "%s exec %s\n", timestamp, terminalSafe(event.Command))
 	case "connect":
 		if event.Address != "" {
-			fmt.Fprintf(a.stdout, "%s connect %s\n", timestamp, event.Address)
+			fmt.Fprintf(a.stdout, "%s connect %s\n", timestamp, terminalSafe(event.Address))
 			return
 		}
-		fmt.Fprintf(a.stdout, "%s connect %s\n", timestamp, event.Executable)
+		fmt.Fprintf(a.stdout, "%s connect %s\n", timestamp, terminalSafe(event.Executable))
 	default:
-		fmt.Fprintf(a.stdout, "%s %s\n", timestamp, event.RawSummary())
+		fmt.Fprintf(a.stdout, "%s %s\n", timestamp, terminalSafe(event.RawSummary()))
 	}
+}
+
+// terminalSafe escapes control characters so a value the VM chose cannot
+// drive the human's terminal.
+func terminalSafe(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || (r >= ' ' && r != 0x7f) {
+			return r
+		}
+		return '\uFFFD'
+	}, value)
 }
 
 func (a *App) auditTarget(conn vmcfg.GCPConnection) runtimecfg.RemoteTarget {

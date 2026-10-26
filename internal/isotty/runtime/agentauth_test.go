@@ -84,16 +84,28 @@ func TestRemoveAgentAuth(t *testing.T) {
 
 func TestCaptureAgentAuthCommand(t *testing.T) {
 	command := CaptureAgentAuthCommand("claude")
-	for _, want := range []string{`".claude" ".claude.json"`, "tar -czf -", "base64 -w0", `[ $# -eq 0 ] ||`} {
+	for _, want := range []string{`'.claude' '.claude.json'`, "tar -czf -", "base64 -w0", `[ $# -eq 0 ] ||`} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("command missing %q: %s", want, command)
 		}
 	}
-	if !strings.Contains(command, `tar -czf - --exclude=".claude/cache" "$@"`) {
+	if !strings.Contains(command, `tar -czf - --exclude='.claude/cache' "$@"`) {
 		t.Fatalf("claude command missing excludes: %s", command)
 	}
 	codex := CaptureAgentAuthCommand("codex")
-	if !strings.Contains(codex, `tar -czf - --exclude=".codex/.tmp" --exclude=".codex/cache" --exclude=".codex/plugins/cache" "$@"`) {
+	if !strings.Contains(codex, `tar -czf - --exclude='.codex/.tmp' --exclude='.codex/cache' --exclude='.codex/plugins/cache' "$@"`) {
 		t.Fatalf("codex command missing excludes: %s", codex)
+	}
+}
+
+func TestUnpackAgentAuthCommandRestoresOnlyAgentPaths(t *testing.T) {
+	command := UnpackAgentAuthCommand("claude")
+	for _, want := range []string{`tar -xzf - -C "$tmp"`, `for p in '.claude' '.claude.json'`, `mv "$tmp/$p" ~/`, `rm -rf "$tmp"`} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("command missing %q: %s", want, command)
+		}
+	}
+	if strings.Contains(command, "-C ~") {
+		t.Fatalf("archive must not be unpacked straight into the home: %s", command)
 	}
 }

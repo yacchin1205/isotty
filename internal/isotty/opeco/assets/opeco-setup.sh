@@ -40,16 +40,23 @@ sudo chmod 755 "$open_client"
 printf %s "__MERGE_SCRIPT_B64__" | base64 -d > "$tmp/merge.py"
 env="{\"BROWSER\": \"$open_client\"}"
 
+mkdir -p "$tmp/skill/references"
+curl -fsSL -o "$tmp/skill/SKILL.md" "$raw/skills/opeco-link/SKILL.md"
+curl -fsSL -o "$tmp/skill/references/security.md" "$raw/skills/opeco-link/references/security.md"
+install_skill() {
+  mkdir -p "$1/opeco-link"
+  cp -R "$tmp/skill/." "$1/opeco-link/"
+}
+
 if [ "$install_claude" = 1 ]; then
-  mkdir -p "$HOME/.claude/skills/opeco-link/references"
-  curl -fsSL -o "$HOME/.claude/skills/opeco-link/SKILL.md" "$raw/skills/opeco-link/SKILL.md"
-  curl -fsSL -o "$HOME/.claude/skills/opeco-link/references/security.md" "$raw/skills/opeco-link/references/security.md"
+  install_skill "$HOME/.claude/skills"
   curl -fsSL -o "$tmp/claude-hooks.json" "$raw/examples/agent-hooks/claude.json"
   python3 "$tmp/merge.py" mcp-json "$HOME/.claude.json" opeco-link "$env" /usr/local/bin/opeco --qr-port "$qr_port" mcp
   python3 "$tmp/merge.py" hooks "$HOME/.claude/settings.json" "$tmp/claude-hooks.json" opeco-link
 fi
 
 if [ "$install_codex" = 1 ]; then
+  install_skill "$HOME/.codex/skills"
   curl -fsSL -o "$tmp/codex-hooks.json" "$raw/examples/agent-hooks/codex.json"
   python3 "$tmp/merge.py" mcp-toml "$HOME/.codex/config.toml" opeco-link "$env" /usr/local/bin/opeco --qr-port "$qr_port" mcp
   python3 "$tmp/merge.py" hooks "$HOME/.codex/hooks.json" "$tmp/codex-hooks.json" opeco-link

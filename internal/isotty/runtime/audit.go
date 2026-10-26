@@ -76,6 +76,8 @@ type VMEventRecord struct {
 	URL            string `json:"url,omitempty"`
 	Repo           string `json:"repo,omitempty"`
 	Target         string `json:"target,omitempty"`
+	Account        string `json:"account,omitempty"`
+	Scopes         string `json:"scopes,omitempty"`
 }
 
 type RemoteTarget struct {
@@ -99,6 +101,9 @@ func ConfigureAudit(target RemoteTarget, debug bool) error {
 }
 
 func QueryAuditLogs(target RemoteTarget, start string) ([]AuditEvent, error) {
+	if err := checkAuditActive(target); err != nil {
+		return nil, err
+	}
 	execOutput, err := queryAuditKey(target, auditExecKey, start)
 	if err != nil {
 		return nil, err
@@ -166,6 +171,17 @@ func NewGitHubVMEvent(projectHash, operation, repo, target string) (VMEventRecor
 	return record, nil
 }
 
+// NewGoogleVMEvent records an access token the gateway minted for the VM.
+func NewGoogleVMEvent(projectHash, serviceAccount string, scopes []string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, "google-token")
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.Account = serviceAccount
+	record.Scopes = strings.Join(scopes, ",")
+	return record, nil
+}
+
 // NewOpenVMEvent records a URL the VM asked the host to open in its browser.
 func NewOpenVMEvent(projectHash, url string) (VMEventRecord, error) {
 	record, err := newVMEvent(projectHash, "open-url")
@@ -218,6 +234,22 @@ func auditRules() string {
 		fmt.Sprintf("-a always,exit -F arch=b32 -S connect -k %s", auditConnectKey),
 	}
 	return strings.Join(lines, "\n")
+}
+
+// checkAuditActive distinguishes "nothing happened" from "nothing was
+// recorded": with auditd stopped or the rules gone, ausearch would just find
+// no matches.
+func checkAuditActive(target RemoteTarget) error {
+	output, err := target.Capture("systemctl is-active auditd && sudo auditctl -l")
+	if err != nil {
+		return fmt.Errorf("auditd is not active in the VM, so the log has gaps: %w", err)
+	}
+	for _, key := range []string{auditExecKey, auditConnectKey} {
+		if !strings.Contains(output, "-k "+key) && !strings.Contains(output, "key="+key) {
+			return fmt.Errorf("audit rule %q is not loaded in the VM, so the log has gaps; `isotty up` reinstalls the rules", key)
+		}
+	}
+	return nil
 }
 
 func queryAuditKey(target RemoteTarget, key, start string) (string, error) {
@@ -519,36 +551,40 @@ func extractAfter(line, prefix string) string {
 	return strings.TrimSpace(line[start+len(prefix):])
 }
 
+// formatVMEvent quotes every value the VM chose: the line is printed to the
+// human's terminal and the log file is writable in the VM.
 func formatVMEvent(record VMEventRecord) string {
-	parts := []string{record.Type}
-	if record.ClientHostname != "" {
-		parts = append(parts, "client="+record.ClientHostname)
+	parts := []string{quoteField(record.Type)}
+	add := func(name, value string) {
+		if value != "" {
+			parts = append(parts, name+"="+quoteField(value))
+		}
 	}
-	if record.ClientUser != "" {
-		parts = append(parts, "user="+record.ClientUser)
-	}
+	add("client", record.ClientHostname)
+	add("user", record.ClientUser)
 	if record.ForwardCount > 0 {
 		parts = append(parts, fmt.Sprintf("forwards=%d", record.ForwardCount))
 	}
-	if record.Result != "" {
-		parts = append(parts, "result="+record.Result)
-	}
-	if record.Title != "" {
-		parts = append(parts, "title="+strconv.Quote(record.Title))
-	}
-	if record.PadID != "" {
-		parts = append(parts, "pad="+record.PadID)
-	}
-	if record.URL != "" {
-		parts = append(parts, "url="+record.URL)
-	}
-	if record.Repo != "" {
-		parts = append(parts, "repo="+record.Repo)
-	}
-	if record.Target != "" {
-		parts = append(parts, "target="+record.Target)
-	}
+	add("result", record.Result)
+	add("title", record.Title)
+	add("pad", record.PadID)
+	add("url", record.URL)
+	add("repo", record.Repo)
+	add("target", record.Target)
+	add("account", record.Account)
+	add("scopes", record.Scopes)
 	return strings.Join(parts, " ")
+}
+
+// quoteField leaves plain values readable and escapes the rest, so a value
+// cannot carry control sequences or fake another field.
+func quoteField(value string) string {
+	for _, r := range value {
+		if r <= ' ' || r == '"' || r == '\\' || r == 0x7f || !strconv.IsPrint(r) {
+			return strconv.Quote(value)
+		}
+	}
+	return value
 }
 
 func firstLine(block string) string {
@@ -560,9 +596,8 @@ func firstLine(block string) string {
 }
 
 func extractExecArgs(line string) []string {
-	fields := strings.Fields(line)
 	args := make(map[int]string)
-	for _, field := range fields {
+	for _, field := range splitAuditFields(line) {
 		if !strings.HasPrefix(field, "a") {
 			continue
 		}
@@ -590,4 +625,31 @@ func extractExecArgs(line string) []string {
 		result = append(result, args[index])
 	}
 	return result
+}
+
+// splitAuditFields splits an `ausearch -i` line on whitespace outside double
+// quotes, so an argument such as a1="x a0=y" stays one field and cannot pose
+// as another argument.
+func splitAuditFields(line string) []string {
+	var fields []string
+	var current strings.Builder
+	inQuotes := false
+	for _, r := range line {
+		switch {
+		case r == '"':
+			inQuotes = !inQuotes
+			current.WriteRune(r)
+		case !inQuotes && (r == ' ' || r == '\t'):
+			if current.Len() > 0 {
+				fields = append(fields, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if current.Len() > 0 {
+		fields = append(fields, current.String())
+	}
+	return fields
 }

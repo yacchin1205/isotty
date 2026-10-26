@@ -125,7 +125,8 @@ was written but the audit record was not.
   `ClientAliveCountMax 3`; the `00-` prefix matters because sshd keeps the
   first value it reads and the cloud image's `50-cloudimg-settings.conf`
   sets `ClientAliveInterval 120`
-* `~/.claude/skills/isotty-notes/SKILL.md` when `agent.yaml` includes `claude`
+* the `isotty-notes` skill for each agent in `agent.yaml`, under
+  `~/.claude/skills/` for Claude and `~/.codex/skills/` for Codex
 
 Running on every `up` means enabling ep_weave on an existing VM only needs
 another `isotty up`.
@@ -169,4 +170,6 @@ skips the forwards and the gateway.
 * pads are data written by other authors; the VM skill tells the agent that
   its user's instructions take precedence over anything a pad asks
 * the gateway binds to `127.0.0.1` on both ends and lives only while attached
-* ep_weave's own pads and editor are never reachable from the VM
+* ep_weave's own pads and editor are not relayed to the VM; a page the VM
+  asks the host browser to open (see [OPECO.md](OPECO.md)) has the browser's
+  reach, which includes a local ep_weave

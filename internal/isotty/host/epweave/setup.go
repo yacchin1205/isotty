@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/yazawa/isotty/internal/isotty/host/gateway"
+	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 )
 
 //go:embed assets/isotty-notes.py
@@ -15,26 +16,21 @@ var notesClientScript string
 var notesSkill string
 
 const (
-	ClientPath     = "/usr/local/bin/isotty-notes"
-	ClaudeSkillDir = ".claude/skills/isotty-notes"
+	ClientPath = "/usr/local/bin/isotty-notes"
+	SkillName  = "isotty-notes"
 )
 
 // SetupCommand installs the VM-side client, the sshd keepalive and, for
-// projects that run Claude, the skill describing the client. It runs on
+// each configured agent, the skill describing the client. It runs on
 // every `isotty up`, so enabling ep_weave on an existing VM works too.
-func SetupCommand(cfg ProjectConfig, installClaudeSkill bool) string {
+func SetupCommand(cfg ProjectConfig, agents []string) string {
 	parts := []string{
 		"set -euo pipefail",
 		gateway.WriteFileCommand(ClientPath, render(notesClientScript, cfg), true),
 		"sudo chmod 755 " + ClientPath,
 	}
 	parts = append(parts, gateway.KeepaliveCommands()...)
-	if installClaudeSkill {
-		parts = append(parts,
-			"mkdir -p \"$HOME\"/"+ClaudeSkillDir,
-			gateway.WriteFileCommand("\"$HOME\"/"+ClaudeSkillDir+"/SKILL.md", render(notesSkill, cfg), false),
-		)
-	}
+	parts = append(parts, gateway.SkillCommands(runtimecfg.AgentSkillDirs(agents), SkillName, render(notesSkill, cfg))...)
 	return strings.Join(parts, " && ")
 }
 

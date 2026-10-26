@@ -66,7 +66,8 @@ On every `isotty up`:
   opeco's agent hooks merged into `~/.claude/settings.json`, and opeco's
   skill under `~/.claude/skills/`
 * for Codex: the same server and environment in `~/.codex/config.toml`
-  between marker comments, and opeco's hooks merged into `~/.codex/hooks.json`
+  between marker comments, opeco's hooks merged into `~/.codex/hooks.json`,
+  and opeco's skill under `~/.codex/skills/`
 
 The hooks and the skill are fetched from the opeco repository at the same
 release, so opeco stays the only place that defines them.
@@ -88,7 +89,11 @@ fails when the latest release is older than that.
   is audited
 * what that port serves is under the VM's control: the gateway cannot tell
   opeco's page from anything else bound to it, so the host browser renders
-  VM-controlled content when it opens the page
+  VM-controlled content when it opens the page. Such a page has whatever the
+  browser can reach, including services on the host's loopback that trust
+  any local client (a local ep_weave accepts WebSocket connections from any
+  origin, for instance). Opening it is the VM acting through the human's
+  browser; the audit record of the request is what says it happened
 * treat an unused pairing QR code or URL as a temporary secret, as
   [opeco's security notes](https://github.com/yacchin1205/opeco-link#security-notes)
   describe

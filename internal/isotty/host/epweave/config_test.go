@@ -99,14 +99,14 @@ func TestInsertionPoint(t *testing.T) {
 }
 
 func TestSetupCommand(t *testing.T) {
-	command := SetupCommand(ProjectConfig{Prefix: "demo"}, true)
-	for _, want := range []string{"set -euo pipefail", "sudo tee " + ClientPath, "sudo chmod 755 " + ClientPath, "sshd_config.d/00-isotty.conf", "systemctl reload ssh", ClaudeSkillDir + "/SKILL.md"} {
+	command := SetupCommand(ProjectConfig{Prefix: "demo"}, []string{"claude", "codex"})
+	for _, want := range []string{"set -euo pipefail", "sudo tee " + ClientPath, "sudo chmod 755 " + ClientPath, "sshd_config.d/00-isotty.conf", "systemctl reload ssh", ".claude/skills/" + SkillName + "/SKILL.md", ".codex/skills/" + SkillName + "/SKILL.md"} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("SetupCommand() missing %q:\n%s", want, command)
 		}
 	}
-	if strings.Contains(SetupCommand(ProjectConfig{Prefix: "demo"}, false), "SKILL.md") {
-		t.Fatal("SetupCommand() should not install the skill without Claude")
+	if strings.Contains(SetupCommand(ProjectConfig{Prefix: "demo"}, nil), "SKILL.md") {
+		t.Fatal("SetupCommand() should not install the skill without an agent")
 	}
 	rendered := render(notesClientScript, ProjectConfig{Prefix: "demo"})
 	if !strings.Contains(rendered, "http://127.0.0.1:61001/epweave") || strings.Contains(rendered, "__ISOTTY_") {

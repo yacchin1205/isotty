@@ -99,3 +99,14 @@ func WriteFileCommand(path, content string, sudo bool) string {
 	encoded := base64.StdEncoding.EncodeToString([]byte(content))
 	return fmt.Sprintf("printf %%s %s | base64 -d | %s %s >/dev/null", encoded, tee, path)
 }
+
+// SkillCommands install a skill for every agent whose skill directory is
+// given (see runtime.AgentSkillDirs); each gets its own copy of SKILL.md.
+func SkillCommands(skillDirs []string, name, content string) []string {
+	var parts []string
+	for _, dir := range skillDirs {
+		target := "\"$HOME\"/" + dir + "/" + name
+		parts = append(parts, "mkdir -p "+target, WriteFileCommand(target+"/SKILL.md", content, false))
+	}
+	return parts
+}

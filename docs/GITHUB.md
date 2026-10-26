@@ -207,8 +207,8 @@ change means running `isotty host github enable` on the host again.
   commands act on the repository behind the current directory's `origin`
   unless `--repo owner/name` says otherwise; the relay checks the pin either
   way.
-* `~/.claude/skills/isotty-github/SKILL.md` when `agent.yaml` includes
-  `claude`
+* the `isotty-github` skill for each agent in `agent.yaml`, under
+  `~/.claude/skills/` for Claude and `~/.codex/skills/` for Codex
 
 The skill tells the agent: private fetch and push, pull requests, issues,
 workflow runs and repository settings go through `isotty-github`, everything else is plain `git`;

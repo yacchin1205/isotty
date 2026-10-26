@@ -73,4 +73,7 @@ IsoTTY should not silently degrade to "no audit data" when:
 * record parsing fails
 * required privileges are missing
 
-The only normal empty result is "no matching events were found".
+The only normal empty result is "no matching events were found". To tell
+that apart from a stopped `auditd` or a removed rule, `isotty audit logs`
+checks that `auditd` is active and both rules are loaded before it queries,
+and fails when they are not.
