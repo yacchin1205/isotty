@@ -1,8 +1,10 @@
 # IsoTTY
 
+<p align="center"><img src="docs/logo.png" width="280" alt="A crab waving from a tide pool"></p>
+
 IsoTTY is a disposable isolated development sandbox.
 
-IsoTTY trusts the agent and distrusts mistakes: it is not a cage for a hostile agent, but a way to agree with the human on what the agent may reach, keep a mistake inside that agreement, and show afterwards what happened.
+The name is *iso*lated + *tty*, but it reads just as well as 磯 (iso), the rocky shore: a tide pool is a little sea of its own, cut off from the ocean until the next tide, and so is each VM.
 
 It creates an isolated environment for a project, syncs files into `/workspace`, and lets you attach and work there instead of running risky tasks on your local machine.
 
@@ -11,6 +13,8 @@ It creates an isolated environment for a project, syncs files into `/workspace`,
 Developer machines tend to hold credentials, tokens, and private source trees.
 IsoTTY keeps risky tasks such as package installs, setup scripts, and agent execution inside a disposable isolated environment instead of running them directly on the local machine.
 The goal is to preserve a normal terminal workflow while moving execution across a safer boundary.
+
+IsoTTY trusts the agent and distrusts mistakes: it is not a cage for a hostile agent, but a way to agree with the human on what the agent may reach, keep a mistake inside that agreement, and show afterwards what happened.
 
 ## Requirements
 
