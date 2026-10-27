@@ -6,7 +6,7 @@ install_claude="__INSTALL_CLAUDE__"
 install_codex="__INSTALL_CODEX__"
 repository="https://github.com/yacchin1205/opeco-link"
 marker=/usr/local/share/isotty/opeco-version
-open_client=/usr/local/bin/isotty-open
+open_client="__OPEN_CLIENT__"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -35,8 +35,6 @@ if [ ! -f "$marker" ] || [ "$(cat "$marker")" != "$version" ]; then
   echo "$version" | sudo tee "$marker" >/dev/null
 fi
 
-printf %s "__OPEN_CLIENT_B64__" | base64 -d | sudo tee "$open_client" >/dev/null
-sudo chmod 755 "$open_client"
 printf %s "__MERGE_SCRIPT_B64__" | base64 -d > "$tmp/merge.py"
 env="{\"BROWSER\": \"$open_client\"}"
 

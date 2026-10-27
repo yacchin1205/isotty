@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/yazawa/isotty/internal/isotty/host"
+	"github.com/yazawa/isotty/internal/isotty/host/browser"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
 	"github.com/yazawa/isotty/internal/isotty/host/forge"
 	"github.com/yazawa/isotty/internal/isotty/host/gas"
@@ -704,20 +705,18 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		mux.Handle("/gas/", http.StripPrefix("/gas", handler))
 		services = append(services, "Apps Script")
 	}
-	if qr, ok := forwardCfg.Forwards[opecoForwardName]; ok {
-		mux.Handle("/open", opeco.OpenHandler(qr.RemotePort, opeco.OpenInBrowser, func(url string) {
-			event, err := runtimecfg.NewOpenVMEvent(projectHash, url)
-			if err == nil {
-				err = record(event)
-			}
-			if err != nil {
-				deferredMu.Lock()
-				deferredErrs = append(deferredErrs, fmt.Errorf("record open-url event for %s: %w", url, err))
-				deferredMu.Unlock()
-			}
-		}))
-		services = append(services, "browser open")
-	}
+	mux.Handle("/open", browser.Handler(browser.OpenInBrowser, func(url string) {
+		event, err := runtimecfg.NewOpenVMEvent(projectHash, url)
+		if err == nil {
+			err = record(event)
+		}
+		if err != nil {
+			deferredMu.Lock()
+			deferredErrs = append(deferredErrs, fmt.Errorf("record open-url event for %s: %w", url, err))
+			deferredMu.Unlock()
+		}
+	}))
+	services = append(services, "browser open")
 	var reverse *reverseForward
 	if len(services) > 0 {
 		gw, err := gateway.Serve(mux)
@@ -914,10 +913,15 @@ func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardC
 		forward := forwardCfg.Forwards[name]
 		sshArgs = append(sshArgs, "-L", fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", forward.LocalPort, forward.RemotePort))
 	}
+	// The session's shell gets BROWSER only when the gateway behind
+	// `isotty-open` exists, so a click in Codex or `gh` opens on the host
+	// while attached and fails plainly otherwise.
+	shell := "exec ${SHELL:-/bin/bash} -l"
 	if reverse != nil {
 		sshArgs = append(sshArgs, "-R", fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", reverse.VMPort, reverse.HostPort))
+		shell = "BROWSER=" + browser.ClientPath + " " + shell
 	}
-	sshArgs = append(sshArgs, instanceTarget, fmt.Sprintf("cd %s && exec ${SHELL:-/bin/bash} -l", workspacePath))
+	sshArgs = append(sshArgs, instanceTarget, fmt.Sprintf("cd %s && %s", workspacePath, shell))
 	return sshArgs
 }
 
@@ -1350,6 +1354,15 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		}); err != nil {
 			return State{}, err
 		}
+	}
+	if err := a.runPhase("Installing browser opener", func() error {
+		return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+			ProjectID:    state.GCPProjectID,
+			Zone:         state.Zone,
+			InstanceName: state.InstanceName,
+		}, browser.SetupCommand(cfg.Runtime.Agents), a.debug)
+	}); err != nil {
+		return State{}, err
 	}
 	if opeco.Active(cfg.Runtime.Agents) {
 		if err := a.runPhase("Installing opeco (QR page on port %d)", func() error {

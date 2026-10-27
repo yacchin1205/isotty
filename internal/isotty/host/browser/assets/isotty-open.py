@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Ask the host to open a URL in its browser through the isotty gateway.
+"""Ask the host to open a URL in the human's browser through the isotty gateway.
 
-Only the opeco QR page is accepted; the gateway exists while the host is
+http and https URLs are opened; the gateway exists while the host is
 attached. Exit status and stderr carry the reason when nothing opened.
 """
 import json

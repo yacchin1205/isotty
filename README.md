@@ -274,6 +274,12 @@ isotty-gas run <script-id> sendRequests '["<sheet-id>", "2026-10"]'
 
 See [Apps Script design](docs/GAS.md).
 
+Browser:
+
+The agent can open a URL in your browser: `isotty-open <url>` in the VM shows it on the host while you are attached, and the attached session has `BROWSER` set to it, so a click in Codex or `gh` does the same. `http` and `https` only; every open is in the audit log.
+
+See [Browser design](docs/BROWSER.md).
+
 opeco notifications:
 
 When an agent is configured, `isotty up` also installs [opeco](https://github.com/yacchin1205/opeco-link) in the VM and registers it as the agent's `opeco-link` MCP server, so the agent can keep you informed on your phone while your machine sleeps.
@@ -392,6 +398,7 @@ IsoTTY stores local state under:
 * [GitLab design](docs/GITLAB.md)
 * [Google design](docs/GOOGLE.md)
 * [Apps Script design](docs/GAS.md)
+* [Browser design](docs/BROWSER.md)
 * [opeco design](docs/OPECO.md)
 * [Audit design](docs/AUDIT.md)
 * [Agent design](docs/AGENT.md)
