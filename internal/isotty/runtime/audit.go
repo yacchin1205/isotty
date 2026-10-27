@@ -162,10 +162,11 @@ func NewEpweaveVMEvent(projectHash, operation, title, padID string) (VMEventReco
 	return record, nil
 }
 
-// NewGitHubVMEvent records a write the VM made on GitHub through the relay;
-// target is the pull request, issue or run it touched, empty for a push.
-func NewGitHubVMEvent(projectHash, operation, repo, target string) (VMEventRecord, error) {
-	record, err := newVMEvent(projectHash, "github-"+operation)
+// NewForgeVMEvent records a write the VM made on GitHub or GitLab through
+// the relay; forge is "github" or "gitlab", target the pull or merge
+// request, issue, run, pipeline or job it touched, empty for a push.
+func NewForgeVMEvent(projectHash, forge, operation, repo, target string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, forge+"-"+operation)
 	if err != nil {
 		return VMEventRecord{}, err
 	}

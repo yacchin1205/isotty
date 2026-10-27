@@ -66,14 +66,14 @@ on a public one:
 | pr list | read | `GET /repos/{o}/{r}/pulls` |
 | pr view | read | `GET /repos/{o}/{r}/pulls/{n}`, its reviews and comments; the diff on request |
 | pr checks | read | `GET /repos/{o}/{r}/commits/{sha}/check-runs` |
-| pr create | write | `POST /repos/{o}/{r}/pulls` |
-| pr comment | write | `POST /repos/{o}/{r}/issues/{n}/comments` |
-| pr edit | write | `PATCH /repos/{o}/{r}/pulls/{n}` (title, body) |
+| pr create | comment | `POST /repos/{o}/{r}/pulls` |
+| pr comment | comment | `POST /repos/{o}/{r}/issues/{n}/comments` |
+| pr edit | comment | `PATCH /repos/{o}/{r}/pulls/{n}` (title, body) |
 | issue list | read | `GET /repos/{o}/{r}/issues` |
 | issue view | read | `GET /repos/{o}/{r}/issues/{n}` and its comments |
-| issue create | write | `POST /repos/{o}/{r}/issues` |
-| issue comment | write | `POST /repos/{o}/{r}/issues/{n}/comments` |
-| issue edit | write | `PATCH /repos/{o}/{r}/issues/{n}` (title, body, labels) |
+| issue create | comment | `POST /repos/{o}/{r}/issues` |
+| issue comment | comment | `POST /repos/{o}/{r}/issues/{n}/comments` |
+| issue edit | comment | `PATCH /repos/{o}/{r}/issues/{n}` (title, body, labels) |
 | run list | read | `GET /repos/{o}/{r}/actions/runs` |
 | run view | read | `GET /repos/{o}/{r}/actions/runs/{id}` and its jobs |
 | run log | read | `GET /repos/{o}/{r}/actions/jobs/{id}/logs` |
@@ -81,14 +81,29 @@ on a public one:
 | run rerun | write | `POST /repos/{o}/{r}/actions/runs/{id}/rerun`, `.../rerun-failed-jobs` |
 | run cancel | write | `POST /repos/{o}/{r}/actions/runs/{id}/cancel` |
 | repo view | read | `GET /repos/{o}/{r}`, branch protection and rules, Actions permissions, environments and their protection rules, Pages, the names of Actions secrets |
+| repo ruleset list / view | read | `GET /repos/{o}/{r}/rulesets[/{id}]` |
+| repo edit | admin | `PATCH /repos/{o}/{r}` (description, homepage, default_branch, the feature switches, the merge options and commit message defaults), `PUT /repos/{o}/{r}/topics` |
+| repo protect / unprotect | admin | `PUT`, `DELETE /repos/{o}/{r}/branches/{b}/protection` |
+| repo ruleset create / edit / delete | admin | `POST /repos/{o}/{r}/rulesets`, `PUT`, `DELETE /repos/{o}/{r}/rulesets/{id}` |
+| repo actions | admin | `PUT /repos/{o}/{r}/actions/permissions`, `.../workflow` (and `GET` of both) |
+| repo env set / delete | admin | `PUT`, `DELETE /repos/{o}/{r}/environments/{name}` |
+| repo pages enable / edit / disable | admin | `POST`, `PUT`, `DELETE /repos/{o}/{r}/pages` |
 
 The list is an allowlist of path patterns and methods, not a pass-through of
-`/repos/{o}/{r}/`. A write operation is forwarded only when the repository is
-pinned as `write`; a read operation when it is pinned at all or the
-repository is public. The JSON body
+`/repos/{o}/{r}/`. The access levels nest: `read` allows the read operations,
+`comment` adds those marked comment, `write` adds those marked write,
+`admin` adds those marked admin. A read
+operation is also forwarded for a public repository that is not pinned. The
+levels follow GitHub's own line: opening and commenting on pull requests and
+issues is open to anyone who can see a repository, push and the Actions
+operations need push permission, and the settings need the repository's
+admin permission, so a fork workflow pins the fork as
+`write` and the upstream as `comment`. The JSON body
 of a write may carry only the fields named for it, so `pr edit` cannot close
 a pull request by sending `state`, although the same endpoint would accept
-it. Logs and
+it, and `repo edit` cannot rename, archive or change the visibility of the
+repository, although `PATCH /repos/{o}/{r}` takes `name`, `archived`,
+`private` and `visibility`. Logs and
 artifacts are answered by GitHub with a redirect to a signed URL on another
 host; the relay follows it and streams the body, so the VM never talks to
 anything but the relay.
@@ -104,12 +119,15 @@ Some things are missing on purpose:
   with the human.
 * Dispatching workflows and deleting runs. Rerunning what a push already
   triggered is enough for an agent that is fixing CI.
-* Changing repository settings: collaborators, hooks, deploy keys, branch
-  protection, secrets, variables. No access level includes them. `repo view`
-  reads the settings an agent needs to work within, and leaves out even for
-  reading what carries credentials or people: Actions and environment
-  variables (their values are plain text and often hold keys), webhooks
-  (URLs often embed tokens), collaborators and deploy keys.
+* What carries credentials or people: collaborators, webhooks, deploy
+  keys, Actions and environment secrets and variables. No access level
+  includes changing them, and `repo view` leaves most of them out even for
+  reading: variable values are plain text and often hold keys, webhook
+  URLs often embed tokens. `admin` covers the settings an agent sets up a
+  repository with, and stops there.
+* Renaming, transferring, archiving and deleting the repository and
+  changing its visibility. The pin names the repository; a change to what
+  it is stays with the human.
 * GraphQL. Its single endpoint cannot be allowlisted by path, so `gh` is not
   usable through the relay and is not installed in the VM.
 
@@ -138,43 +156,53 @@ Project config, synced with the rest of `.isotty/`:
 ```yaml
 repos:
   yacchin1205/isotty: write
+  some-org/upstream: comment
   some-org/shared-lib: read
 ```
 
 ```bash
-isotty host github enable                              # the repository behind origin, write
-isotty host github enable --remote upstream:read       # plus another remote's repository
-isotty host github enable --repo owner/name:read       # plus a repository not among the remotes
+isotty host github add --remote origin --allow write      # the repository behind origin
+isotty host github add --remote upstream --allow comment  # another remote's repository
+isotty host github add --repo owner/name                  # a repository not among the remotes, read
+isotty host github add --remote origin --allow admin      # settings and branch protection too
+isotty host github remove --repo owner/name
 isotty host github show
-isotty host github disable
+isotty host github clear
 ```
 
-`enable` resolves `origin`, and any `--remote`, from the project's
-`.git/config` on the host at that moment and writes the resulting
-`owner/name` list; the remote names themselves are never stored. The access
-suffix defaults to `write`. The list is written whole on every `enable`, so
-`show` always prints the complete set the VM can reach. `enable` fails when
-origin is missing or not on github.com.
+`add` and `remove` edit the list; every repository named in one `add` gets
+the level of `--allow`, which defaults to `read`, and adding a repository
+that is already listed replaces its level. `add` resolves a `--remote` from
+the project's `.git/config` on the host at that moment and stores the
+resulting `owner/name`; the remote names themselves are never stored.
+Before pinning, `add` asks
+api.github.com for the repository with the host token, so a repository the
+token cannot see, cannot push to when `write` is asked, or does not
+administer when `admin` is asked, is refused rather
+than discovered later in the VM; the name is stored as GitHub spells it.
+Removing the last repository removes the file.
 
 A remote name is resolved once, on purpose: `.git/` is synced two-way, so the
 agent can point `origin` elsewhere. Pinning the resolved repository means such
 a change only makes the next `isotty-github` call fail as unpinned; it cannot
 widen what the relay forwards. When the human really moves the project, they
-run `enable` again.
+`add` the new repository and `remove` the old one.
 
 ### Pin
 
 For the same reason an agent could add a repository to the synced
-`github.yaml`, so `isotty host github enable` also records the accepted list
-on the host:
+`github.yaml`, so `add` and `remove` also keep the accepted list on the
+host:
 
 ```text
 ~/.isotty/projects/<project-hash>.github.yaml
 ```
 
 `up`, `attach` and `attach --target` compare the synced file with the pin
-and refuse to continue when they differ or when no pin exists. Accepting a
-change means running `isotty host github enable` on the host again.
+and refuse to continue when they differ or when no pin exists. `add` and
+`remove` work from the pin, not from the synced file, so a change made in
+the VM is never accepted by accident; the human states each repository on
+the host.
 
 ## VM Side
 
@@ -206,6 +234,14 @@ change means running `isotty host github enable` on the host again.
   isotty-github run rerun <id> [--failed]
   isotty-github run cancel <id>
   isotty-github repo view
+  isotty-github repo edit --set <field>=<value>...
+  isotty-github repo topics [<topic>...]
+  isotty-github repo protect <branch> [flags] | --body-file <json>
+  isotty-github repo unprotect <branch>
+  isotty-github repo ruleset list|view|create|edit|delete
+  isotty-github repo actions [flags]
+  isotty-github repo env set|delete <name>
+  isotty-github repo pages enable|edit|disable
   ```
 
   `fetch` and `push` run the same `git` subcommand with a per-invocation URL
@@ -226,11 +262,11 @@ attached.
 
 ## Audit
 
-Every write, a `git-receive-pack` and each `pr`, `issue` and `run` command
-marked write above, is recorded in the VM event log
-(`/var/log/isotty/events.jsonl`) with the repository and the pull request,
-issue or run it touched, so `isotty audit logs` shows what the VM changed on
-GitHub.
+Every change, a `git-receive-pack` and each `pr`, `issue`, `run` and `repo`
+command marked comment, write or admin above, is recorded in the VM event
+log (`/var/log/isotty/events.jsonl`) with the repository and the pull
+request, issue, run, branch, ruleset or environment it touched, so `isotty
+audit logs` shows what the VM changed on GitHub.
 
 The same log already carries every `isotty-github` invocation, reads
 included, as an exec record with its arguments (see [AUDIT.md](AUDIT.md)), so
@@ -251,7 +287,7 @@ failed push or comment did not happen, and the commits and the text stay in
 
 * the GitHub token never leaves the host
 * the VM reaches only the pinned repositories and public ones, only through
-  the operations listed above, and writes only where the pin says `write`
+  the operations listed above, and changes only what the pin's level allows
 * the token is used only for the pinned repositories; public repositories
   are read without it
 * the repository list and its access levels are pinned on the host; the

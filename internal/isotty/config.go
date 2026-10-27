@@ -13,6 +13,7 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
 	"github.com/yazawa/isotty/internal/isotty/host/gas"
 	"github.com/yazawa/isotty/internal/isotty/host/github"
+	"github.com/yazawa/isotty/internal/isotty/host/gitlab"
 	"github.com/yazawa/isotty/internal/isotty/host/google"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
@@ -30,6 +31,8 @@ type Config struct {
 	Epweave *epweave.ProjectConfig
 	// GitHub is nil when the project has not enabled the GitHub relay.
 	GitHub *github.ProjectConfig
+	// GitLab is nil when the project has no pinned GitLab project.
+	GitLab *gitlab.ProjectConfig
 	// Google is nil when the project has not enabled the Google token gateway.
 	Google *google.ProjectConfig
 	// GAS is nil when the project has not enabled the Apps Script relay.
@@ -68,7 +71,11 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	githubConfig, err := host.LoadGitHubProjectConfig(projectPath, projectHash, homeDir)
+	githubConfig, err := github.Kind.LoadPinned(projectPath, projectHash, homeDir)
+	if err != nil {
+		return Config{}, err
+	}
+	gitlabConfig, err := gitlab.Kind.LoadPinned(projectPath, projectHash, homeDir)
 	if err != nil {
 		return Config{}, err
 	}
@@ -91,6 +98,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		VM:           vmConfig,
 		Epweave:      epweaveConfig,
 		GitHub:       githubConfig,
+		GitLab:       gitlabConfig,
 		Google:       googleConfig,
 		GAS:          gasConfig,
 	}, nil

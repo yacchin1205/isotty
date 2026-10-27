@@ -17,9 +17,11 @@ import (
 
 	"github.com/yazawa/isotty/internal/isotty/host"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
+	"github.com/yazawa/isotty/internal/isotty/host/forge"
 	"github.com/yazawa/isotty/internal/isotty/host/gas"
 	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 	"github.com/yazawa/isotty/internal/isotty/host/github"
+	"github.com/yazawa/isotty/internal/isotty/host/gitlab"
 	"github.com/yazawa/isotty/internal/isotty/host/google"
 	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
@@ -106,9 +108,15 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host epweave enable --prefix <name>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host epweave disable")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host epweave show")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] host github enable [--remote <name>[:read|write]]... [--repo <owner/name>[:read|write]]...")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] host github disable")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host github add [--remote <name>]... [--repo <owner/name>]... [--allow read|comment|write|admin]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host github remove [--remote <name>]... [--repo <owner/name>]...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host github clear")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host github show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host gitlab login --url <https://instance>")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host gitlab add [--remote <name>]... [--repo <host/group/project>]... [--allow read|comment|write|admin]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host gitlab remove [--remote <name>]... [--repo <host/group/project>]...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host gitlab clear")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host gitlab show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host google enable [--key <service-account.json>] --scope <scope>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host google disable")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host google show")
@@ -334,6 +342,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 	forwardCfg := host.ForwardConfig{Forwards: map[string]host.Forward{}}
 	var epweaveCfg *epweave.ProjectConfig
 	var githubCfg *github.ProjectConfig
+	var gitlabCfg *gitlab.ProjectConfig
 	var googleCfg *google.ProjectConfig
 	var gasCfg *gas.ProjectConfig
 	var agents []string
@@ -362,15 +371,28 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/github.yaml"); err != nil {
 			return err
 		} else if data != nil {
-			synced, err := github.ParseProjectConfig(data)
+			synced, err := github.Kind.ParseProjectConfig(data)
 			if err != nil {
 				return fmt.Errorf("parse remote github config: %w", err)
 			}
-			verified, err := github.VerifyPinned(homeDir, projectHash, synced)
+			verified, err := github.Kind.VerifyPinned(homeDir, projectHash, synced)
 			if err != nil {
 				return err
 			}
 			githubCfg = &verified
+		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/gitlab.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			synced, err := gitlab.Kind.ParseProjectConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote gitlab config: %w", err)
+			}
+			verified, err := gitlab.Kind.VerifyPinned(homeDir, projectHash, synced)
+			if err != nil {
+				return err
+			}
+			gitlabCfg = &verified
 		}
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/google.yaml"); err != nil {
 			return err
@@ -419,7 +441,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 		}
 	}
-	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg, googleCfg, gasCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -435,6 +457,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	forwardCfg := host.ForwardConfig{Forwards: map[string]host.Forward{}}
 	var epweaveCfg *epweave.ProjectConfig
 	var githubCfg *github.ProjectConfig
+	var gitlabCfg *gitlab.ProjectConfig
 	var googleCfg *google.ProjectConfig
 	var gasCfg *gas.ProjectConfig
 	var agents []string
@@ -452,7 +475,11 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 		if err != nil {
 			return err
 		}
-		githubCfg, err = host.LoadGitHubProjectConfig(projectPath, state.ProjectHash, homeDir)
+		githubCfg, err = github.Kind.LoadPinned(projectPath, state.ProjectHash, homeDir)
+		if err != nil {
+			return err
+		}
+		gitlabCfg, err = gitlab.Kind.LoadPinned(projectPath, state.ProjectHash, homeDir)
 		if err != nil {
 			return err
 		}
@@ -486,7 +513,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg, googleCfg, gasCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -511,7 +538,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -542,6 +569,14 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		}
 		mux.Handle("/github/", http.StripPrefix("/github", handler))
 		services = append(services, "GitHub")
+	}
+	if gitlabCfg != nil {
+		handler, err := a.gitlabHandler(*gitlabCfg, projectHash, record)
+		if err != nil {
+			return err
+		}
+		mux.Handle("/gitlab/", http.StripPrefix("/gitlab", handler))
+		services = append(services, "GitLab")
 	}
 	if googleCfg != nil {
 		handler, err := a.googleHandler(*googleCfg, projectHash, record)
@@ -672,13 +707,37 @@ func (a *App) githubHandler(cfg github.ProjectConfig, projectHash string, record
 	if err != nil {
 		return nil, err
 	}
-	return github.Handler(hostCfg.Token, cfg, func(event github.WriteEvent) error {
-		vmEvent, err := runtimecfg.NewGitHubVMEvent(projectHash, event.Operation, event.Repo, event.Target)
+	return github.Handler(hostCfg.Token, cfg, forgeRecorder(projectHash, "github", record)), nil
+}
+
+// gitlabHandler relays the pinned projects with the tokens of their
+// instances, recording every push and write in the VM event log.
+func (a *App) gitlabHandler(cfg gitlab.ProjectConfig, projectHash string, record func(runtimecfg.VMEventRecord) error) (http.Handler, error) {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return nil, err
+	}
+	hostCfg, err := gitlab.LoadHostConfig(homeDir, projectHash)
+	if err != nil {
+		return nil, err
+	}
+	for _, repo := range cfg.SortedRepos() {
+		host, _, _ := gitlab.Split(repo)
+		if _, ok := hostCfg.Find(host); !ok {
+			return nil, fmt.Errorf("project %s is pinned but %s lists no instance for %s", repo, hostCfg.Path(), host)
+		}
+	}
+	return gitlab.Handler(hostCfg, cfg, forgeRecorder(projectHash, "gitlab", record)), nil
+}
+
+func forgeRecorder(projectHash, kind string, record func(runtimecfg.VMEventRecord) error) func(forge.WriteEvent) error {
+	return func(event forge.WriteEvent) error {
+		vmEvent, err := runtimecfg.NewForgeVMEvent(projectHash, kind, event.Operation, event.Repo, event.Target)
 		if err != nil {
 			return err
 		}
 		return record(vmEvent)
-	}), nil
+	}
 }
 
 // googleHandler issues tokens for the pinned service account from the key on
@@ -1136,6 +1195,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
 			}, github.SetupCommand(cfg.Runtime.Agents), a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	}
+	if cfg.GitLab != nil {
+		if err := a.runPhase("Installing GitLab client", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, gitlab.SetupCommand(cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}

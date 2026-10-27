@@ -14,7 +14,7 @@ import (
 var repoLookup = regexp.MustCompile(`^/repos/[^/]+/[^/]+$`)
 
 type upstreamCall struct {
-	Method, Path, Query, Auth, Accept, Body string
+	Method, Path, EscapedPath, Query, Auth, Accept, Body string
 }
 
 // fakeGitHub stands in for github.com and api.github.com; it records what
@@ -27,7 +27,7 @@ type fakeGitHub struct {
 func (f *fakeGitHub) handler(t *testing.T) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		f.calls = append(f.calls, upstreamCall{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("Accept"), string(body)})
+		f.calls = append(f.calls, upstreamCall{r.Method, r.URL.Path, r.URL.EscapedPath(), r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("Accept"), string(body)})
 		if answer, ok := f.answers[r.Method+" "+r.URL.Path]; ok {
 			answer(w, r)
 			return
@@ -101,7 +101,7 @@ func TestRelayGit(t *testing.T) {
 	}
 
 	status, body := do(t, "POST", relay.URL+"/github/git/org/lib.git/git-receive-pack", "pack", "Content-Type", "application/x-git-receive-pack-request")
-	if status != 403 || !strings.Contains(body, "read-only") {
+	if status != 403 || !strings.Contains(body, "pinned as read") {
 		t.Fatalf("push to read-only repo = %d %s", status, body)
 	}
 	status, body = do(t, "GET", relay.URL+"/github/git/other/repo.git/info/refs?service=git-upload-pack", "")
@@ -169,8 +169,98 @@ func TestRelayAPIReads(t *testing.T) {
 			t.Fatalf("GET %s status = %d, want 403", denied, status)
 		}
 	}
-	if status, _ := do(t, "GET", relay.URL+"/github/api/repos/org/lib/branches/release/v1/protection", ""); status != 200 {
-		t.Fatalf("branch with slash status = %d", status)
+	// A slash in a branch name is sent encoded, as GitHub wants it, and
+	// reaches GitHub encoded; sent plain, it is two segments and no route.
+	if status, _ := do(t, "GET", relay.URL+"/github/api/repos/org/lib/branches/release%2Fv1/protection", ""); status != 200 {
+		t.Fatalf("branch with encoded slash status = %d", status)
+	}
+	if c := api.last(); c.EscapedPath != "/repos/org/lib/branches/release%2Fv1/protection" {
+		t.Fatalf("upstream path = %q", c.EscapedPath)
+	}
+	if status, _ := do(t, "GET", relay.URL+"/github/api/repos/org/lib/branches/release/v1/protection", ""); status != 403 {
+		t.Fatalf("branch with plain slash status = %d, want 403", status)
+	}
+}
+
+func TestRelayAdminLevel(t *testing.T) {
+	var events []WriteEvent
+	cfg := ProjectConfig{Repos: map[string]Access{"me/project": AccessAdmin, "org/lib": AccessWrite}}
+	relay, _, api := newTestRelay(t, cfg, func(e WriteEvent) error { events = append(events, e); return nil })
+	api.answers["PATCH /repos/me/project"] = func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"full_name":"me/project","delete_branch_on_merge":true}`))
+	}
+	api.answers["POST /repos/me/project/rulesets"] = func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":31}`))
+	}
+
+	status, body := do(t, "PATCH", relay.URL+"/github/api/repos/me/project", `{"delete_branch_on_merge":true,"description":"d"}`)
+	if status != 200 || !strings.Contains(body, "delete_branch_on_merge") {
+		t.Fatalf("repo edit = %d %s", status, body)
+	}
+	status, body = do(t, "PATCH", relay.URL+"/github/api/repos/me/project", `{"private":true}`)
+	if status != 400 || !strings.Contains(body, `private`) {
+		t.Fatalf("repo edit with private = %d %s", status, body)
+	}
+	status, body = do(t, "PATCH", relay.URL+"/github/api/repos/me/project", `{"archived":true}`)
+	if status != 400 {
+		t.Fatalf("repo edit with archived = %d %s", status, body)
+	}
+	status, _ = do(t, "PUT", relay.URL+"/github/api/repos/me/project/branches/release%2Fv1/protection", `{"required_status_checks":null,"enforce_admins":true,"required_pull_request_reviews":null,"restrictions":null}`)
+	if status != 200 {
+		t.Fatalf("protection set = %d", status)
+	}
+	if c := api.last(); c.EscapedPath != "/repos/me/project/branches/release%2Fv1/protection" || c.Auth != "Bearer tok" {
+		t.Fatalf("upstream call = %+v", c)
+	}
+	status, _ = do(t, "POST", relay.URL+"/github/api/repos/me/project/rulesets", `{"name":"main","target":"branch","enforcement":"active","conditions":{},"rules":[]}`)
+	if status != 201 {
+		t.Fatalf("ruleset create = %d", status)
+	}
+	status, _ = do(t, "DELETE", relay.URL+"/github/api/repos/me/project/environments/prod", "")
+	if status != 200 {
+		t.Fatalf("environment remove = %d", status)
+	}
+	want := []WriteEvent{
+		{Operation: "repo-edit", Repo: "me/project"},
+		{Operation: "protection-set", Repo: "me/project", Target: "release/v1"},
+		{Operation: "ruleset-create", Repo: "me/project", Target: "31"},
+		{Operation: "environment-remove", Repo: "me/project", Target: "prod"},
+	}
+	if len(events) != len(want) {
+		t.Fatalf("events = %+v", events)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Fatalf("event %d = %+v, want %+v", i, events[i], want[i])
+		}
+	}
+
+	calls := len(api.calls)
+	status, body = do(t, "PATCH", relay.URL+"/github/api/repos/org/lib", `{"description":"d"}`)
+	if status != 403 || !strings.Contains(body, "pinned as write") || !strings.Contains(body, "needs admin") {
+		t.Fatalf("repo edit on write pin = %d %s", status, body)
+	}
+	for _, denied := range []struct{ method, path string }{
+		{"PUT", "/api/repos/me/project/environments/prod%2Fsecrets%2FTOKEN"},
+		{"PUT", "/api/repos/me/project/environments/prod/secrets/TOKEN"},
+		{"PUT", "/api/repos/me/project/actions/secrets/TOKEN"},
+		{"PATCH", "/api/repos/me/project/actions/variables/X"},
+		{"POST", "/api/repos/me/project/hooks"},
+		{"POST", "/api/repos/me/project/keys"},
+		{"PUT", "/api/repos/me/project/collaborators/x"},
+		{"DELETE", "/api/repos/me/project"},
+		{"POST", "/api/repos/me/project/transfer"},
+		{"POST", "/api/repos/me/project/branches/main/protection/enforce_admins"},
+	} {
+		status, _ := do(t, denied.method, relay.URL+"/github"+denied.path, "{}")
+		if status != 403 && !(status == 200 && denied.path == "/api/repos/me/project/environments/prod%2Fsecrets%2FTOKEN") {
+			t.Fatalf("%s %s status = %d, want 403", denied.method, denied.path, status)
+		}
+	}
+	// The encoded one is one environment name, forwarded as such.
+	if c := api.calls[calls]; c.EscapedPath != "/repos/me/project/environments/prod%2Fsecrets%2FTOKEN" || len(api.calls) != calls+1 {
+		t.Fatalf("upstream calls after refusals = %+v", api.calls[calls:])
 	}
 }
 
@@ -221,7 +311,7 @@ func TestRelayAPIWrites(t *testing.T) {
 		t.Fatalf("cancel with body = %d %s", status, body)
 	}
 	status, body = do(t, "POST", relay.URL+"/github/api/repos/org/lib/issues", `{"title":"t"}`)
-	if status != 403 || !strings.Contains(body, "read-only") {
+	if status != 403 || !strings.Contains(body, "pinned as read") {
 		t.Fatalf("write to read-only repo = %d %s", status, body)
 	}
 	for _, denied := range []struct{ method, path string }{
@@ -342,5 +432,34 @@ func TestRelayReadsPublicRepositoriesWithoutToken(t *testing.T) {
 		if c.Path == "/repos/sec/ret/pulls" || c.Path == "/repos/pub/lic/issues" {
 			t.Fatalf("refused request reached the upstream: %+v", c)
 		}
+	}
+}
+
+func TestRelayCommentLevel(t *testing.T) {
+	var events []WriteEvent
+	cfg := ProjectConfig{Repos: map[string]Access{"org/upstream": AccessComment}}
+	relay, git, api := newTestRelay(t, cfg, func(e WriteEvent) error { events = append(events, e); return nil })
+	api.answers["POST /repos/org/upstream/pulls"] = func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"number":5}`))
+	}
+
+	status, body := do(t, "POST", relay.URL+"/github/api/repos/org/upstream/pulls", `{"title":"t","head":"me:b","base":"main"}`)
+	if status != 201 || !strings.Contains(body, `"number":5`) {
+		t.Fatalf("pr create = %d %s", status, body)
+	}
+	status, body = do(t, "POST", relay.URL+"/github/api/repos/org/upstream/actions/runs/7/rerun", "")
+	if status != 403 || !strings.Contains(body, "pinned as comment") || !strings.Contains(body, "needs write") {
+		t.Fatalf("rerun = %d %s", status, body)
+	}
+	status, body = do(t, "GET", relay.URL+"/github/git/org/upstream.git/info/refs?service=git-receive-pack", "")
+	if status != 403 || !strings.Contains(body, "needs write") {
+		t.Fatalf("push = %d %s", status, body)
+	}
+	if len(git.calls) != 0 || len(api.calls) != 1 {
+		t.Fatalf("upstream calls: git %d api %d; want only the pull request", len(git.calls), len(api.calls))
+	}
+	if len(events) != 1 || events[0].Operation != "pr-create" || events[0].Target != "5" {
+		t.Fatalf("events = %+v", events)
 	}
 }

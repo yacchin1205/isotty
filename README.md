@@ -174,11 +174,11 @@ See [ep_weave design](docs/EPWEAVE.md).
 
 GitHub:
 
-The agent in the VM can push, fetch and work with pull requests, issues and workflow runs of the repositories you name, through a relay that `isotty attach` provides with your GitHub token.
-The VM never holds the token and cannot reach any other repository.
+The agent in the VM can push, fetch and work with pull requests, issues, workflow runs and repository settings of the repositories you name, through a relay that `isotty attach` provides with your GitHub token.
+The VM never holds the token and cannot reach any other repository. Each repository is pinned as `read`, `comment`, `write` or `admin`.
 
 ```bash
-isotty host github enable            # the repository behind origin, write access
+isotty host github add --remote origin --allow write
 isotty up
 ```
 
@@ -196,6 +196,31 @@ isotty-github pr create --title 'Add relay' --base main < body.md
 ```
 
 See [GitHub design](docs/GITHUB.md).
+
+GitLab:
+
+The same relay exists for GitLab, self-hosted instances included: push, fetch, merge requests, issues, pipelines and project settings of the projects you name, with a token per instance kept on the host.
+
+```bash
+isotty host gitlab login --url https://gitlab.example.org   # prints which token to create, then asks for it
+isotty host gitlab add --remote origin --allow write
+isotty up
+```
+
+`login` keeps the token under `~/.isotty/projects/`, one file per project, so a fine-grained token scoped to that project's repositories fits; the project setting is stored in:
+
+```text
+./.isotty/gitlab.yaml
+```
+
+Inside the VM:
+
+```bash
+isotty-gitlab push -u origin HEAD
+isotty-gitlab mr create --title 'Add relay' --target main < description.md
+```
+
+See [GitLab design](docs/GITLAB.md).
 
 Google:
 
@@ -361,6 +386,7 @@ IsoTTY stores local state under:
 * [Forward design](docs/FORWARD.md)
 * [ep_weave design](docs/EPWEAVE.md)
 * [GitHub design](docs/GITHUB.md)
+* [GitLab design](docs/GITLAB.md)
 * [Google design](docs/GOOGLE.md)
 * [Apps Script design](docs/GAS.md)
 * [opeco design](docs/OPECO.md)
