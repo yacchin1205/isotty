@@ -22,13 +22,14 @@ func TestAccessCovers(t *testing.T) {
 	}{
 		{AccessRead, AccessRead, true}, {AccessRead, AccessComment, false}, {AccessComment, AccessComment, true},
 		{AccessComment, AccessWrite, false}, {AccessWrite, AccessComment, true}, {AccessWrite, AccessWrite, true},
+		{AccessWrite, AccessAdmin, false}, {AccessAdmin, AccessWrite, true}, {AccessAdmin, AccessAdmin, true},
 	} {
 		if got := c.have.Covers(c.need); got != c.want {
 			t.Fatalf("%s.Covers(%s) = %v", c.have, c.need, got)
 		}
 	}
-	if err := ValidateAccess("admin"); err == nil {
-		t.Fatal("ValidateAccess(admin) should fail")
+	if err := ValidateAccess("owner"); err == nil {
+		t.Fatal("ValidateAccess(owner) should fail")
 	}
 }
 
@@ -49,7 +50,7 @@ func TestParseProjectConfig(t *testing.T) {
 	for _, bad := range []string{
 		"repos: {}\n",
 		"repos:\n  not-a-repo: write\n",
-		"repos:\n  a/b: admin\n",
+		"repos:\n  a/b: owner\n",
 		"repos:\n  a/b: write\nextra: 1\n",
 		"repos:\n  a/b: write\n  A/B: read\n",
 	} {

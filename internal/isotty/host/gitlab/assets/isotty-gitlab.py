@@ -3,9 +3,10 @@
 
 The relay runs on the host inside `isotty attach` and is reachable only
 while the host is attached. It forwards git fetch/push and a fixed set of
-merge request, issue, pipeline and job operations for the projects pinned
-in .isotty/gitlab.yaml, with the host's token for each instance; this VM
-holds none.
+merge request, issue, pipeline, job and project-settings operations for the
+projects pinned in .isotty/gitlab.yaml, with the host's token for each
+instance; this VM holds none. Reads, comments, pushes and settings changes
+each need their own pin level: read, comment, write, admin.
 """
 import argparse
 import json
@@ -372,6 +373,51 @@ def cmd_project_view(args):
         print(f"  {branch['name']}: push by {push}; merge by {merge}; force push: {branch.get('allow_force_push')}")
 
 
+# --- project settings: changes (admin) ----------------------------------------
+
+ACCESS_LEVELS = {'none': 0, 'developer': 30, 'maintainer': 40, 'admin': 60}
+
+
+def parse_settings(pairs):
+    """--set name=value pairs; a value that is JSON (true, 3, ["a"]) is taken as such, anything else as a string."""
+    body = {}
+    for pair in pairs:
+        name, sep, value = pair.partition('=')
+        if not sep or not name:
+            raise SystemExit(f"isotty-gitlab: --set expects name=value, got {pair!r}")
+        try:
+            body[name] = json.loads(value)
+        except ValueError:
+            body[name] = value
+    return body
+
+
+def cmd_project_edit(args):
+    project = resolve_project(args)
+    info = api('PUT', project_path(project), body=parse_settings(args.set))
+    print(f"{info['path_with_namespace']} updated")
+
+
+def cmd_project_protect(args):
+    project = resolve_project(args)
+    body = {'name': args.branch, 'push_access_level': ACCESS_LEVELS[args.push], 'merge_access_level': ACCESS_LEVELS[args.merge],
+            'allow_force_push': args.allow_force_push == 'on'}
+    if args.unprotect:
+        body['unprotect_access_level'] = ACCESS_LEVELS[args.unprotect]
+    if args.code_owner_approval:
+        body['code_owner_approval_required'] = args.code_owner_approval == 'on'
+    protected = api('POST', project_path(project, '/protected_branches'), body=body)
+    push = ', '.join(level['access_level_description'] for level in protected.get('push_access_levels', [])) or 'no one'
+    merge = ', '.join(level['access_level_description'] for level in protected.get('merge_access_levels', [])) or 'no one'
+    print(f"{protected['name']}: push by {push}; merge by {merge}; force push: {protected.get('allow_force_push')}")
+
+
+def cmd_project_unprotect(args):
+    project = resolve_project(args)
+    api('DELETE', project_path(project, '/protected_branches/' + urllib.parse.quote(args.branch, safe='')))
+    print(f"{args.branch}: protection removed")
+
+
 # --- argument parsing ---------------------------------------------------------
 
 def main():
@@ -467,9 +513,27 @@ def main():
     p.add_argument('id', type=int)
     p.set_defaults(func=cmd_job_cancel)
 
-    project = sub.add_parser('project', help='project settings').add_subparsers(dest='project_command', required=True)
+    project = sub.add_parser('project', help='project settings; changes need the admin level').add_subparsers(dest='project_command', required=True)
     p = project.add_parser('view', parents=[project_parent], help='show the settings an agent needs to work within')
     p.set_defaults(func=cmd_project_view)
+    p = project.add_parser('edit', parents=[project_parent], help='change project settings, e.g. --set only_allow_merge_if_pipeline_succeeds=true --set ci_config_path=ci/.gitlab-ci.yml')
+    p.add_argument('--set', action='append', required=True, metavar='FIELD=VALUE',
+                   help='a general or CI/CD setting of the project as the API names it (description, topics, default_branch, '
+                        'merge_method, squash_option, remove_source_branch_after_merge, only_allow_merge_if_pipeline_succeeds, '
+                        '*_access_level, ci_config_path, build_timeout, shared_runners_enabled, ...); a refusal lists the '
+                        'accepted fields; repeatable')
+    p.set_defaults(func=cmd_project_edit)
+    p = project.add_parser('protect', parents=[project_parent], help='protect a branch or a wildcard such as release/*; an already protected branch must be unprotected first')
+    p.add_argument('branch')
+    p.add_argument('--push', choices=sorted(ACCESS_LEVELS), default='maintainer', help='who may push')
+    p.add_argument('--merge', choices=sorted(ACCESS_LEVELS), default='maintainer', help='who may merge')
+    p.add_argument('--unprotect', choices=sorted(ACCESS_LEVELS), help='who may unprotect')
+    p.add_argument('--allow-force-push', choices=['on', 'off'], default='off')
+    p.add_argument('--code-owner-approval', choices=['on', 'off'])
+    p.set_defaults(func=cmd_project_protect)
+    p = project.add_parser('unprotect', parents=[project_parent])
+    p.add_argument('branch')
+    p.set_defaults(func=cmd_project_unprotect)
 
     args = parser.parse_args()
     args.func(args)

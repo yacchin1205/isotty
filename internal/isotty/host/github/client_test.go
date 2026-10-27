@@ -22,7 +22,11 @@ func TestClient(t *testing.T) {
 		}
 	}
 	var events []WriteEvent
-	relay, _, api := newTestRelay(t, testPins, func(e WriteEvent) error { events = append(events, e); return nil })
+	pins := ProjectConfig{Repos: map[string]Access{"Me/Project": AccessAdmin, "org/lib": AccessRead}}
+	relay, _, api := newTestRelay(t, pins, func(e WriteEvent) error { events = append(events, e); return nil })
+	api.answers["PATCH /repos/me/project"] = jsonAnswer(`{"full_name":"me/project"}`)
+	api.answers["GET /repos/me/project/actions/permissions"] = jsonAnswer(`{"enabled":true,"allowed_actions":"all"}`)
+	api.answers["GET /repos/me/project/actions/permissions/workflow"] = jsonAnswer(`{"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}`)
 	api.answers["GET /repos/me/project/pulls"] = jsonAnswer(`[{"number":1,"state":"open","draft":false,"head":{"ref":"feat"},"title":"Add feature"}]`)
 	api.answers["POST /repos/me/project/pulls"] = jsonAnswer(`{"number":2,"html_url":"https://github.com/me/project/pull/2"}`)
 	api.answers["GET /repos/me/project/actions/runs"] = jsonAnswer(`{"workflow_runs":[{"id":5,"status":"completed","conclusion":"failure","name":"CI","path":".github/workflows/ci.yml","head_branch":"feat","event":"push","created_at":"2026-10-26T00:00:00Z"}]}`)
@@ -62,7 +66,7 @@ func TestClient(t *testing.T) {
 		return string(out), cmd.ProcessState.ExitCode()
 	}
 
-	if out, code := run("", "status"); code != 0 || !strings.Contains(out, "Me/Project\twrite") {
+	if out, code := run("", "status"); code != 0 || !strings.Contains(out, "Me/Project\tadmin") {
 		t.Fatalf("status: %d\n%s", code, out)
 	}
 	if out, code := run("", "pr", "list"); code != 0 || !strings.Contains(out, "#1\topen\tfeat\tAdd feature") {
@@ -86,8 +90,38 @@ func TestClient(t *testing.T) {
 	if out, code := run("", "push", "-u", "https://github.com/other/repo.git", "HEAD"); code == 0 || !strings.Contains(out, "403") || !strings.Contains(out, "isotty-github status") {
 		t.Fatalf("push to unpinned repo: %d\n%s", code, out)
 	}
-	if len(events) != 1 || events[0].Operation != "pr-create" || events[0].Target != "2" {
+	if out, code := run("", "repo", "edit", "--set", "delete_branch_on_merge=true", "--set", "description=A relay"); code != 0 || !strings.Contains(out, "me/project updated") {
+		t.Fatalf("repo edit: %d\n%s", code, out)
+	}
+	if c := api.last(); c.Method != "PATCH" || !strings.Contains(c.Body, `"delete_branch_on_merge": true`) || !strings.Contains(c.Body, `"description": "A relay"`) {
+		t.Fatalf("repo edit upstream call = %+v", c)
+	}
+	if out, code := run("", "repo", "edit", "--set", "private=true"); code == 0 || !strings.Contains(out, "private") || !strings.Contains(out, "not accepted") {
+		t.Fatalf("repo edit private: %d\n%s", code, out)
+	}
+	if out, code := run("", "repo", "protect", "release/v1", "--require-reviews", "1", "--require-checks", "ci,lint", "--strict", "--enforce-admins"); code != 0 || !strings.Contains(out, "release/v1: protection set") {
+		t.Fatalf("repo protect: %d\n%s", code, out)
+	}
+	if c := api.last(); c.Method != "PUT" || c.EscapedPath != "/repos/me/project/branches/release%2Fv1/protection" || !strings.Contains(c.Body, `"contexts": ["ci", "lint"]`) || !strings.Contains(c.Body, `"required_approving_review_count": 1`) || !strings.Contains(c.Body, `"restrictions": null`) {
+		t.Fatalf("protect upstream call = %+v", c)
+	}
+	if out, code := run("", "repo", "actions", "--workflow-permissions", "read", "--allowed", "selected"); code != 0 || !strings.Contains(out, "actions: enabled=True allowed_actions=all workflow_permissions=read") {
+		t.Fatalf("repo actions: %d\n%s", code, out)
+	}
+	want := []WriteEvent{
+		{Operation: "pr-create", Repo: "me/project", Target: "2"},
+		{Operation: "repo-edit", Repo: "me/project"},
+		{Operation: "protection-set", Repo: "me/project", Target: "release/v1"},
+		{Operation: "actions-permissions", Repo: "me/project"},
+		{Operation: "actions-permissions", Repo: "me/project"},
+	}
+	if len(events) != len(want) {
 		t.Fatalf("events = %+v", events)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Fatalf("event %d = %+v, want %+v", i, events[i], want[i])
+		}
 	}
 }
 

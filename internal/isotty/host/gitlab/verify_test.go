@@ -20,6 +20,8 @@ func TestVerify(t *testing.T) {
 			w.Write([]byte(`{"path_with_namespace":"Me/Mine","permissions":{"project_access":{"access_level":40},"group_access":null}}`))
 		case "/api/v4/projects/group%2Fsub%2Ftheirs":
 			w.Write([]byte(`{"path_with_namespace":"group/sub/theirs","permissions":{"project_access":null,"group_access":{"access_level":20}}}`))
+		case "/api/v4/projects/group%2Fdev":
+			w.Write([]byte(`{"path_with_namespace":"group/dev","permissions":{"project_access":{"access_level":30},"group_access":null}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"message":"404 Project Not Found"}`))
@@ -40,6 +42,15 @@ func TestVerify(t *testing.T) {
 	}
 	if _, err := Verify(cfg, host+"/group/sub/theirs", forge.AccessWrite); err == nil || !strings.Contains(err.Error(), "no Developer role") {
 		t.Fatalf("Verify(write as Reporter) error = %v", err)
+	}
+	if name, err := Verify(cfg, host+"/me/mine", forge.AccessAdmin); err != nil || name != host+"/Me/Mine" {
+		t.Fatalf("Verify(admin as Maintainer) = %q, %v", name, err)
+	}
+	if _, err := Verify(cfg, host+"/group/sub/theirs", forge.AccessAdmin); err == nil || !strings.Contains(err.Error(), "no Developer role") {
+		t.Fatalf("Verify(admin as Reporter) error = %v", err)
+	}
+	if _, err := Verify(cfg, host+"/group/dev", forge.AccessAdmin); err == nil || !strings.Contains(err.Error(), "no Maintainer role") {
+		t.Fatalf("Verify(admin as Developer) error = %v", err)
 	}
 	if _, err := Verify(cfg, host+"/nobody/missing", forge.AccessRead); err == nil || !strings.Contains(err.Error(), "not visible to the token") {
 		t.Fatalf("Verify(missing) error = %v", err)

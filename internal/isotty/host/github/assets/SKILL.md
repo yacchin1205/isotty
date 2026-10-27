@@ -1,6 +1,6 @@
 ---
 name: isotty-github
-description: Push, fetch and work with pull requests, issues and workflow runs of this project's GitHub repositories with the isotty-github command. Use whenever a task needs GitHub: pushing a branch, opening or updating a pull request, reading or commenting on issues, checking CI runs and their logs, or reading repository settings.
+description: Push, fetch and work with pull requests, issues, workflow runs and repository settings of this project's GitHub repositories with the isotty-github command. Use whenever a task needs GitHub: pushing a branch, opening or updating a pull request, reading or commenting on issues, checking CI runs and their logs, or reading or changing repository settings, branch protection, Actions settings, environments and Pages.
 ---
 
 # isotty-github
@@ -8,8 +8,8 @@ description: Push, fetch and work with pull requests, issues and workflow runs o
 This VM holds no GitHub credential and `gh` is not installed. GitHub is
 reached through a relay that `isotty attach` provides on the host, for the
 repositories pinned in `/workspace/.isotty/github.yaml` only, each as `read`,
-`comment` or `write`. Plain `git push` to github.com fails for lack of a
-credential; that is expected.
+`comment`, `write` or `admin`. Plain `git push` to github.com fails for lack
+of a credential; that is expected.
 
 ```
 isotty-github status
@@ -33,6 +33,17 @@ isotty-github run download <id> [--dir <path>]
 isotty-github run rerun <id> [--failed]
 isotty-github run cancel <id>
 isotty-github repo view
+isotty-github repo edit --set <field>=<value>...          # e.g. --set delete_branch_on_merge=true
+isotty-github repo topics [<topic>...]                    # replaces the topics
+isotty-github repo protect <branch> [--require-reviews <n>] [--require-checks <ctx,ctx>] [--strict] [--enforce-admins] ... | --body-file <json>
+isotty-github repo unprotect <branch>
+isotty-github repo ruleset list|view <id>|create --body-file <json>|edit <id> --body-file <json>|delete <id>
+isotty-github repo actions [--enabled on|off] [--allowed all|local_only|selected] [--workflow-permissions read|write] [--can-approve-prs on|off]
+isotty-github repo env set <name> [--wait-timer <minutes>] [--prevent-self-review on|off] [--protected-branches-only on|off] | --body-file <json>
+isotty-github repo env delete <name>
+isotty-github repo pages enable --branch <branch> [--path /|/docs] | --workflow
+isotty-github repo pages edit --set <field>=<value>...
+isotty-github repo pages disable
 ```
 
 `fetch` and `push` are plain git with the relay as transport: remotes stay as
@@ -47,8 +58,19 @@ plain `git clone` works for them too.
 
 - Reads on the pinned repositories and on any public one. Opening and
   commenting on pull requests and issues where the pin says `comment` or
-  `write`; push and `run rerun`/`run cancel` only where it says `write`.
+  above; push and `run rerun`/`run cancel` where it says `write` or above;
+  the `repo` changes (settings, topics, branch protection, rulesets,
+  Actions settings, environments, Pages) only where it says `admin`.
   `isotty-github status` lists the pins; a refusal names the reason.
+- `repo edit` takes the fields the settings page shows: description,
+  homepage, default branch, the issues/wiki/projects/discussions features,
+  the merge options and commit message defaults. A `--set` with a field
+  outside that set is refused with the list of accepted ones. Renaming,
+  archiving or changing the visibility of a repository, collaborators,
+  webhooks, deploy keys, secrets and variables are not available at any
+  level; ask the human for those.
+- `repo protect` sets the classic protection of the branch to exactly what
+  the flags say, replacing what was there; read it first with `repo view`.
 - The commands above are the whole operation set. There is no merge, no
   approve, no close, no workflow dispatch and no listing of repositories or
   organizations; ask the human for those.

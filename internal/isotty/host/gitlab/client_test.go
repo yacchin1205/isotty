@@ -45,13 +45,15 @@ func gitIn(t *testing.T, args ...string) {
 func TestClient(t *testing.T) {
 	requireTools(t)
 	var events []WriteEvent
-	relay, upstream, host := newTestRelay(t, map[string]forge.Access{"group/sub/app": forge.AccessWrite}, func(e WriteEvent) error { events = append(events, e); return nil })
+	relay, upstream, host := newTestRelay(t, map[string]forge.Access{"group/sub/app": forge.AccessAdmin}, func(e WriteEvent) error { events = append(events, e); return nil })
 	jsonAnswer := func(body string) func(http.ResponseWriter, *http.Request) {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(body))
 		}
 	}
+	upstream.answers["PUT /api/v4/projects/group%2Fsub%2Fapp"] = jsonAnswer(`{"path_with_namespace":"group/sub/app"}`)
+	upstream.answers["POST /api/v4/projects/group%2Fsub%2Fapp/protected_branches"] = jsonAnswer(`{"id":1,"name":"release/*","push_access_levels":[{"access_level_description":"Maintainers"}],"merge_access_levels":[{"access_level_description":"Developers + Maintainers"}],"allow_force_push":false}`)
 	upstream.answers["GET /api/v4/projects/group%2Fsub%2Fapp/merge_requests"] = jsonAnswer(`[{"iid":1,"state":"opened","draft":false,"source_branch":"feat","title":"Add feature"}]`)
 	upstream.answers["POST /api/v4/projects/group%2Fsub%2Fapp/merge_requests"] = jsonAnswer(`{"iid":2,"web_url":"https://gitlab.example.org/group/sub/app/-/merge_requests/2"}`)
 	upstream.answers["GET /api/v4/projects/group%2Fsub%2Fapp/pipelines"] = jsonAnswer(`[{"id":5,"status":"failed","ref":"feat","sha":"0123456789abcdef","source":"push","created_at":"2026-10-26T00:00:00Z"}]`)
@@ -74,7 +76,7 @@ func TestClient(t *testing.T) {
 		return string(out), cmd.ProcessState.ExitCode()
 	}
 
-	if out, code := run("", "status"); code != 0 || !strings.Contains(out, host+"/group/sub/app\twrite") {
+	if out, code := run("", "status"); code != 0 || !strings.Contains(out, host+"/group/sub/app\tadmin") {
 		t.Fatalf("status: %d\n%s", code, out)
 	}
 	if out, code := run("", "mr", "list"); code != 0 || !strings.Contains(out, "!1\topened\tfeat\tAdd feature") {
@@ -98,8 +100,38 @@ func TestClient(t *testing.T) {
 	if out, code := run("", "push", "-u", "https://"+host+"/other/repo.git", "HEAD"); code == 0 || !strings.Contains(out, "403") || !strings.Contains(out, "isotty-gitlab status") {
 		t.Fatalf("push to unpinned project: %d\n%s", code, out)
 	}
-	if len(events) != 1 || events[0].Operation != "mr-create" || events[0].Target != "2" {
+	if out, code := run("", "project", "edit", "--set", "only_allow_merge_if_pipeline_succeeds=true", "--set", "ci_config_path=ci/.gitlab-ci.yml"); code != 0 || !strings.Contains(out, "group/sub/app updated") {
+		t.Fatalf("project edit: %d\n%s", code, out)
+	}
+	if c := upstream.last(); c.Method != "PUT" || !strings.Contains(c.Body, `"only_allow_merge_if_pipeline_succeeds": true`) || !strings.Contains(c.Body, `"ci_config_path": "ci/.gitlab-ci.yml"`) {
+		t.Fatalf("project edit upstream call = %+v", c)
+	}
+	if out, code := run("", "project", "edit", "--set", "visibility=public"); code == 0 || !strings.Contains(out, "visibility") || !strings.Contains(out, "not accepted") {
+		t.Fatalf("project edit visibility: %d\n%s", code, out)
+	}
+	if out, code := run("", "project", "protect", "release/*", "--merge", "developer"); code != 0 || !strings.Contains(out, "release/*: push by Maintainers; merge by Developers + Maintainers") {
+		t.Fatalf("project protect: %d\n%s", code, out)
+	}
+	if c := upstream.last(); !strings.Contains(c.Body, `"push_access_level": 40`) || !strings.Contains(c.Body, `"merge_access_level": 30`) {
+		t.Fatalf("protect upstream body = %s", c.Body)
+	}
+	if out, code := run("", "project", "unprotect", "release/*"); code != 0 || !strings.Contains(out, "protection removed") {
+		t.Fatalf("project unprotect: %d\n%s", code, out)
+	}
+	if c := upstream.last(); c.Method != "DELETE" || c.Path != "/api/v4/projects/group%2Fsub%2Fapp/protected_branches/release%2F%2A" {
+		t.Fatalf("unprotect upstream call = %+v", c)
+	}
+	want := []string{"mr-create", "project-edit", "protection-set", "protection-remove"}
+	if len(events) != len(want) {
 		t.Fatalf("events = %+v", events)
+	}
+	for i, operation := range want {
+		if events[i].Operation != operation {
+			t.Fatalf("event %d = %+v, want %s", i, events[i], operation)
+		}
+	}
+	if events[0].Target != "2" || events[2].Target != "release/*" || events[3].Target != "release/*" {
+		t.Fatalf("event targets = %+v", events)
 	}
 }
 

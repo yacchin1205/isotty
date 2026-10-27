@@ -19,14 +19,18 @@ type grant struct {
 	AccessLevel int `json:"access_level"`
 }
 
-// Developer is the GitLab role that may push; the API reports roles as
-// numbers.
-const developerLevel = 30
+// Developer is the GitLab role that may push and Maintainer the one that
+// changes the settings; the API reports roles as numbers.
+const (
+	developerLevel  = 30
+	maintainerLevel = 40
+)
 
 // Verify asks the instance for the project with its token and returns the
 // key with the path as GitLab spells it. A project the token cannot see
 // answers 404, whether it is missing or private. GitLab reports the role
-// the token holds, so a write pin is refused below Developer.
+// the token holds, so a write pin is refused below Developer and an admin
+// pin below Maintainer.
 func Verify(hostCfg HostConfig, repo string, access forge.Access) (string, error) {
 	instance, path, err := hostCfg.instanceFor(repo)
 	if err != nil {
@@ -73,8 +77,11 @@ func Verify(hostCfg HostConfig, repo string, access forge.Access) (string, error
 	}
 	host, _, _ := Split(repo)
 	name := host + "/" + info.PathWithNamespace
-	if access == forge.AccessWrite && level < developerLevel {
+	if access.Covers(forge.AccessWrite) && level < developerLevel {
 		return "", fmt.Errorf("the token holds no Developer role on %s (access level %d), so it cannot push; pin it with --allow comment or read", name, level)
+	}
+	if access == forge.AccessAdmin && level < maintainerLevel {
+		return "", fmt.Errorf("the token holds no Maintainer role on %s (access level %d), so it cannot change its settings; pin it with --allow write or below", name, level)
 	}
 	return name, nil
 }

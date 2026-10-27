@@ -29,7 +29,7 @@ func (f *fakeGitLab) handler() http.Handler {
 			answer(w, r)
 			return
 		}
-		if strings.HasPrefix(r.URL.EscapedPath(), "/api/v4/projects/") && strings.Count(r.URL.EscapedPath(), "/") == 4 {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.EscapedPath(), "/api/v4/projects/") && strings.Count(r.URL.EscapedPath(), "/") == 4 {
 			// A bare project lookup is the relay's visibility check.
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -146,6 +146,79 @@ func TestRelayAPI(t *testing.T) {
 	}
 	if len(events) != len(want) || events[0] != want[0] || events[1] != want[1] {
 		t.Fatalf("events = %+v, want %+v", events, want)
+	}
+}
+
+func TestRelayAdminLevel(t *testing.T) {
+	var events []WriteEvent
+	relay, upstream, host := newTestRelay(t, map[string]forge.Access{"me/mine": forge.AccessAdmin, "group/sub/up": forge.AccessWrite}, func(e WriteEvent) error { events = append(events, e); return nil })
+	upstream.answers["POST /api/v4/projects/me%2Fmine/protected_branches"] = func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":3,"name":"release/*"}`))
+	}
+	project := relay.URL + "/gitlab/api/" + host + "/projects/me%2Fmine"
+
+	status, body := do(t, "PUT", project, `{"default_branch":"main","only_allow_merge_if_pipeline_succeeds":true,"ci_config_path":"ci/.gitlab-ci.yml"}`)
+	if status != 200 {
+		t.Fatalf("project edit = %d %s", status, body)
+	}
+	if c := upstream.last(); c.Method != "PUT" || c.Path != "/api/v4/projects/me%2Fmine" || c.Token != "glpat-x" {
+		t.Fatalf("upstream call = %+v", c)
+	}
+	for _, field := range []string{"visibility", "name", "path", "namespace_id", "import_url", "mirror", "request_access_enabled"} {
+		status, body = do(t, "PUT", project, `{"`+field+`":"x"}`)
+		if status != 400 || !strings.Contains(body, field) {
+			t.Fatalf("project edit with %s = %d %s", field, status, body)
+		}
+	}
+	status, _ = do(t, "POST", project+"/protected_branches", `{"name":"release/*","push_access_level":40,"merge_access_level":30}`)
+	if status != 201 {
+		t.Fatalf("protect = %d", status)
+	}
+	status, _ = do(t, "DELETE", project+"/protected_branches/release%2F*", "")
+	if status != 200 {
+		t.Fatalf("unprotect = %d", status)
+	}
+	if c := upstream.last(); c.Path != "/api/v4/projects/me%2Fmine/protected_branches/release%2F*" {
+		t.Fatalf("upstream path = %q", c.Path)
+	}
+	want := []WriteEvent{
+		{Operation: "project-edit", Repo: host + "/me/mine"},
+		{Operation: "protection-set", Repo: host + "/me/mine", Target: "release/*"},
+		{Operation: "protection-remove", Repo: host + "/me/mine", Target: "release/*"},
+	}
+	if len(events) != len(want) {
+		t.Fatalf("events = %+v", events)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Fatalf("event %d = %+v, want %+v", i, events[i], want[i])
+		}
+	}
+
+	other := relay.URL + "/gitlab/api/" + host + "/projects/group%2Fsub%2Fup"
+	status, body = do(t, "PUT", other, `{"description":"d"}`)
+	if status != 403 || !strings.Contains(body, "needs admin") {
+		t.Fatalf("project edit on write pin = %d %s", status, body)
+	}
+	calls := len(upstream.calls)
+	for _, denied := range []struct{ method, path string }{
+		{"POST", project + "/variables"},
+		{"POST", project + "/hooks"},
+		{"POST", project + "/members"},
+		{"POST", project + "/deploy_keys"},
+		{"POST", project + "/archive"},
+		{"PUT", project + "/transfer"},
+		{"DELETE", project},
+		{"PUT", project + "/protected_branches/main"},
+		{"PATCH", project + "/protected_branches/main"},
+	} {
+		if status, _ := do(t, denied.method, denied.path, "{}"); status != 403 {
+			t.Fatalf("%s %s status = %d, want 403", denied.method, denied.path, status)
+		}
+	}
+	if len(upstream.calls) != calls {
+		t.Fatal("a refused write reached the upstream")
 	}
 }
 

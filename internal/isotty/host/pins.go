@@ -99,7 +99,7 @@ func (p repoPins) add(projectPath, projectHash, homeDir string, args []string, s
 	ok, err := p.parse("add", args, stderr, func(fs *flag.FlagSet) {
 		fs.Var(&remotes, "remote", "remote of the project whose repository to pin (repeatable)")
 		fs.Var(&repos, "repo", "repository to pin (repeatable)")
-		fs.StringVar(&allow, "allow", string(forge.AccessRead), "what the VM may do there: read, comment or write")
+		fs.StringVar(&allow, "allow", string(forge.AccessRead), "what the VM may do there: read, comment, write or admin")
 	})
 	if err != nil || !ok {
 		return err

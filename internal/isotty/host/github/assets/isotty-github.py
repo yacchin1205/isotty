@@ -5,7 +5,8 @@ The relay runs on the host inside `isotty attach` and is reachable only
 while the host is attached. It forwards git fetch/push and a fixed set of
 pull request, issue, workflow run and repository-settings operations for the
 repositories pinned in .isotty/github.yaml, with the host's credential; this
-VM holds none.
+VM holds none. Reads, comments, pushes and settings changes each need their
+own pin level: read, comment, write, admin.
 """
 import argparse
 import io
@@ -431,6 +432,175 @@ def cmd_repo_view(args):
         print('actions secrets (names only): ' + (', '.join(s['name'] for s in secrets['secrets']) if secrets['secrets'] else 'none'))
 
 
+# --- repository settings: changes (admin) -------------------------------------
+
+def parse_settings(pairs):
+    """--set name=value pairs; a value that is JSON (true, 3, ["a"]) is taken as such, anything else as a string."""
+    body = {}
+    for pair in pairs:
+        name, sep, value = pair.partition('=')
+        if not sep or not name:
+            raise SystemExit(f"isotty-github: --set expects name=value, got {pair!r}")
+        try:
+            body[name] = json.loads(value)
+        except ValueError:
+            body[name] = value
+    return body
+
+
+def read_json_body(path):
+    with open(path, encoding='utf-8') as handle:
+        return json.load(handle)
+
+
+def on_off(value):
+    return value == 'on'
+
+
+def cmd_repo_edit(args):
+    repo = resolve_repo(args)
+    info = api('PATCH', f"/repos/{repo}", body=parse_settings(args.set))
+    print(f"{info['full_name']} updated")
+
+
+def cmd_repo_topics(args):
+    repo = resolve_repo(args)
+    result = api('PUT', f"/repos/{repo}/topics", body={'names': args.name})
+    print('topics: ' + (', '.join(result['names']) if result['names'] else 'none'))
+
+
+def cmd_repo_protect(args):
+    repo = resolve_repo(args)
+    if args.body_file:
+        body = read_json_body(args.body_file)
+    else:
+        reviews = None
+        if args.require_reviews is not None:
+            reviews = {'required_approving_review_count': args.require_reviews,
+                       'require_code_owner_reviews': args.require_codeowners,
+                       'dismiss_stale_reviews': args.dismiss_stale}
+        checks = None
+        if args.require_checks:
+            checks = {'strict': args.strict, 'contexts': args.require_checks.split(',')}
+        body = {'required_status_checks': checks, 'enforce_admins': args.enforce_admins,
+                'required_pull_request_reviews': reviews, 'restrictions': None,
+                'required_linear_history': args.linear_history, 'allow_force_pushes': args.allow_force_pushes,
+                'allow_deletions': args.allow_deletions,
+                'required_conversation_resolution': args.require_conversation_resolution, 'lock_branch': args.lock}
+    api('PUT', f"/repos/{repo}/branches/{urllib.parse.quote(args.branch, safe='')}/protection", body=body)
+    print(f"{args.branch}: protection set")
+
+
+def cmd_repo_unprotect(args):
+    repo = resolve_repo(args)
+    api('DELETE', f"/repos/{repo}/branches/{urllib.parse.quote(args.branch, safe='')}/protection")
+    print(f"{args.branch}: protection removed")
+
+
+def cmd_ruleset_list(args):
+    repo = resolve_repo(args)
+    for ruleset in api('GET', f"/repos/{repo}/rulesets", {'per_page': 100}):
+        print(f"{ruleset['id']}\t{ruleset['enforcement']}\t{ruleset['target']}\t{ruleset['name']}")
+
+
+def cmd_ruleset_view(args):
+    repo = resolve_repo(args)
+    print(json.dumps(api('GET', f"/repos/{repo}/rulesets/{args.id}"), indent=2))
+
+
+def cmd_ruleset_create(args):
+    repo = resolve_repo(args)
+    ruleset = api('POST', f"/repos/{repo}/rulesets", body=read_json_body(args.body_file))
+    print(f"ruleset {ruleset['id']} {ruleset['name']} created")
+
+
+def cmd_ruleset_edit(args):
+    repo = resolve_repo(args)
+    ruleset = api('PUT', f"/repos/{repo}/rulesets/{args.id}", body=read_json_body(args.body_file))
+    print(f"ruleset {ruleset['id']} {ruleset['name']} updated")
+
+
+def cmd_ruleset_delete(args):
+    repo = resolve_repo(args)
+    api('DELETE', f"/repos/{repo}/rulesets/{args.id}")
+    print(f"ruleset {args.id} deleted")
+
+
+def cmd_repo_actions(args):
+    repo = resolve_repo(args)
+    changed = False
+    if args.enabled is not None or args.allowed is not None:
+        current = api('GET', f"/repos/{repo}/actions/permissions")
+        body = {'enabled': on_off(args.enabled) if args.enabled is not None else current['enabled']}
+        if args.allowed is not None:
+            body['allowed_actions'] = args.allowed
+        api('PUT', f"/repos/{repo}/actions/permissions", body=body)
+        changed = True
+    if args.workflow_permissions is not None or args.can_approve_prs is not None:
+        body = {}
+        if args.workflow_permissions is not None:
+            body['default_workflow_permissions'] = args.workflow_permissions
+        if args.can_approve_prs is not None:
+            body['can_approve_pull_request_reviews'] = on_off(args.can_approve_prs)
+        api('PUT', f"/repos/{repo}/actions/permissions/workflow", body=body)
+        changed = True
+    if not changed:
+        raise SystemExit('isotty-github: nothing to change; see --help for the flags')
+    permissions = api('GET', f"/repos/{repo}/actions/permissions")
+    workflow = api('GET', f"/repos/{repo}/actions/permissions/workflow")
+    print(f"actions: enabled={permissions['enabled']} allowed_actions={permissions.get('allowed_actions', '-')} "
+          f"workflow_permissions={workflow['default_workflow_permissions']} "
+          f"can_approve_pull_request_reviews={workflow['can_approve_pull_request_reviews']}")
+
+
+def cmd_env_set(args):
+    repo = resolve_repo(args)
+    if args.body_file:
+        body = read_json_body(args.body_file)
+    else:
+        body = {}
+        if args.wait_timer is not None:
+            body['wait_timer'] = args.wait_timer
+        if args.prevent_self_review is not None:
+            body['prevent_self_review'] = on_off(args.prevent_self_review)
+        if args.protected_branches_only is not None:
+            body['deployment_branch_policy'] = {'protected_branches': on_off(args.protected_branches_only), 'custom_branch_policies': not on_off(args.protected_branches_only)}
+    env = api('PUT', f"/repos/{repo}/environments/{urllib.parse.quote(args.name, safe='')}", body=body)
+    rules = ', '.join(rule['type'] for rule in env.get('protection_rules', []))
+    print(f"environment {env['name']}" + (f" [{rules}]" if rules else ' (no protection rules)'))
+
+
+def cmd_env_delete(args):
+    repo = resolve_repo(args)
+    api('DELETE', f"/repos/{repo}/environments/{urllib.parse.quote(args.name, safe='')}")
+    print(f"environment {args.name} deleted")
+
+
+def cmd_pages_enable(args):
+    repo = resolve_repo(args)
+    if args.workflow:
+        body = {'build_type': 'workflow'}
+    elif args.branch:
+        body = {'build_type': 'legacy', 'source': {'branch': args.branch, 'path': args.path}}
+    else:
+        raise SystemExit('isotty-github: pass --branch <branch> [--path /docs] or --workflow')
+    pages = api('POST', f"/repos/{repo}/pages", body=body)
+    print(f"pages: {pages['html_url']} ({pages['status'] or 'building'})")
+
+
+def cmd_pages_edit(args):
+    repo = resolve_repo(args)
+    api('PUT', f"/repos/{repo}/pages", body=parse_settings(args.set))
+    pages = api('GET', f"/repos/{repo}/pages")
+    print(f"pages: {pages['html_url']} ({pages['status']}) https_enforced={pages.get('https_enforced')} cname={pages.get('cname')}")
+
+
+def cmd_pages_disable(args):
+    repo = resolve_repo(args)
+    api('DELETE', f"/repos/{repo}/pages")
+    print('pages disabled')
+
+
 # --- argument parsing ---------------------------------------------------------
 
 def main():
@@ -523,9 +693,85 @@ def main():
     p.add_argument('id', type=int)
     p.set_defaults(func=cmd_run_cancel)
 
-    repo = sub.add_parser('repo', help='repository settings').add_subparsers(dest='repo_command', required=True)
+    repo = sub.add_parser('repo', help='repository settings; changes need the admin level').add_subparsers(dest='repo_command', required=True)
     p = repo.add_parser('view', parents=[repo_parent], help='show the settings an agent needs to work within')
     p.set_defaults(func=cmd_repo_view)
+    p = repo.add_parser('edit', parents=[repo_parent], help='change repository settings, e.g. --set delete_branch_on_merge=true --set description="..."')
+    p.add_argument('--set', action='append', required=True, metavar='FIELD=VALUE',
+                   help='a field of the repository (description, homepage, default_branch, has_issues, has_wiki, has_projects, '
+                        'has_discussions, allow_merge_commit, allow_squash_merge, allow_rebase_merge, allow_auto_merge, '
+                        'allow_update_branch, delete_branch_on_merge, merge_commit_title, merge_commit_message, '
+                        'squash_merge_commit_title, squash_merge_commit_message, web_commit_signoff_required); repeatable')
+    p.set_defaults(func=cmd_repo_edit)
+    p = repo.add_parser('topics', parents=[repo_parent], help='replace the topics')
+    p.add_argument('name', nargs='*')
+    p.set_defaults(func=cmd_repo_topics)
+    p = repo.add_parser('protect', parents=[repo_parent], help='set the classic branch protection of a branch to exactly what the flags say')
+    p.add_argument('branch')
+    p.add_argument('--require-reviews', type=int, metavar='N', help='require N approving reviews')
+    p.add_argument('--require-codeowners', action='store_true')
+    p.add_argument('--dismiss-stale', action='store_true', help='dismiss approvals when new commits are pushed')
+    p.add_argument('--require-checks', metavar='CTX,CTX', help='required status check contexts')
+    p.add_argument('--strict', action='store_true', help='require the branch to be up to date before merging')
+    p.add_argument('--enforce-admins', action='store_true')
+    p.add_argument('--linear-history', action='store_true')
+    p.add_argument('--allow-force-pushes', action='store_true')
+    p.add_argument('--allow-deletions', action='store_true')
+    p.add_argument('--require-conversation-resolution', action='store_true')
+    p.add_argument('--lock', action='store_true', help='make the branch read-only')
+    p.add_argument('--body-file', help='send this JSON as the protection instead of the flags')
+    p.set_defaults(func=cmd_repo_protect)
+    p = repo.add_parser('unprotect', parents=[repo_parent], help='remove the classic branch protection of a branch')
+    p.add_argument('branch')
+    p.set_defaults(func=cmd_repo_unprotect)
+
+    ruleset = repo.add_parser('ruleset', help='repository rulesets').add_subparsers(dest='ruleset_command', required=True)
+    p = ruleset.add_parser('list', parents=[repo_parent])
+    p.set_defaults(func=cmd_ruleset_list)
+    p = ruleset.add_parser('view', parents=[repo_parent])
+    p.add_argument('id', type=int)
+    p.set_defaults(func=cmd_ruleset_view)
+    p = ruleset.add_parser('create', parents=[repo_parent], help='create a ruleset from a JSON file (name, target, enforcement, conditions, rules, bypass_actors)')
+    p.add_argument('--body-file', required=True)
+    p.set_defaults(func=cmd_ruleset_create)
+    p = ruleset.add_parser('edit', parents=[repo_parent], help='replace the fields of a ruleset from a JSON file')
+    p.add_argument('id', type=int)
+    p.add_argument('--body-file', required=True)
+    p.set_defaults(func=cmd_ruleset_edit)
+    p = ruleset.add_parser('delete', parents=[repo_parent])
+    p.add_argument('id', type=int)
+    p.set_defaults(func=cmd_ruleset_delete)
+
+    p = repo.add_parser('actions', parents=[repo_parent], help='change the Actions settings')
+    p.add_argument('--enabled', choices=['on', 'off'])
+    p.add_argument('--allowed', choices=['all', 'local_only', 'selected'], help='which actions may run')
+    p.add_argument('--workflow-permissions', choices=['read', 'write'], help='default GITHUB_TOKEN permissions')
+    p.add_argument('--can-approve-prs', choices=['on', 'off'], help='whether workflows may approve pull requests')
+    p.set_defaults(func=cmd_repo_actions)
+
+    env = repo.add_parser('env', help='deployment environments').add_subparsers(dest='env_command', required=True)
+    p = env.add_parser('set', parents=[repo_parent], help='create an environment or change its protection rules')
+    p.add_argument('name')
+    p.add_argument('--wait-timer', type=int, metavar='MINUTES')
+    p.add_argument('--prevent-self-review', choices=['on', 'off'])
+    p.add_argument('--protected-branches-only', choices=['on', 'off'], help='deploy only from protected branches')
+    p.add_argument('--body-file', help='send this JSON instead of the flags (wait_timer, prevent_self_review, reviewers, deployment_branch_policy)')
+    p.set_defaults(func=cmd_env_set)
+    p = env.add_parser('delete', parents=[repo_parent])
+    p.add_argument('name')
+    p.set_defaults(func=cmd_env_delete)
+
+    pages = repo.add_parser('pages', help='GitHub Pages').add_subparsers(dest='pages_command', required=True)
+    p = pages.add_parser('enable', parents=[repo_parent])
+    p.add_argument('--branch', help='publish from this branch')
+    p.add_argument('--path', choices=['/', '/docs'], default='/')
+    p.add_argument('--workflow', action='store_true', help='publish from an Actions workflow instead')
+    p.set_defaults(func=cmd_pages_enable)
+    p = pages.add_parser('edit', parents=[repo_parent], help='change the Pages settings, e.g. --set https_enforced=true')
+    p.add_argument('--set', action='append', required=True, metavar='FIELD=VALUE', help='cname, https_enforced, build_type or source; repeatable')
+    p.set_defaults(func=cmd_pages_edit)
+    p = pages.add_parser('disable', parents=[repo_parent])
+    p.set_defaults(func=cmd_pages_disable)
 
     args = parser.parse_args()
     args.func(args)

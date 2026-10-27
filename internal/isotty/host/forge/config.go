@@ -19,16 +19,19 @@ import (
 // includes the ones before it: read is fetch and the reads; comment adds
 // opening and commenting on pull or merge requests and issues, which the
 // forges let anyone who can see a repository do; write adds push and the
-// CI operations, which need push permission.
+// CI operations, which need push permission; admin adds the repository
+// settings and branch protection, which need the administrator or
+// Maintainer role.
 type Access string
 
 const (
 	AccessRead    Access = "read"
 	AccessComment Access = "comment"
 	AccessWrite   Access = "write"
+	AccessAdmin   Access = "admin"
 )
 
-var accessOrder = map[Access]int{AccessRead: 0, AccessComment: 1, AccessWrite: 2}
+var accessOrder = map[Access]int{AccessRead: 0, AccessComment: 1, AccessWrite: 2, AccessAdmin: 3}
 
 // Covers reports whether the level allows what required asks for.
 func (a Access) Covers(required Access) bool {
@@ -37,7 +40,7 @@ func (a Access) Covers(required Access) bool {
 
 func ValidateAccess(access Access) error {
 	if _, ok := accessOrder[access]; !ok {
-		return fmt.Errorf("invalid access %q: expected read, comment or write", access)
+		return fmt.Errorf("invalid access %q: expected read, comment, write or admin", access)
 	}
 	return nil
 }

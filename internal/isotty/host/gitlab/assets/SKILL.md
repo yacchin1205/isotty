@@ -1,6 +1,6 @@
 ---
 name: isotty-gitlab
-description: Push, fetch and work with merge requests, issues and pipelines of this project's GitLab projects with the isotty-gitlab command. Use whenever a task needs GitLab: pushing a branch, opening or updating a merge request, reading or commenting on issues, checking pipelines and their job logs, or reading project settings.
+description: Push, fetch and work with merge requests, issues, pipelines and project settings of this project's GitLab projects with the isotty-gitlab command. Use whenever a task needs GitLab: pushing a branch, opening or updating a merge request, reading or commenting on issues, checking pipelines and their job logs, or reading or changing project settings and protected branches.
 ---
 
 # isotty-gitlab
@@ -8,7 +8,7 @@ description: Push, fetch and work with merge requests, issues and pipelines of t
 This VM holds no GitLab credential and `glab` is not installed. GitLab is
 reached through a relay that `isotty attach` provides on the host, for the
 projects pinned in `/workspace/.isotty/gitlab.yaml` only, each as `read`,
-`comment` or `write`. A project is named `host/group/project`, the host
+`comment`, `write` or `admin`. A project is named `host/group/project`, the host
 being the GitLab instance. Plain `git push` to the instance fails for lack
 of a credential; that is expected.
 
@@ -36,6 +36,9 @@ isotty-gitlab job log <id>
 isotty-gitlab job retry <id>
 isotty-gitlab job cancel <id>
 isotty-gitlab project view
+isotty-gitlab project edit --set <field>=<value>...       # e.g. --set only_allow_merge_if_pipeline_succeeds=true
+isotty-gitlab project protect <branch> [--push none|developer|maintainer|admin] [--merge ...] [--unprotect ...] [--allow-force-push on|off] [--code-owner-approval on|off]
+isotty-gitlab project unprotect <branch>
 ```
 
 `fetch` and `push` are plain git with the relay as transport: remotes stay as
@@ -50,9 +53,20 @@ fetched; plain `git clone` works for them too.
 
 - Reads on the pinned projects and on any public one of their instances.
   Opening and commenting on merge requests and issues where the pin says
-  `comment` or `write`; push and pipeline or job `retry`/`cancel` only where
-  it says `write`. `isotty-gitlab status` lists the pins; a refusal names
-  the reason.
+  `comment` or above; push and pipeline or job `retry`/`cancel` where it
+  says `write` or above; `project edit`, `protect` and `unprotect` only
+  where it says `admin`. `isotty-gitlab status` lists the pins; a refusal
+  names the reason.
+- `project edit` takes the general and CI/CD settings as the API names
+  them (description, topics, default_branch, merge_method, squash_option,
+  the `*_access_level` feature switches, only_allow_merge_if_*,
+  ci_config_path, build_timeout, shared_runners_enabled and the like). A
+  `--set` with a field outside that set is refused with the list of
+  accepted ones. Renaming, moving, archiving or changing the visibility of
+  a project, members, webhooks, deploy keys and CI/CD variables are not
+  available at any level; ask the human for those.
+- `project protect` adds a protection; a branch that is already protected
+  is reported as such, and `unprotect` removes the protection first.
 - A merge request is opened within one project, from one of its branches to
   another. Merge requests from a fork into another project are not
   available; ask the human for those.

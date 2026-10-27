@@ -27,7 +27,8 @@ const (
 
 // WriteEvent describes a write that reached the forge so the caller can
 // record it in the VM audit log. Target is the pull or merge request, issue,
-// run, pipeline or job the write touched; a push has none.
+// run, pipeline, job, branch, ruleset or environment the write touched; a
+// push and a change to the repository itself have none.
 type WriteEvent struct {
 	Operation string
 	Repo      string
@@ -56,6 +57,10 @@ func Comment(method, path, operation string, fields ...string) Route {
 
 func Write(method, path, operation string, fields ...string) Route {
 	return Route{Method: method, Pattern: compileRoute(path), Access: AccessWrite, Operation: operation, Fields: fields}
+}
+
+func Admin(method, path, operation string, fields ...string) Route {
+	return Route{Method: method, Pattern: compileRoute(path), Access: AccessAdmin, Operation: operation, Fields: fields}
 }
 
 // changes reports whether the route writes to the forge, whatever level it needs.

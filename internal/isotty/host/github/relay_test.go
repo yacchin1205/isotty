@@ -182,6 +182,88 @@ func TestRelayAPIReads(t *testing.T) {
 	}
 }
 
+func TestRelayAdminLevel(t *testing.T) {
+	var events []WriteEvent
+	cfg := ProjectConfig{Repos: map[string]Access{"me/project": AccessAdmin, "org/lib": AccessWrite}}
+	relay, _, api := newTestRelay(t, cfg, func(e WriteEvent) error { events = append(events, e); return nil })
+	api.answers["PATCH /repos/me/project"] = func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"full_name":"me/project","delete_branch_on_merge":true}`))
+	}
+	api.answers["POST /repos/me/project/rulesets"] = func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":31}`))
+	}
+
+	status, body := do(t, "PATCH", relay.URL+"/github/api/repos/me/project", `{"delete_branch_on_merge":true,"description":"d"}`)
+	if status != 200 || !strings.Contains(body, "delete_branch_on_merge") {
+		t.Fatalf("repo edit = %d %s", status, body)
+	}
+	status, body = do(t, "PATCH", relay.URL+"/github/api/repos/me/project", `{"private":true}`)
+	if status != 400 || !strings.Contains(body, `private`) {
+		t.Fatalf("repo edit with private = %d %s", status, body)
+	}
+	status, body = do(t, "PATCH", relay.URL+"/github/api/repos/me/project", `{"archived":true}`)
+	if status != 400 {
+		t.Fatalf("repo edit with archived = %d %s", status, body)
+	}
+	status, _ = do(t, "PUT", relay.URL+"/github/api/repos/me/project/branches/release%2Fv1/protection", `{"required_status_checks":null,"enforce_admins":true,"required_pull_request_reviews":null,"restrictions":null}`)
+	if status != 200 {
+		t.Fatalf("protection set = %d", status)
+	}
+	if c := api.last(); c.EscapedPath != "/repos/me/project/branches/release%2Fv1/protection" || c.Auth != "Bearer tok" {
+		t.Fatalf("upstream call = %+v", c)
+	}
+	status, _ = do(t, "POST", relay.URL+"/github/api/repos/me/project/rulesets", `{"name":"main","target":"branch","enforcement":"active","conditions":{},"rules":[]}`)
+	if status != 201 {
+		t.Fatalf("ruleset create = %d", status)
+	}
+	status, _ = do(t, "DELETE", relay.URL+"/github/api/repos/me/project/environments/prod", "")
+	if status != 200 {
+		t.Fatalf("environment remove = %d", status)
+	}
+	want := []WriteEvent{
+		{Operation: "repo-edit", Repo: "me/project"},
+		{Operation: "protection-set", Repo: "me/project", Target: "release/v1"},
+		{Operation: "ruleset-create", Repo: "me/project", Target: "31"},
+		{Operation: "environment-remove", Repo: "me/project", Target: "prod"},
+	}
+	if len(events) != len(want) {
+		t.Fatalf("events = %+v", events)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Fatalf("event %d = %+v, want %+v", i, events[i], want[i])
+		}
+	}
+
+	calls := len(api.calls)
+	status, body = do(t, "PATCH", relay.URL+"/github/api/repos/org/lib", `{"description":"d"}`)
+	if status != 403 || !strings.Contains(body, "pinned as write") || !strings.Contains(body, "needs admin") {
+		t.Fatalf("repo edit on write pin = %d %s", status, body)
+	}
+	for _, denied := range []struct{ method, path string }{
+		{"PUT", "/api/repos/me/project/environments/prod%2Fsecrets%2FTOKEN"},
+		{"PUT", "/api/repos/me/project/environments/prod/secrets/TOKEN"},
+		{"PUT", "/api/repos/me/project/actions/secrets/TOKEN"},
+		{"PATCH", "/api/repos/me/project/actions/variables/X"},
+		{"POST", "/api/repos/me/project/hooks"},
+		{"POST", "/api/repos/me/project/keys"},
+		{"PUT", "/api/repos/me/project/collaborators/x"},
+		{"DELETE", "/api/repos/me/project"},
+		{"POST", "/api/repos/me/project/transfer"},
+		{"POST", "/api/repos/me/project/branches/main/protection/enforce_admins"},
+	} {
+		status, _ := do(t, denied.method, relay.URL+"/github"+denied.path, "{}")
+		if status != 403 && !(status == 200 && denied.path == "/api/repos/me/project/environments/prod%2Fsecrets%2FTOKEN") {
+			t.Fatalf("%s %s status = %d, want 403", denied.method, denied.path, status)
+		}
+	}
+	// The encoded one is one environment name, forwarded as such.
+	if c := api.calls[calls]; c.EscapedPath != "/repos/me/project/environments/prod%2Fsecrets%2FTOKEN" || len(api.calls) != calls+1 {
+		t.Fatalf("upstream calls after refusals = %+v", api.calls[calls:])
+	}
+}
+
 func TestRelayAPIWrites(t *testing.T) {
 	var events []WriteEvent
 	relay, _, api := newTestRelay(t, testPins, func(e WriteEvent) error { events = append(events, e); return nil })

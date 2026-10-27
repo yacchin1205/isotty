@@ -117,6 +117,9 @@ const tokenGuide = `Create a personal access token on the instance:
        Pipeline:          Read, Update
        Job:               Read, Run, Update
        Protected Branch:  Read
+     and, for projects pinned as admin, also:
+       Project:           Update
+       Branch:            Protect
      and on the "User" tab:
        User:              Read   (this command checks the token with it)
   5. Create the token and copy it. The instance may force an expiration

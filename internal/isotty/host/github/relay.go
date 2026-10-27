@@ -39,7 +39,10 @@ var routes = []forge.Route{
 	forge.Read("GET", "/actions/artifacts/{n}/zip"),
 	forge.Read("GET", "/branches/{b}/protection"),
 	forge.Read("GET", "/rules/branches/{b}"),
+	forge.Read("GET", "/rulesets"),
+	forge.Read("GET", "/rulesets/{n}"),
 	forge.Read("GET", "/actions/permissions"),
+	forge.Read("GET", "/actions/permissions/workflow"),
 	forge.Read("GET", "/environments"),
 	forge.Read("GET", "/pages"),
 	forge.Read("GET", "/actions/secrets"),
@@ -51,7 +54,33 @@ var routes = []forge.Route{
 	forge.Write("POST", "/actions/runs/{n}/rerun", "run-rerun"),
 	forge.Write("POST", "/actions/runs/{n}/rerun-failed-jobs", "run-rerun"),
 	forge.Write("POST", "/actions/runs/{n}/cancel", "run-cancel"),
+	// The admin routes are the repository's settings and its branch
+	// protection. The fields leave out what renames, hides, archives or
+	// templates the repository (name, private, visibility, archived,
+	// is_template) and the security settings.
+	forge.Admin("PATCH", "", "repo-edit", "description", "homepage", "default_branch",
+		"has_issues", "has_projects", "has_wiki", "has_discussions",
+		"allow_merge_commit", "allow_squash_merge", "allow_rebase_merge", "allow_auto_merge", "allow_update_branch",
+		"delete_branch_on_merge", "merge_commit_title", "merge_commit_message",
+		"squash_merge_commit_title", "squash_merge_commit_message", "web_commit_signoff_required"),
+	forge.Admin("PUT", "/topics", "repo-edit", "names"),
+	forge.Admin("PUT", "/branches/{b}/protection", "protection-set", "required_status_checks", "enforce_admins",
+		"required_pull_request_reviews", "restrictions", "required_linear_history", "allow_force_pushes",
+		"allow_deletions", "block_creations", "required_conversation_resolution", "lock_branch", "allow_fork_syncing"),
+	forge.Admin("DELETE", "/branches/{b}/protection", "protection-remove"),
+	forge.Admin("POST", "/rulesets", "ruleset-create", rulesetFields...),
+	forge.Admin("PUT", "/rulesets/{n}", "ruleset-edit", rulesetFields...),
+	forge.Admin("DELETE", "/rulesets/{n}", "ruleset-remove"),
+	forge.Admin("PUT", "/actions/permissions", "actions-permissions", "enabled", "allowed_actions"),
+	forge.Admin("PUT", "/actions/permissions/workflow", "actions-permissions", "default_workflow_permissions", "can_approve_pull_request_reviews"),
+	forge.Admin("PUT", "/environments/{b}", "environment-set", "wait_timer", "prevent_self_review", "reviewers", "deployment_branch_policy"),
+	forge.Admin("DELETE", "/environments/{b}", "environment-remove"),
+	forge.Admin("POST", "/pages", "pages-enable", "build_type", "source"),
+	forge.Admin("PUT", "/pages", "pages-edit", "cname", "https_enforced", "build_type", "source"),
+	forge.Admin("DELETE", "/pages", "pages-disable"),
 }
+
+var rulesetFields = []string{"name", "target", "enforcement", "bypass_actors", "conditions", "rules"}
 
 var apiPathPattern = regexp.MustCompile(`^/repos/([^/]+)/([^/]+)(/.*)?$`)
 
@@ -145,4 +174,11 @@ func (g *github) IsPublic(client *http.Client, repo string) (bool, error) {
 
 func (g *github) Routes() []forge.Route { return routes }
 
-func (g *github) CreatedTarget(result []byte) string { return forge.NumberOf(result, "number") }
+// CreatedTarget is the number of a pull request or issue; a ruleset has
+// only an id.
+func (g *github) CreatedTarget(result []byte) string {
+	if number := forge.NumberOf(result, "number"); number != "" {
+		return number
+	}
+	return forge.NumberOf(result, "id")
+}

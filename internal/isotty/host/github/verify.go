@@ -12,7 +12,8 @@ import (
 // Verify asks api.github.com for the repository with the host token and
 // returns its name as GitHub spells it. A repository the token cannot see
 // answers 404, whether it is missing or private, and GitHub reports what
-// the token may do with it, so a write pin is refused when it cannot push.
+// the token may do with it, so a write pin is refused when it cannot push
+// and an admin pin when it does not administer the repository.
 func Verify(token, repo string, access Access) (string, error) {
 	return verify(token, repo, access, apiUpstream)
 }
@@ -46,14 +47,18 @@ func verify(token, repo string, access Access, upstream string) (string, error) 
 	var info struct {
 		FullName    string `json:"full_name"`
 		Permissions struct {
-			Push bool `json:"push"`
+			Push  bool `json:"push"`
+			Admin bool `json:"admin"`
 		} `json:"permissions"`
 	}
 	if err := json.Unmarshal(body, &info); err != nil || info.FullName == "" {
 		return "", fmt.Errorf("repository %s: answer names no full_name: %s", repo, strings.TrimSpace(string(body)))
 	}
-	if access == AccessWrite && !info.Permissions.Push {
-		return "", fmt.Errorf("the token cannot push to %s; pin it as %s:read", info.FullName, info.FullName)
+	if access.Covers(AccessWrite) && !info.Permissions.Push {
+		return "", fmt.Errorf("the token cannot push to %s; pin it with --allow comment or read", info.FullName)
+	}
+	if access == AccessAdmin && !info.Permissions.Admin {
+		return "", fmt.Errorf("the token does not administer %s, so it cannot change its settings; pin it with --allow write or below", info.FullName)
 	}
 	return info.FullName, nil
 }

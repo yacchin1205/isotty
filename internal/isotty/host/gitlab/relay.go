@@ -43,6 +43,40 @@ var routes = []forge.Route{
 	forge.Write("POST", "/pipelines/{n}/cancel", "pipeline-cancel"),
 	forge.Write("POST", "/jobs/{n}/retry", "job-retry"),
 	forge.Write("POST", "/jobs/{n}/cancel", "job-cancel"),
+	// The admin routes are the project's settings and its protected
+	// branches. The fields leave out what renames, moves or hides the
+	// project (name, path, namespace_id, visibility), what brings in
+	// people or external sources (request_access_enabled, mirror and
+	// import settings) and the container expiration policy.
+	forge.Admin("PUT", "", "project-edit", projectFields...),
+	forge.Admin("POST", "/protected_branches", "protection-set", "name", "push_access_level", "merge_access_level",
+		"unprotect_access_level", "allow_force_push", "allowed_to_push", "allowed_to_merge", "allowed_to_unprotect",
+		"code_owner_approval_required"),
+	forge.Admin("DELETE", "/protected_branches/{b}", "protection-remove"),
+}
+
+// projectFields are the general and CI/CD settings of PUT /projects/{id}.
+var projectFields = []string{
+	"description", "topics", "default_branch", "lfs_enabled", "packages_enabled", "mr_default_target_self",
+	"merge_method", "squash_option", "squash_commit_template", "merge_commit_template", "suggestion_commit_message",
+	"remove_source_branch_after_merge", "printing_merge_request_link_enabled", "resolve_outdated_diff_discussions",
+	"autoclose_referenced_issues", "issue_branch_template",
+	"only_allow_merge_if_pipeline_succeeds", "allow_merge_on_skipped_pipeline",
+	"only_allow_merge_if_all_discussions_are_resolved", "only_allow_merge_if_all_status_checks_passed",
+	"merge_pipelines_enabled", "merge_trains_enabled", "merge_trains_skip_train_allowed",
+	"issues_access_level", "merge_requests_access_level", "repository_access_level", "forking_access_level",
+	"wiki_access_level", "snippets_access_level", "builds_access_level", "pages_access_level",
+	"analytics_access_level", "releases_access_level", "environments_access_level", "feature_flags_access_level",
+	"infrastructure_access_level", "monitor_access_level", "container_registry_access_level",
+	"model_experiments_access_level", "model_registry_access_level", "requirements_access_level",
+	"security_and_compliance_access_level",
+	"ci_config_path", "ci_default_git_depth", "ci_forward_deployment_enabled", "ci_forward_deployment_rollback_allowed",
+	"ci_separated_caches", "ci_restrict_pipeline_cancellation_role", "ci_pipeline_variables_minimum_override_role",
+	"ci_push_repository_for_job_token_allowed", "ci_allow_fork_pipelines_to_run_in_parent_project",
+	"ci_id_token_sub_claim_components", "ci_delete_pipelines_in_seconds",
+	"auto_cancel_pending_pipelines", "auto_devops_enabled", "auto_devops_deploy_strategy",
+	"build_timeout", "build_git_strategy", "shared_runners_enabled", "group_runners_enabled",
+	"keep_latest_artifact", "public_jobs",
 }
 
 // The VM names a project's API as /api/{host}/projects/{path with %2F}.
@@ -141,4 +175,17 @@ func (g *gitlab) IsPublic(client *http.Client, repo string) (bool, error) {
 
 func (g *gitlab) Routes() []forge.Route { return routes }
 
-func (g *gitlab) CreatedTarget(result []byte) string { return forge.NumberOf(result, "iid") }
+// CreatedTarget is the iid of a merge request or issue; a protected branch
+// is known by its name.
+func (g *gitlab) CreatedTarget(result []byte) string {
+	if iid := forge.NumberOf(result, "iid"); iid != "" {
+		return iid
+	}
+	var created struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(result, &created); err != nil {
+		return ""
+	}
+	return created.Name
+}

@@ -174,8 +174,8 @@ See [ep_weave design](docs/EPWEAVE.md).
 
 GitHub:
 
-The agent in the VM can push, fetch and work with pull requests, issues and workflow runs of the repositories you name, through a relay that `isotty attach` provides with your GitHub token.
-The VM never holds the token and cannot reach any other repository.
+The agent in the VM can push, fetch and work with pull requests, issues, workflow runs and repository settings of the repositories you name, through a relay that `isotty attach` provides with your GitHub token.
+The VM never holds the token and cannot reach any other repository. Each repository is pinned as `read`, `comment`, `write` or `admin`.
 
 ```bash
 isotty host github add --remote origin --allow write
@@ -199,7 +199,7 @@ See [GitHub design](docs/GITHUB.md).
 
 GitLab:
 
-The same relay exists for GitLab, self-hosted instances included: push, fetch, merge requests, issues and pipelines of the projects you name, with a token per instance kept on the host.
+The same relay exists for GitLab, self-hosted instances included: push, fetch, merge requests, issues, pipelines and project settings of the projects you name, with a token per instance kept on the host.
 
 ```bash
 isotty host gitlab login --url https://gitlab.example.org   # prints which token to create, then asks for it

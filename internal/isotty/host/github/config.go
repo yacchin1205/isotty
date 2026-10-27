@@ -23,6 +23,7 @@ const (
 	AccessRead    = forge.AccessRead
 	AccessComment = forge.AccessComment
 	AccessWrite   = forge.AccessWrite
+	AccessAdmin   = forge.AccessAdmin
 )
 
 // Kind is GitHub as the config files see it: .isotty/github.yaml lists
