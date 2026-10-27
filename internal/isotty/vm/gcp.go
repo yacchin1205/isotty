@@ -501,3 +501,35 @@ func gcpSSHInstanceTarget(conn GCPConnection) string {
 	}
 	return conn.User + "@" + conn.InstanceName
 }
+
+type GCPInstance struct {
+	Name   string
+	Zone   string
+	Status string
+}
+
+// ListGCPInstances returns the VMs of a GCP project that `up` created, by the
+// label it puts on them, whichever zone they are in.
+func ListGCPInstances(projectID string) ([]GCPInstance, error) {
+	output, err := captureGcloud(
+		"compute", "instances", "list",
+		"--project", projectID,
+		"--filter=labels.app=isotty",
+		"--format=value(name,zone.basename(),status)",
+	)
+	if err != nil {
+		return nil, err
+	}
+	var instances []GCPInstance
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("unexpected instance line from gcloud: %q", line)
+		}
+		instances = append(instances, GCPInstance{Name: fields[0], Zone: fields[1], Status: fields[2]})
+	}
+	return instances, nil
+}

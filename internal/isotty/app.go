@@ -86,6 +86,8 @@ func (a *App) Run(args []string) error {
 		return a.runDown(args[1:])
 	case "status":
 		return a.runStatus(args[1:])
+	case "list":
+		return a.runList(args[1:])
 	case "version":
 		return a.runVersion(args[1:])
 	case "help", "-h", "--help":
@@ -145,6 +147,7 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] vm gcp show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] vm gcp set [--machine-type <type>] [--boot-disk-size <size>] [--image-family <family>] [--image-project <project>]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] status")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] list")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] version")
 }
 
