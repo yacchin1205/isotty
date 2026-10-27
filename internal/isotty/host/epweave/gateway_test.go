@@ -18,6 +18,15 @@ import (
 type fakeEtherpad struct {
 	mu   sync.Mutex
 	pads map[string]*fakePad
+	// issued counts the tokens handed out; only the latest is accepted, so
+	// raising it stands for the token's hour running out.
+	issued int
+}
+
+func (f *fakeEtherpad) expireToken() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.issued++
 }
 
 type fakePad struct {
@@ -69,7 +78,11 @@ func (f *fakeEtherpad) handler(t *testing.T) http.Handler {
 		if r.FormValue("resource") == "" {
 			t.Error("token request without resource")
 		}
-		fmt.Fprint(w, `{"access_token":"tok"}`)
+		f.mu.Lock()
+		f.issued++
+		token := fmt.Sprintf("tok%d", f.issued)
+		f.mu.Unlock()
+		fmt.Fprintf(w, `{"access_token":%q}`, token)
 	})
 	mux.HandleFunc("GET /search/", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -89,12 +102,12 @@ func (f *fakeEtherpad) handler(t *testing.T) http.Handler {
 		json.NewEncoder(w).Encode(map[string]any{"docs": docs})
 	})
 	mux.HandleFunc("POST /api/1.3.1/{method}", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer tok" {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if r.Header.Get("Authorization") != fmt.Sprintf("Bearer tok%d", f.issued) {
 			http.Error(w, `{"code":4,"message":"no or wrong OAuth token","data":null}`, http.StatusUnauthorized)
 			return
 		}
-		f.mu.Lock()
-		defer f.mu.Unlock()
 		ok := func(data any) {
 			json.NewEncoder(w).Encode(map[string]any{"code": 0, "message": "ok", "data": data})
 		}
@@ -276,6 +289,27 @@ func TestGatewayCreateAppendRead(t *testing.T) {
 
 	if len(*events) != 2 || (*events)[0].Operation != "create" || (*events)[1].Operation != "append" || (*events)[1].PadID != padID {
 		t.Fatalf("write events = %#v", *events)
+	}
+}
+
+func TestGatewayRenewsExpiredToken(t *testing.T) {
+	gateway, etherpad, _, events := newTestGateway(t)
+	if status, body := doJSON(t, "POST", gateway.URL+"/create", map[string]string{"title": "isotty/a", "markdown": "x"}); status != 200 {
+		t.Fatalf("create = %d %v", status, body)
+	}
+	etherpad.expireToken()
+	status, body := doJSON(t, "POST", gateway.URL+"/append", map[string]string{"title": "isotty/a", "markdown": "y"})
+	if status != 200 {
+		t.Fatalf("append after expiry = %d %v", status, body)
+	}
+	if len(*events) != 2 {
+		t.Fatalf("events = %+v", *events)
+	}
+	etherpad.mu.Lock()
+	issued := etherpad.issued
+	etherpad.mu.Unlock()
+	if issued != 3 {
+		t.Fatalf("tokens issued = %d, want the first, the expiry and the renewal", issued)
 	}
 }
 
