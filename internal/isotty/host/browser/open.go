@@ -1,10 +1,14 @@
-package opeco
+// Package browser lets the VM show a URL in the human's browser on the
+// host: the `isotty-open` command in the VM, which is also its BROWSER,
+// and the gateway service that runs the host's opener.
+package browser
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -15,14 +19,13 @@ import (
 
 const openTimeout = 5 * time.Second
 
-// OpenHandler is the gateway service that lets the VM ask the host to show
-// opeco's QR page in the host's browser. Only URLs under the project's QR
-// port are accepted: the VM must not be able to point the person's browser
-// anywhere else. A request is answered as soon as the browser has been
-// launched; opened runs after the response, so bookkeeping never delays or
-// cancels the launch.
-func OpenHandler(qrPort int, open func(context.Context, string) error, opened func(url string)) http.Handler {
-	allowedPrefix := fmt.Sprintf("http://127.0.0.1:%d/", qrPort)
+// Handler answers POST /open. Any http or https URL is opened: the tab
+// appears in front of the human, who is the one to judge it, and the open
+// is recorded. Other schemes are refused because the host's opener would
+// hand them to other applications. A request is answered as soon as the
+// browser has been launched; opened runs after the response, so
+// bookkeeping never delays or cancels the launch.
+func Handler(open func(context.Context, string) error, opened func(url string)) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /open", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -34,8 +37,8 @@ func OpenHandler(qrPort int, open func(context.Context, string) error, opened fu
 			gateway.WriteError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 			return
 		}
-		if !strings.HasPrefix(req.URL, allowedPrefix) {
-			gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("only URLs under %s can be opened on the host", allowedPrefix))
+		if !isWebURL(req.URL) {
+			gateway.WriteError(w, http.StatusForbidden, "only http and https URLs are opened on the host; give the URL to the human instead")
 			return
 		}
 		// The launch is deliberately independent of the request context: a
@@ -51,6 +54,15 @@ func OpenHandler(qrPort int, open func(context.Context, string) error, opened fu
 		opened(req.URL)
 	})
 	return mux
+}
+
+func isWebURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	return scheme == "http" || scheme == "https"
 }
 
 // OpenInBrowser shows url with the host desktop's default opener.

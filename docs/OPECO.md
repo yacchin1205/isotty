@@ -15,15 +15,14 @@ talks to opeco.link directly. The host is needed only once, to pair a device.
 opeco shows a one-shot QR code on a loopback page of the machine it runs on
 and opens it with the command named by `BROWSER`. In the VM there is no
 browser, so `isotty attach` carries both the page and the "open it" request
-to the host:
+to the host, through the opener described in [BROWSER.md](BROWSER.md):
 
 ```text
 VM:   opeco mcp --qr-port <port>, BROWSER=/usr/local/bin/isotty-open
         page on 127.0.0.1:<port>; session_create runs
         isotty-open http://127.0.0.1:<port>/qr/<token>
           --POST /open--> 127.0.0.1:61001 ==ssh -R==> host gateway
-host: gateway accepts only URLs under http://127.0.0.1:<port>/ and runs the
-      desktop opener; the browser reaches the page through
+host: gateway runs the desktop opener; the browser reaches the page through
       ssh -L 127.0.0.1:<port>:127.0.0.1:<port> (added by attach)
 ```
 
@@ -32,9 +31,6 @@ so the URL opens unchanged and opeco reports `qr_opened: true` because
 `isotty-open` succeeded. When the host is not attached, `isotty-open` fails,
 opeco reports `qr_open_error`, and the agent shows the URL instead. After
 pairing the host plays no part.
-
-Every accepted open request is recorded in the VM event log (`open-url`), so
-`isotty audit logs` shows what the VM asked the host's browser to show.
 
 The QR forward appears as `opeco-qr` beside the project's own forwards and
 exists only while attached. `attach --no-host` skips it together with the

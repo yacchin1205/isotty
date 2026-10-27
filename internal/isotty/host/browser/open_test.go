@@ -1,4 +1,4 @@
-package opeco
+package browser
 
 import (
 	"context"
@@ -25,47 +25,53 @@ func postOpen(t *testing.T, server *httptest.Server, body string) (int, string) 
 	return resp.StatusCode, string(text)
 }
 
-func TestOpenHandlerOpensOnlyAllowedURLs(t *testing.T) {
+func TestHandlerOpensWebURLsOnly(t *testing.T) {
 	var opened, recorded []string
-	handler := OpenHandler(61002,
+	server := httptest.NewServer(Handler(
 		func(_ context.Context, url string) error { opened = append(opened, url); return nil },
 		func(url string) { recorded = append(recorded, url) },
-	)
-	server := httptest.NewServer(handler)
+	))
 	defer server.Close()
 
-	status, _ := postOpen(t, server, `{"url":"http://127.0.0.1:61002/qr/abc"}`)
-	if status != http.StatusNoContent {
-		t.Fatalf("allowed status = %d", status)
+	allowed := []string{
+		"http://127.0.0.1:61002/qr/abc",
+		"https://script.google.com/macros/s/x/exec?formId=1",
+		"HTTPS://example.com/",
+	}
+	for _, url := range allowed {
+		if status, text := postOpen(t, server, `{"url":"`+url+`"}`); status != http.StatusNoContent {
+			t.Fatalf("%s: status = %d, body = %s", url, status, text)
+		}
 	}
 	for _, body := range []string{
-		`{"url":"http://127.0.0.1:61003/qr/abc"}`,
-		`{"url":"http://127.0.0.1:610020/"}`,
-		`{"url":"https://example.com/"}`,
 		`{"url":"file:///etc/passwd"}`,
+		`{"url":"javascript:alert(1)"}`,
+		`{"url":"vscode://file/etc/passwd"}`,
+		`{"url":"mailto:someone@example.com"}`,
+		`{"url":"example.com/no-scheme"}`,
+		`{"url":""}`,
 	} {
 		status, text := postOpen(t, server, body)
-		if status != http.StatusForbidden || !strings.Contains(text, "only URLs under") {
+		if status != http.StatusForbidden || !strings.Contains(text, "only http and https") {
 			t.Fatalf("%s: status = %d, body = %s", body, status, text)
 		}
 	}
-	if status, _ := postOpen(t, server, `{"url":"http://127.0.0.1:61002/","extra":1}`); status != http.StatusBadRequest {
+	if status, _ := postOpen(t, server, `{"url":"https://example.com/","extra":1}`); status != http.StatusBadRequest {
 		t.Fatalf("unknown field status = %d", status)
 	}
-	if len(opened) != 1 || len(recorded) != 1 || opened[0] != "http://127.0.0.1:61002/qr/abc" {
+	if len(opened) != len(allowed) || len(recorded) != len(allowed) || opened[1] != allowed[1] {
 		t.Fatalf("opened = %v, recorded = %v", opened, recorded)
 	}
 }
 
-func TestOpenHandlerReportsBrowserFailure(t *testing.T) {
+func TestHandlerReportsBrowserFailure(t *testing.T) {
 	recorded := false
-	handler := OpenHandler(61002,
+	server := httptest.NewServer(Handler(
 		func(context.Context, string) error { return errors.New("no display") },
 		func(string) { recorded = true },
-	)
-	server := httptest.NewServer(handler)
+	))
 	defer server.Close()
-	status, text := postOpen(t, server, `{"url":"http://127.0.0.1:61002/qr/abc"}`)
+	status, text := postOpen(t, server, `{"url":"https://example.com/"}`)
 	if status != http.StatusBadGateway || !strings.Contains(text, "no display") {
 		t.Fatalf("status = %d, body = %s", status, text)
 	}
@@ -74,18 +80,17 @@ func TestOpenHandlerReportsBrowserFailure(t *testing.T) {
 	}
 }
 
-func TestOpenHandlerAnswersBeforeBookkeeping(t *testing.T) {
+func TestHandlerAnswersBeforeBookkeeping(t *testing.T) {
 	bookkeeping := make(chan struct{})
-	handler := OpenHandler(61002,
+	server := httptest.NewServer(Handler(
 		func(context.Context, string) error { return nil },
 		func(string) { <-bookkeeping },
-	)
-	server := httptest.NewServer(handler)
+	))
 	defer server.Close()
 
 	done := make(chan int, 1)
 	go func() {
-		status, _ := postOpen(t, server, `{"url":"http://127.0.0.1:61002/qr/abc"}`)
+		status, _ := postOpen(t, server, `{"url":"https://example.com/"}`)
 		done <- status
 	}()
 	select {

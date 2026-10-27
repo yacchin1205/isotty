@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yazawa/isotty/internal/isotty/host/browser"
 	"github.com/yazawa/isotty/internal/isotty/host/gas"
 	"github.com/yazawa/isotty/internal/isotty/host/pin"
-	"github.com/yazawa/isotty/internal/isotty/opeco"
 )
 
 // loginTimeout bounds how long `add` waits for the human to finish the
@@ -194,7 +194,7 @@ func runGASAdd(projectPath, projectHash, homeDir string, args []string, stdout, 
 		fmt.Fprintln(stdout, "Opening the browser to authorize the Apps Script client. Log in as the account the VM should run the script as.")
 		cred, err = gas.Login(ctx, client, gas.LoginScopes(cfg.ClientScopes(client.ClientID)), func(url string) error {
 			fmt.Fprintf(stdout, "If no browser opened, visit:\n%s\n", url)
-			return opeco.OpenInBrowser(ctx, url)
+			return browser.OpenInBrowser(ctx, url)
 		})
 		if err != nil {
 			return err

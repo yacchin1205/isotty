@@ -57,6 +57,9 @@ func TestBuildAttachSSHArgsWithEpweaveGateway(t *testing.T) {
 	if !strings.Contains(joined, "-R 127.0.0.1:61001:127.0.0.1:54321") {
 		t.Fatalf("args = %v, want reverse forward to the gateway", args)
 	}
+	if !strings.Contains(joined, "cd /workspace && BROWSER=/usr/local/bin/isotty-open exec ${SHELL:-/bin/bash} -l") {
+		t.Fatalf("args = %v, want BROWSER set for the session shell", args)
+	}
 }
 
 func TestBuildAttachSSHArgsWithUser(t *testing.T) {
