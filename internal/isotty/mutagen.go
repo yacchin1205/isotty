@@ -13,6 +13,9 @@ import (
 )
 
 var defaultIgnores = []string{
+	// Audit archives are large and for the host; `up` hands the VM what it
+	// needs from them.
+	"/.isotty/audit/",
 	".env",
 	".env.*",
 	".npmrc",

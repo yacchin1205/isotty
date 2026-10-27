@@ -101,7 +101,8 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] id")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>] [--user <name>] [--no-host]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] down [--force]")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] audit logs [-f]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] audit logs [-f] [--archive <file>]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] audit archive")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host forward add <name> --local-port <port> --remote-port <port>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host forward list")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host forward remove <name>")
@@ -237,20 +238,111 @@ func (a *App) runAudit(args []string) error {
 	switch args[0] {
 	case "logs":
 		return a.runAuditLogs(args[1:])
+	case "archive":
+		return a.runAuditArchive(args[1:])
 	default:
 		return fmt.Errorf("unknown audit subcommand %q", args[0])
 	}
+}
+
+// runAuditArchive keeps the VM's audit trail with the project, sealed; it
+// is what `down` does before deleting the VM, and can be run at any time.
+func (a *App) runAuditArchive(args []string) error {
+	fs := flag.NewFlagSet("audit archive", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("audit archive does not accept arguments")
+	}
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	state, err := LoadStateForProject(projectPath)
+	if err != nil {
+		return err
+	}
+	path, err := a.archiveAudit(state)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "Audit archive written to %s\n", path)
+	return nil
+}
+
+func (a *App) archiveAudit(state State) (string, error) {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return "", err
+	}
+	conn := vmcfg.GCPConnection{ProjectID: state.GCPProjectID, Zone: state.Zone, InstanceName: state.InstanceName}
+	stamp := runtimecfg.AuditArchiveStamp(time.Now())
+	var path string
+	err = a.runPhase("Archiving audit logs", func() error {
+		// The VM streams the tar.gz; it is sealed as it arrives.
+		pr, pw := io.Pipe()
+		captured := make(chan error, 1)
+		go func() {
+			err := a.auditTarget(conn).CaptureTo(runtimecfg.CaptureAuditArchiveCommand(stamp), pw)
+			pw.CloseWithError(err)
+			captured <- err
+		}()
+		saved, err := runtimecfg.SaveAuditArchive(homeDir, state.ProjectPath, stamp, base64.NewDecoder(base64.StdEncoding, pr))
+		pr.Close()
+		if captureErr := <-captured; captureErr != nil {
+			return captureErr
+		}
+		if err != nil {
+			return err
+		}
+		path = saved
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("archive audit logs: %w", err)
+	}
+	return path, nil
+}
+
+func (a *App) restoreAuditArchives(cfg Config, state State) error {
+	archives, err := runtimecfg.ListAuditArchives(cfg.ProjectPath)
+	if err != nil {
+		return err
+	}
+	conn := vmcfg.GCPConnection{ProjectID: state.GCPProjectID, Zone: state.Zone, InstanceName: state.InstanceName}
+	for _, archive := range archives {
+		if err := a.runPhase("Restoring audit archive %s", func() error {
+			stream, err := runtimecfg.OpenAuditArchive(cfg.HomeDir, archive)
+			if err != nil {
+				return err
+			}
+			defer stream.Close()
+			return vmcfg.RunGCPRemoteCommandWithInput(conn, runtimecfg.RestoreAuditArchiveCommand(cfg.Runtime.Agents), stream)
+		}, filepath.Base(archive)); err != nil {
+			return fmt.Errorf("restore audit archive: %w", err)
+		}
+	}
+	return nil
 }
 
 func (a *App) runAuditLogs(args []string) error {
 	fs := flag.NewFlagSet("audit logs", flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
 	follow := fs.Bool("f", false, "follow logs")
+	archive := fs.String("archive", "", "read an archive written by `isotty audit archive` or `isotty down` instead of the VM")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("audit logs does not accept positional arguments")
+	}
+	if *archive != "" {
+		if *follow {
+			return errors.New("audit logs -f cannot follow an archive")
+		}
+		return a.printAuditArchive(*archive)
 	}
 
 	projectPath, err := filepath.Abs(".")
@@ -271,6 +363,24 @@ func (a *App) runAuditLogs(args []string) error {
 		Zone:         state.Zone,
 		InstanceName: state.InstanceName,
 	}), "boot")
+	if err != nil {
+		return err
+	}
+	a.printAuditEvents(events)
+	return nil
+}
+
+func (a *App) printAuditArchive(path string) error {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return err
+	}
+	stream, err := runtimecfg.OpenAuditArchive(homeDir, path)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+	events, err := runtimecfg.ReadAuditArchive(stream)
 	if err != nil {
 		return err
 	}
@@ -851,6 +961,12 @@ func (a *App) runDown(args []string) error {
 			}
 			fmt.Fprintf(a.stderr, "warning: agent logins were not saved: %v\n", err)
 		}
+		if _, err := a.archiveAudit(state); err != nil {
+			if !*force {
+				return fmt.Errorf("%w\nhint: `isotty down --force` removes the VM without the archive; sync is stopped until the next `isotty up`", err)
+			}
+			fmt.Fprintf(a.stderr, "warning: audit logs were not archived: %v\n", err)
+		}
 	}
 
 	if exists {
@@ -1150,6 +1266,9 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		if err := a.restoreAgentAuth(cfg, state); err != nil {
 			return State{}, err
 		}
+		if err := a.restoreAuditArchives(cfg, state); err != nil {
+			return State{}, err
+		}
 	} else {
 		a.phase("Skipping bootstrap for existing VM %s", state.InstanceName)
 	}
@@ -1413,6 +1532,9 @@ func (a *App) auditTarget(conn vmcfg.GCPConnection) runtimecfg.RemoteTarget {
 		},
 		Capture: func(command string) (string, error) {
 			return vmcfg.CaptureGCPRemoteCommand(conn, command)
+		},
+		CaptureTo: func(command string, w io.Writer) error {
+			return vmcfg.CaptureGCPRemoteCommandTo(conn, command, w)
 		},
 		ExitCode: vmcfg.GCPCommandExitCode,
 	}

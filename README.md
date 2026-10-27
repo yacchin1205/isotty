@@ -76,6 +76,7 @@ isotty down
 ```
 
 `down` saves the configured agents' login state from the VM into `.isotty/`, encrypted with a key kept under `~/.isotty`, so the next `isotty up` of the same project starts logged in. See [Agent design](docs/AGENT.md).
+It also archives the VM's audit log into `.isotty/audit/`, sealed the same way; the next `up` unpacks the records into the VM for the agent to read, and `isotty audit logs --archive <file>` reads one on the host. See [Audit design](docs/AUDIT.md).
 
 ## Common Commands
 
@@ -83,6 +84,8 @@ isotty down
 isotty status
 isotty audit logs
 isotty audit logs -f
+isotty audit archive                      # keep the VM's audit log with the project, sealed
+isotty audit logs --archive .isotty/audit/<time>.tar.gz.enc
 isotty --debug up
 ```
 

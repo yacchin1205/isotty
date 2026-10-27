@@ -71,6 +71,7 @@ The remote sync target is:
 IsoTTY applies these by default:
 
 ```text
+/.isotty/audit/
 .env
 .env.*
 .npmrc
@@ -87,7 +88,9 @@ node_modules/
 .venv/
 ```
 
-These defaults are part of the safety model.
+These defaults are part of the safety model. `.isotty/audit/` holds the
+sealed audit archives (see [AUDIT.md](AUDIT.md)), which are for the host;
+`up` hands the VM its own copy of what it may read.
 
 ## Security Posture
 
