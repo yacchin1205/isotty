@@ -82,6 +82,7 @@ It also archives the VM's audit log into `.isotty/audit/`, sealed the same way; 
 
 ```bash
 isotty status
+isotty list                               # every isotty VM, with the project it belongs to
 isotty audit logs
 isotty audit logs -f
 isotty audit archive                      # keep the VM's audit log with the project, sealed
@@ -91,7 +92,7 @@ isotty --debug up
 
 ## Remote Attach
 
-`isotty id` prints a stable VM target id for the current environment.
+`isotty id` prints a stable VM target id for the current environment, and `isotty list` prints the ids of every isotty VM in the GCP projects this host knows, including VMs brought up from another host.
 Use `isotty attach --target ...` to attach from outside the original project directory.
 
 ```bash

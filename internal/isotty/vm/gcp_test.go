@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -341,5 +343,44 @@ func TestFetchGCPProjectFile(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "local_port: 8080") {
 		t.Fatalf("data = %q", string(data))
+	}
+}
+
+func TestListGCPInstances(t *testing.T) {
+	originalCaptureGcloud := captureGcloud
+	var gotArgs []string
+	captureGcloud = func(args ...string) (string, error) {
+		gotArgs = args
+		return "isotty-abc123\tus-central1-f\tRUNNING\nisotty-def456\tasia-northeast1-b\tTERMINATED\n", nil
+	}
+	t.Cleanup(func() { captureGcloud = originalCaptureGcloud })
+
+	instances, err := ListGCPInstances("demo-project")
+	if err != nil {
+		t.Fatalf("ListGCPInstances() error = %v", err)
+	}
+	want := []GCPInstance{
+		{Name: "isotty-abc123", Zone: "us-central1-f", Status: "RUNNING"},
+		{Name: "isotty-def456", Zone: "asia-northeast1-b", Status: "TERMINATED"},
+	}
+	if !reflect.DeepEqual(instances, want) {
+		t.Fatalf("instances = %#v, want %#v", instances, want)
+	}
+	if !slices.Contains(gotArgs, "--filter=labels.app=isotty") || !slices.Contains(gotArgs, "demo-project") {
+		t.Fatalf("args = %v, want the isotty label filter and the project", gotArgs)
+	}
+}
+
+func TestListGCPInstancesWithNone(t *testing.T) {
+	originalCaptureGcloud := captureGcloud
+	captureGcloud = func(args ...string) (string, error) { return "", nil }
+	t.Cleanup(func() { captureGcloud = originalCaptureGcloud })
+
+	instances, err := ListGCPInstances("demo-project")
+	if err != nil {
+		t.Fatalf("ListGCPInstances() error = %v", err)
+	}
+	if len(instances) != 0 {
+		t.Fatalf("instances = %#v, want none", instances)
 	}
 }
