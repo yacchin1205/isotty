@@ -297,6 +297,26 @@ func RunGCPInteractiveSSH(args ...string) error {
 	return nil
 }
 
+// CaptureGCPRemoteCommandTo streams the command's stdout to w, for output
+// too large to hold as a string.
+func CaptureGCPRemoteCommandTo(conn GCPConnection, command string, w io.Writer) error {
+	args := []string{
+		"compute", "ssh", gcpSSHInstanceTarget(conn),
+		"--project", conn.ProjectID,
+		"--zone", conn.Zone,
+		"--command", command,
+	}
+	var stderr strings.Builder
+	cmd := exec.Command("gcloud", args...)
+	cmd.Env = os.Environ()
+	cmd.Stdout = w
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("command failed: gcloud %s: %w\nstderr:\n%s", strings.Join(args, " "), err, strings.TrimRight(stderr.String(), "\n"))
+	}
+	return nil
+}
+
 func CaptureGCPRemoteCommand(conn GCPConnection, command string) (string, error) {
 	return captureGcloud(
 		"compute", "ssh", gcpSSHInstanceTarget(conn),

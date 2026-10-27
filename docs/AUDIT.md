@@ -77,3 +77,44 @@ The only normal empty result is "no matching events were found". To tell
 that apart from a stopped `auditd` or a removed rule, `isotty audit logs`
 checks that `auditd` is active and both rules are loaded before it queries,
 and fails when they are not.
+
+## Archive
+
+The VM is deleted by `down`, and the log with it, so `down` first takes an
+archive, and `isotty audit archive` takes one at any time:
+
+```text
+.isotty/audit/<UTC time>.tar.gz.enc
+```
+
+It holds, under one directory named by the time, `exec.txt` and
+`connect.txt` (`ausearch -i` of each rule over the whole log), `events.jsonl`
+and, under `raw/`, the auditd log files themselves. The log is taken as it
+is: auditd need not be running, and the archive says nothing about gaps.
+`down` fails when the archive cannot be taken, as it does for agent logins;
+`down --force` deletes the VM without it.
+
+The archive is sealed on the host with the key that seals agent logins,
+`~/.isotty/agents.key`, as everything IsoTTY takes out of the VM is: the
+command lines in `exec.txt` carry whatever the agent typed, tokens
+included, and the project directory is backed up and shared. The stream is
+AES-256-GCM in chunks, so an archive of any size is sealed and opened
+without holding it in memory, and a truncated or altered file is refused.
+`.isotty/audit/` is left out of the sync.
+
+Sealing is about where the file rests, not about who may read it. The next
+`up` opens each archive and unpacks its rendered files into the VM:
+
+```text
+/var/log/isotty/archive/<UTC time>/{exec.txt,connect.txt,events.jsonl}
+```
+
+readable by everyone there, next to the live log, with an `isotty-audit`
+skill that tells the agents the records are theirs to read. `raw/` stays in
+the archive. On the host, `isotty audit logs --archive <file>` renders an
+archive as `audit logs` renders a running VM.
+
+The archive is a copy of what the VM held at that moment, not evidence
+against the VM: its user has `sudo`, so the log could have been changed
+before `down`. Keeping a trail the VM cannot touch would mean streaming it
+to the host during `attach`, which this does not do.

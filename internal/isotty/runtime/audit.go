@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"regexp"
@@ -84,9 +85,12 @@ type VMEventRecord struct {
 }
 
 type RemoteTarget struct {
-	Run      func(command string, debug bool) error
-	Capture  func(command string) (string, error)
-	ExitCode func(err error) int
+	Run     func(command string, debug bool) error
+	Capture func(command string) (string, error)
+	// CaptureTo streams the command's stdout to w, for output too large to
+	// hold as a string.
+	CaptureTo func(command string, w io.Writer) error
+	ExitCode  func(err error) int
 }
 
 func ConfigureAudit(target RemoteTarget, debug bool) error {
@@ -132,13 +136,17 @@ func QueryAuditLogs(target RemoteTarget, start string) ([]AuditEvent, error) {
 
 	events := append(execEvents, connectEvents...)
 	events = append(events, vmEvents...)
+	sortAuditEvents(events)
+	return events, nil
+}
+
+func sortAuditEvents(events []AuditEvent) {
 	sort.Slice(events, func(i, j int) bool {
 		if events[i].Time.Equal(events[j].Time) {
 			return events[i].EventID < events[j].EventID
 		}
 		return events[i].Time.Before(events[j].Time)
 	})
-	return events, nil
 }
 
 func NewAttachVMEvent(projectHash, eventType string, forwardCount int, result string) (VMEventRecord, error) {
