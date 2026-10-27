@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"regexp"
 	"strings"
@@ -60,11 +61,17 @@ func Write(method, path, operation string, fields ...string) Route {
 // changes reports whether the route writes to the forge, whatever level it needs.
 func (r Route) changes() bool { return r.Access != AccessRead }
 
+// compileRoute turns a pattern into the expression matched against the
+// remainder as the VM escaped it: {n} is a numeric item, {b} one segment
+// naming a branch, environment or other item (a slash inside the name is
+// sent as %2F, as the forges want it), and {sha} a commit. Matching the
+// escaped form means a slash in the matched text is a path separator for
+// the upstream too, so a name cannot smuggle in a sub-resource.
 func compileRoute(path string) *regexp.Regexp {
 	expr := strings.NewReplacer(
 		"{n}", `(?P<target>[0-9]+)`,
 		"{sha}", `[0-9a-fA-F]+`,
-		"{b}", `.+`,
+		"{b}", `(?P<target>[^/]+)`,
 	).Replace(path)
 	return regexp.MustCompile("^" + expr + "$")
 }
@@ -78,9 +85,11 @@ type Forge interface {
 	// the repository key and the upstream URL of the bare repository.
 	GitTarget(path string) (repo, upstream string, err error)
 	// APITarget maps the escaped path after /api to the repository key,
-	// the upstream URL of that repository's API and the remainder the
-	// routes see, which starts with a slash or is empty.
-	APITarget(escapedPath string) (repo, upstream, rest string, err error)
+	// the upstream URL of that repository's API and the remainder, still
+	// escaped, which starts with a slash or is empty. The routes match it
+	// as it is and the upstream receives it as the VM sent it, so an
+	// encoded slash in a branch name stays one.
+	APITarget(escapedPath string) (repo, upstream, escapedRest string, err error)
 	// Prepare sets the headers the upstream expects and, when withToken,
 	// the credential for the repository.
 	Prepare(req *http.Request, repo string, git, withToken bool)
@@ -292,12 +301,13 @@ func cleanAPIPath(p string) bool {
 }
 
 func (r *relay) api(w http.ResponseWriter, req *http.Request) {
-	repo, upstreamPrefix, rest, err := r.forge.APITarget(strings.TrimPrefix(req.URL.EscapedPath(), "/api"))
+	repo, upstreamPrefix, escapedRest, err := r.forge.APITarget(strings.TrimPrefix(req.URL.EscapedPath(), "/api"))
 	if err != nil {
 		gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("%s %s is not an operation the relay provides (%v); see docs/%s.md", req.Method, req.URL.Path, err, strings.ToUpper(r.kind.Name)))
 		return
 	}
-	if !cleanAPIPath(rest) {
+	rest, err := url.PathUnescape(escapedRest)
+	if err != nil || !cleanAPIPath(rest) {
 		gateway.WriteError(w, http.StatusBadRequest, "the path is not a plain API path")
 		return
 	}
@@ -308,7 +318,7 @@ func (r *relay) api(w http.ResponseWriter, req *http.Request) {
 		if routes[i].Method != req.Method {
 			continue
 		}
-		if m := routes[i].Pattern.FindStringSubmatch(rest); m != nil {
+		if m := routes[i].Pattern.FindStringSubmatch(escapedRest); m != nil {
 			route, match = &routes[i], m
 			break
 		}
@@ -319,7 +329,7 @@ func (r *relay) api(w http.ResponseWriter, req *http.Request) {
 	}
 	var target string
 	if i := route.Pattern.SubexpIndex("target"); i > 0 {
-		target = match[i]
+		target, _ = url.PathUnescape(match[i])
 	}
 	forward, withToken := r.allowed(w, repo, route.Access)
 	if !forward {
@@ -339,7 +349,7 @@ func (r *relay) api(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	targetURL := upstreamPrefix + rest
+	targetURL := upstreamPrefix + escapedRest
 	if req.URL.RawQuery != "" {
 		targetURL += "?" + req.URL.RawQuery
 	}

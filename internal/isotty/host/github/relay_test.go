@@ -14,7 +14,7 @@ import (
 var repoLookup = regexp.MustCompile(`^/repos/[^/]+/[^/]+$`)
 
 type upstreamCall struct {
-	Method, Path, Query, Auth, Accept, Body string
+	Method, Path, EscapedPath, Query, Auth, Accept, Body string
 }
 
 // fakeGitHub stands in for github.com and api.github.com; it records what
@@ -27,7 +27,7 @@ type fakeGitHub struct {
 func (f *fakeGitHub) handler(t *testing.T) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		f.calls = append(f.calls, upstreamCall{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("Accept"), string(body)})
+		f.calls = append(f.calls, upstreamCall{r.Method, r.URL.Path, r.URL.EscapedPath(), r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("Accept"), string(body)})
 		if answer, ok := f.answers[r.Method+" "+r.URL.Path]; ok {
 			answer(w, r)
 			return
@@ -169,8 +169,16 @@ func TestRelayAPIReads(t *testing.T) {
 			t.Fatalf("GET %s status = %d, want 403", denied, status)
 		}
 	}
-	if status, _ := do(t, "GET", relay.URL+"/github/api/repos/org/lib/branches/release/v1/protection", ""); status != 200 {
-		t.Fatalf("branch with slash status = %d", status)
+	// A slash in a branch name is sent encoded, as GitHub wants it, and
+	// reaches GitHub encoded; sent plain, it is two segments and no route.
+	if status, _ := do(t, "GET", relay.URL+"/github/api/repos/org/lib/branches/release%2Fv1/protection", ""); status != 200 {
+		t.Fatalf("branch with encoded slash status = %d", status)
+	}
+	if c := api.last(); c.EscapedPath != "/repos/org/lib/branches/release%2Fv1/protection" {
+		t.Fatalf("upstream path = %q", c.EscapedPath)
+	}
+	if status, _ := do(t, "GET", relay.URL+"/github/api/repos/org/lib/branches/release/v1/protection", ""); status != 403 {
+		t.Fatalf("branch with plain slash status = %d, want 403", status)
 	}
 }
 

@@ -85,11 +85,7 @@ func (g *gitlab) APITarget(escapedPath string) (string, string, string, error) {
 	if err != nil {
 		return "", "", "", err
 	}
-	rest, err := url.PathUnescape(m[3])
-	if err != nil {
-		return "", "", "", err
-	}
-	return repo, instance.apiURL(projectPath), rest, nil
+	return repo, instance.apiURL(projectPath), m[3], nil
 }
 
 func (g *gitlab) Prepare(req *http.Request, repo string, git, withToken bool) {

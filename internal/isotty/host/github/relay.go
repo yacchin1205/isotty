@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 
@@ -92,11 +91,7 @@ func (g *github) APITarget(escapedPath string) (string, string, string, error) {
 	if err := ValidateRepo(repo); err != nil {
 		return "", "", "", err
 	}
-	rest, err := url.PathUnescape(m[3])
-	if err != nil {
-		return "", "", "", err
-	}
-	return repo, g.api + "/repos/" + repo, rest, nil
+	return repo, g.api + "/repos/" + repo, m[3], nil
 }
 
 func (g *github) Prepare(req *http.Request, _ string, git, withToken bool) {
