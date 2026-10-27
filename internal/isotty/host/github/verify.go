@@ -30,7 +30,7 @@ func verify(token, repo string, access Access, upstream string) (string, error) 
 		return "", fmt.Errorf("repository %s: %w", repo, err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxWriteResp))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return "", fmt.Errorf("repository %s: read response: %w", repo, err)
 	}

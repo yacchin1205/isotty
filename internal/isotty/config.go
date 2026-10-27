@@ -68,7 +68,7 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	githubConfig, err := host.LoadGitHubProjectConfig(projectPath, projectHash, homeDir)
+	githubConfig, err := github.Kind.LoadPinned(projectPath, projectHash, homeDir)
 	if err != nil {
 		return Config{}, err
 	}

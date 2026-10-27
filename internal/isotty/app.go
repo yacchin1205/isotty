@@ -363,11 +363,11 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/github.yaml"); err != nil {
 			return err
 		} else if data != nil {
-			synced, err := github.ParseProjectConfig(data)
+			synced, err := github.Kind.ParseProjectConfig(data)
 			if err != nil {
 				return fmt.Errorf("parse remote github config: %w", err)
 			}
-			verified, err := github.VerifyPinned(homeDir, projectHash, synced)
+			verified, err := github.Kind.VerifyPinned(homeDir, projectHash, synced)
 			if err != nil {
 				return err
 			}
@@ -453,7 +453,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 		if err != nil {
 			return err
 		}
-		githubCfg, err = host.LoadGitHubProjectConfig(projectPath, state.ProjectHash, homeDir)
+		githubCfg, err = github.Kind.LoadPinned(projectPath, state.ProjectHash, homeDir)
 		if err != nil {
 			return err
 		}
