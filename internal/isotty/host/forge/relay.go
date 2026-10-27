@@ -95,11 +95,11 @@ type Forge interface {
 	// as it is and the upstream receives it as the VM sent it, so an
 	// encoded slash in a branch name stays one.
 	APITarget(escapedPath string) (repo, upstream, escapedRest string, err error)
-	// Prepare sets the headers the upstream expects and, when withToken,
-	// the credential for the repository.
-	Prepare(req *http.Request, repo string, git, withToken bool)
-	// IsPublic asks the upstream about the repository without a credential,
-	// which is the same view the VM would have on its own.
+	// Prepare sets the headers the upstream expects and the credential for
+	// the repository.
+	Prepare(req *http.Request, repo string, git bool)
+	// IsPublic reports whether the forge labels the repository public; a
+	// private or internal one the credential can see is not.
 	IsPublic(client *http.Client, repo string) (bool, error)
 	Routes() []Route
 	// CreatedTarget reads the item identifier from a create response; an
@@ -119,8 +119,8 @@ type relay struct {
 	gitClient *http.Client
 	apiClient *http.Client
 
-	// public remembers, per repository, whether the upstream answers for it
-	// without a credential; see allowed.
+	// public remembers, per repository, whether the forge labels it public;
+	// see allowed.
 	publicMu sync.Mutex
 	public   map[string]bool
 }
@@ -160,33 +160,33 @@ func NewHandler(kind Kind, forge Forge, cfg ProjectConfig, onWrite func(WriteEve
 	return mux
 }
 
-// allowed answers the request itself when it may not be forwarded. It
-// reports whether the relay forwards it and whether the token goes along:
-// pinned repositories get the token; a public repository that is not pinned
-// is read without it, so the token is never used outside the pin.
-func (r *relay) allowed(w http.ResponseWriter, repo string, required Access) (forward, withToken bool) {
+// allowed answers the request itself when it may not be forwarded and
+// reports whether the relay forwards it. A read on a public repository
+// outside the pin is forwarded with the token too: the forges answer job
+// logs, artifacts and settings to a credential only.
+func (r *relay) allowed(w http.ResponseWriter, repo string, required Access) bool {
 	access, pinned := r.cfg.Access(repo)
 	if pinned {
 		if !access.Covers(required) {
 			gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("%s is pinned as %s for this project; this operation needs %s", repo, access, required))
-			return false, false
+			return false
 		}
-		return true, true
+		return true
 	}
 	if required != AccessRead {
 		gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("%s is not among the repositories pinned for this project (%s); writes need a pin", repo, strings.Join(r.cfg.SortedRepos(), ", ")))
-		return false, false
+		return false
 	}
 	public, err := r.isPublic(repo)
 	if err != nil {
 		gateway.WriteError(w, http.StatusBadGateway, fmt.Sprintf("could not tell whether %s is public: %v", repo, err))
-		return false, false
+		return false
 	}
 	if !public {
 		gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("%s is not among the repositories pinned for this project (%s) and is not public", repo, strings.Join(r.cfg.SortedRepos(), ", ")))
-		return false, false
+		return false
 	}
-	return true, false
+	return true
 }
 
 func (r *relay) isPublic(repo string) (bool, error) {
@@ -237,18 +237,17 @@ func (r *relay) git(w http.ResponseWriter, req *http.Request) {
 	if push {
 		required = AccessWrite
 	}
-	forward, withToken := r.allowed(w, repo, required)
-	if !forward {
+	if !r.allowed(w, repo, required) {
 		return
 	}
 	query := ""
 	if suffix == "/info/refs" {
 		query = req.URL.RawQuery
 	}
-	r.forwardGit(w, req, repo, upstream+suffix, query, suffix == "/git-receive-pack", withToken)
+	r.forwardGit(w, req, repo, upstream+suffix, query, suffix == "/git-receive-pack")
 }
 
-func (r *relay) forwardGit(w http.ResponseWriter, req *http.Request, repo, target, query string, push, withToken bool) {
+func (r *relay) forwardGit(w http.ResponseWriter, req *http.Request, repo, target, query string, push bool) {
 	if query != "" {
 		target += "?" + query
 	}
@@ -263,7 +262,7 @@ func (r *relay) forwardGit(w http.ResponseWriter, req *http.Request, repo, targe
 			upstream.Header.Set(name, value)
 		}
 	}
-	r.forge.Prepare(upstream, repo, true, withToken)
+	r.forge.Prepare(upstream, repo, true)
 	resp, err := r.gitClient.Do(upstream)
 	if err != nil {
 		gateway.WriteError(w, http.StatusBadGateway, "upstream request failed: "+err.Error())
@@ -336,8 +335,7 @@ func (r *relay) api(w http.ResponseWriter, req *http.Request) {
 	if i := route.Pattern.SubexpIndex("target"); i > 0 {
 		target, _ = url.PathUnescape(match[i])
 	}
-	forward, withToken := r.allowed(w, repo, route.Access)
-	if !forward {
+	if !r.allowed(w, repo, route.Access) {
 		return
 	}
 
@@ -373,7 +371,7 @@ func (r *relay) api(w http.ResponseWriter, req *http.Request) {
 	if body != nil {
 		upstream.Header.Set("Content-Type", "application/json")
 	}
-	r.forge.Prepare(upstream, repo, false, withToken)
+	r.forge.Prepare(upstream, repo, false)
 	resp, err := r.apiClient.Do(upstream)
 	if err != nil {
 		gateway.WriteError(w, http.StatusBadGateway, "upstream request failed: "+err.Error())

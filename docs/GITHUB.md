@@ -46,13 +46,16 @@ agent in VM --isotty-github--> 127.0.0.1:61001/github ==ssh -R==> host gateway i
   boundary invisible to the agent and the audit log alike.
 
 Public repositories are readable through the relay too, so `isotty-github`
-works on a dependency's issues or pull requests as well as on the project's
-own. The relay asks api.github.com about a repository outside the pin
-without a credential, and when GitHub serves it to anyone, relays reads for
-it the same way, without the token. The token is thus used for the pinned
-repositories only. Unauthenticated reads share GitHub's limit of 60 requests
-per hour per address; plain `git clone` of a public repository works
-directly and is not counted.
+works on a dependency's issues, pull requests and CI runs as well as on the
+project's own. For a repository outside the pin the relay reads its
+`visibility` with the token and relays reads only when GitHub labels it
+`public`; a private or internal repository the token can see, and one it
+cannot, are refused. The reads carry the token, because GitHub answers job
+logs, artifact downloads and the settings of `repo view` to a credential
+only, public repository or not, and the human reading the same page is
+logged in too. With the token GitHub also tells the human's own relation
+to the repository (the `permissions` of `GET /repos/{o}/{r}`), which the VM
+may thus read for a public repository it names.
 
 ## Operations
 
@@ -288,8 +291,9 @@ failed push or comment did not happen, and the commits and the text stay in
 * the GitHub token never leaves the host
 * the VM reaches only the pinned repositories and public ones, only through
   the operations listed above, and changes only what the pin's level allows
-* the token is used only for the pinned repositories; public repositories
-  are read without it
+* the token is used for the pinned repositories and for reads of
+  repositories GitHub labels public; it never reaches a private, internal
+  or absent repository outside the pin
 * the repository list and its access levels are pinned on the host; the
   synced copy cannot widen them
 * the gateway binds to `127.0.0.1` on both ends and lives only while attached

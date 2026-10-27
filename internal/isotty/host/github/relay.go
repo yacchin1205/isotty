@@ -123,30 +123,24 @@ func (g *github) APITarget(escapedPath string) (string, string, string, error) {
 	return repo, g.api + "/repos/" + repo, m[3], nil
 }
 
-func (g *github) Prepare(req *http.Request, _ string, git, withToken bool) {
+func (g *github) Prepare(req *http.Request, _ string, git bool) {
 	if git {
-		if withToken {
-			req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("x-access-token:"+g.token)))
-		}
+		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("x-access-token:"+g.token)))
 		return
 	}
 	if req.Header.Get("Accept") == "" {
 		req.Header.Set("Accept", "application/vnd.github+json")
 	}
 	req.Header.Set("X-GitHub-Api-Version", apiVersion)
-	if withToken {
-		req.Header.Set("Authorization", "Bearer "+g.token)
-	}
+	req.Header.Set("Authorization", "Bearer "+g.token)
 }
 
-// IsPublic asks api.github.com about the repository without a credential;
-// a private repository the token could see is still not public.
 func (g *github) IsPublic(client *http.Client, repo string) (bool, error) {
 	req, err := http.NewRequest(http.MethodGet, g.api+"/repos/"+repo, nil)
 	if err != nil {
 		return false, err
 	}
-	g.Prepare(req, repo, false, false)
+	g.Prepare(req, repo, false)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, err
@@ -159,12 +153,12 @@ func (g *github) IsPublic(client *http.Client, repo string) (bool, error) {
 	switch resp.StatusCode {
 	case http.StatusOK:
 		var info struct {
-			Private *bool `json:"private"`
+			Visibility string `json:"visibility"`
 		}
-		if err := json.Unmarshal(body, &info); err != nil || info.Private == nil {
-			return false, fmt.Errorf("repository answer does not say whether it is private: %s", strings.TrimSpace(string(body)))
+		if err := json.Unmarshal(body, &info); err != nil || info.Visibility == "" {
+			return false, fmt.Errorf("repository answer does not say its visibility: %s", strings.TrimSpace(string(body)))
 		}
-		return !*info.Private, nil
+		return info.Visibility == "public", nil
 	case http.StatusNotFound:
 		return false, nil
 	default:

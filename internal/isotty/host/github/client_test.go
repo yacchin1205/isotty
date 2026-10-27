@@ -26,6 +26,15 @@ func TestClient(t *testing.T) {
 	relay, _, api := newTestRelay(t, pins, func(e WriteEvent) error { events = append(events, e); return nil })
 	api.answers["PATCH /repos/me/project"] = jsonAnswer(`{"full_name":"me/project"}`)
 	api.answers["GET /repos/me/project/actions/permissions"] = jsonAnswer(`{"enabled":true,"allowed_actions":"all"}`)
+	// A public repository the token cannot push to: GitHub leaves the merge
+	// settings out, and answers its protection and Pages with 404.
+	api.answers["GET /repos/pub/lic"] = jsonAnswer(`{"full_name":"pub/lic","visibility":"public","archived":false,"default_branch":"main","has_issues":true,"has_wiki":false,"has_projects":true}`)
+	api.answers["GET /repos/pub/lic/branches/main/protection"] = func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }
+	api.answers["GET /repos/pub/lic/rules/branches/main"] = jsonAnswer(`[]`)
+	api.answers["GET /repos/pub/lic/actions/permissions"] = jsonAnswer(`{"enabled":true,"allowed_actions":"all"}`)
+	api.answers["GET /repos/pub/lic/environments"] = jsonAnswer(`{"environments":[]}`)
+	api.answers["GET /repos/pub/lic/pages"] = func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }
+	api.answers["GET /repos/pub/lic/actions/secrets"] = jsonAnswer(`{"secrets":[]}`)
 	api.answers["GET /repos/me/project/actions/permissions/workflow"] = jsonAnswer(`{"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}`)
 	api.answers["GET /repos/me/project/pulls"] = jsonAnswer(`[{"number":1,"state":"open","draft":false,"head":{"ref":"feat"},"title":"Add feature"}]`)
 	api.answers["POST /repos/me/project/pulls"] = jsonAnswer(`{"number":2,"html_url":"https://github.com/me/project/pull/2"}`)
@@ -89,6 +98,9 @@ func TestClient(t *testing.T) {
 	}
 	if out, code := run("", "push", "-u", "https://github.com/other/repo.git", "HEAD"); code == 0 || !strings.Contains(out, "403") || !strings.Contains(out, "isotty-github status") {
 		t.Fatalf("push to unpinned repo: %d\n%s", code, out)
+	}
+	if out, code := run("", "repo", "view", "--repo", "pub/lic"); code != 0 || !strings.Contains(out, "pub/lic: public") || !strings.Contains(out, "merge: not shown") || !strings.Contains(out, "pages: none") {
+		t.Fatalf("repo view of an outside public repository: %d\n%s", code, out)
 	}
 	if out, code := run("", "repo", "edit", "--set", "delete_branch_on_merge=true", "--set", "description=A relay"); code != 0 || !strings.Contains(out, "me/project updated") {
 		t.Fatalf("repo edit: %d\n%s", code, out)
