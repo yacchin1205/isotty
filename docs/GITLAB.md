@@ -22,9 +22,11 @@ agent in VM --isotty-gitlab--> 127.0.0.1:61001/gitlab ==ssh -R==> host gateway i
   project path, which may nest groups. The host names the instance, whose
   HTTPS URL and token the host config holds; an SSH remote on another port
   resolves to the same key.
-* Public projects of a pinned instance are readable without the token, as
-  on GitHub. An `internal` project is not public: it answers 404 to an
-  anonymous request, and the relay treats it as such.
+* Public projects of a pinned instance are readable, as on GitHub: the
+  relay reads the project's `visibility` with the instance's token and
+  relays reads when it is `public`; `internal` and `private` are not, and
+  job details and traces need the token on a public project too. Asking
+  with the token also works on an instance that requires signing in.
 
 ## Access
 

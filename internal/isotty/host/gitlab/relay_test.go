@@ -222,9 +222,12 @@ func TestRelayAdminLevel(t *testing.T) {
 	}
 }
 
-func TestRelayReadsPublicProjectsWithoutToken(t *testing.T) {
+func TestRelayReadsPublicProjects(t *testing.T) {
 	relay, upstream, host := newTestRelay(t, map[string]forge.Access{"me/mine": forge.AccessWrite}, func(WriteEvent) error { return nil })
 	upstream.answers["GET /api/v4/projects/open%2Fsource"] = func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("PRIVATE-TOKEN") != "glpat-x" {
+			t.Errorf("visibility check carried no token")
+		}
 		w.Write([]byte(`{"visibility":"public"}`))
 	}
 	upstream.answers["GET /api/v4/projects/corp%2Finternal"] = func(w http.ResponseWriter, r *http.Request) {
@@ -234,8 +237,8 @@ func TestRelayReadsPublicProjectsWithoutToken(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("public read = %d", status)
 	}
-	if c := upstream.last(); c.Token != "" || c.Auth != "" {
-		t.Fatalf("public read carried a credential: %+v", c)
+	if c := upstream.last(); c.Token != "glpat-x" {
+		t.Fatalf("public read carried no token: %+v", c)
 	}
 	status, body := do(t, "GET", relay.URL+"/gitlab/api/"+host+"/projects/corp%2Finternal/issues", "")
 	if status != 403 || !strings.Contains(body, "not public") {

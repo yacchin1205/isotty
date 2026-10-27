@@ -382,8 +382,13 @@ def cmd_repo_view(args):
     print(f"{info['full_name']}: {info['visibility']}" + (', archived' if info['archived'] else ''))
     print(f"default branch: {default_branch}")
     print(f"features: issues={info['has_issues']} wiki={info['has_wiki']} projects={info['has_projects']} discussions={info.get('has_discussions')}")
-    print(f"merge: merge_commit={info['allow_merge_commit']} squash={info['allow_squash_merge']} rebase={info['allow_rebase_merge']} "
-          f"auto_merge={info.get('allow_auto_merge')} delete_branch_on_merge={info['delete_branch_on_merge']}")
+    # GitHub tells the merge settings to those who can push, and leaves
+    # them out of the answer for everyone else.
+    if 'allow_merge_commit' in info:
+        print(f"merge: merge_commit={info['allow_merge_commit']} squash={info['allow_squash_merge']} rebase={info['allow_rebase_merge']} "
+              f"auto_merge={info.get('allow_auto_merge')} delete_branch_on_merge={info['delete_branch_on_merge']}")
+    else:
+        print('merge: not shown (GitHub tells the merge settings to those who can push)')
 
     print()
     print(f"branch protection on {default_branch}:")

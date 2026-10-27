@@ -122,12 +122,9 @@ func (g *gitlab) APITarget(escapedPath string) (string, string, string, error) {
 	return repo, instance.apiURL(projectPath), m[3], nil
 }
 
-func (g *gitlab) Prepare(req *http.Request, repo string, git, withToken bool) {
-	if !withToken {
-		return
-	}
-	// The pin was checked against the token file when the relay started,
-	// so the instance is there.
+func (g *gitlab) Prepare(req *http.Request, repo string, git bool) {
+	// The repository's host was resolved to an instance before any request
+	// is prepared, so the instance is there.
 	instance, _, _ := g.hostCfg.instanceFor(repo)
 	if git {
 		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("oauth2:"+instance.Token)))
@@ -136,9 +133,6 @@ func (g *gitlab) Prepare(req *http.Request, repo string, git, withToken bool) {
 	req.Header.Set("PRIVATE-TOKEN", instance.Token)
 }
 
-// IsPublic asks the instance about the project without a credential: a
-// project anyone can see answers 200 with visibility public, an internal or
-// private one answers 404.
 func (g *gitlab) IsPublic(client *http.Client, repo string) (bool, error) {
 	instance, projectPath, err := g.hostCfg.instanceFor(repo)
 	if err != nil {
@@ -148,6 +142,7 @@ func (g *gitlab) IsPublic(client *http.Client, repo string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	g.Prepare(req, repo, false)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, err

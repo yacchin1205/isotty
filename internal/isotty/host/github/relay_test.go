@@ -379,32 +379,39 @@ func TestRelayFollowsLogRedirectWithoutToken(t *testing.T) {
 // TestRelayReadsPublicRepositoriesWithoutToken: a repository outside the pin
 // is readable when GitHub serves it to anyone, and then without the token;
 // writes still need a pin, and a private one stays refused.
-func TestRelayReadsPublicRepositoriesWithoutToken(t *testing.T) {
+func TestRelayReadsPublicRepositories(t *testing.T) {
 	relay, git, api := newTestRelay(t, testPins, nil)
 	api.answers["GET /repos/pub/lic"] = func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "" {
-			t.Errorf("visibility check carried the token")
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			t.Errorf("visibility check carried no token")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"private":false}`))
+		w.Write([]byte(`{"private":false,"visibility":"public"}`))
 	}
 	api.answers["GET /repos/sec/ret"] = func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
+	}
+	// A repository the token can see but anyone cannot: not public.
+	api.answers["GET /repos/corp/internal"] = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"private":true,"visibility":"internal"}`))
 	}
 
 	status, _ := do(t, "GET", relay.URL+"/github/api/repos/pub/lic/pulls", "")
 	if status != 200 {
 		t.Fatalf("public pulls status = %d", status)
 	}
-	if c := api.last(); c.Path != "/repos/pub/lic/pulls" || c.Auth != "" {
+	// Reads of a public repository carry the token: job logs, artifacts and
+	// settings need one even there.
+	if c := api.last(); c.Path != "/repos/pub/lic/pulls" || c.Auth != "Bearer tok" {
 		t.Fatalf("public read upstream call = %+v", c)
 	}
 	status, _ = do(t, "GET", relay.URL+"/github/git/pub/lic.git/info/refs?service=git-upload-pack", "")
 	if status != 200 {
 		t.Fatalf("public fetch status = %d", status)
 	}
-	if c := git.last(); c.Auth != "" {
-		t.Fatalf("public fetch carried the token: %+v", c)
+	if c := git.last(); c.Auth == "" {
+		t.Fatalf("public fetch carried no token: %+v", c)
 	}
 	visibilityChecks := 0
 	for _, c := range api.calls {
@@ -428,8 +435,12 @@ func TestRelayReadsPublicRepositoriesWithoutToken(t *testing.T) {
 	if status != 403 || !strings.Contains(body, "not public") {
 		t.Fatalf("private unpinned read = %d %s", status, body)
 	}
+	status, body = do(t, "GET", relay.URL+"/github/api/repos/corp/internal/pulls", "")
+	if status != 403 || !strings.Contains(body, "not public") {
+		t.Fatalf("internal unpinned read = %d %s", status, body)
+	}
 	for _, c := range api.calls {
-		if c.Path == "/repos/sec/ret/pulls" || c.Path == "/repos/pub/lic/issues" {
+		if c.Path == "/repos/sec/ret/pulls" || c.Path == "/repos/corp/internal/pulls" || c.Path == "/repos/pub/lic/issues" {
 			t.Fatalf("refused request reached the upstream: %+v", c)
 		}
 	}
