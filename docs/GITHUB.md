@@ -147,8 +147,22 @@ Host credential, never synced:
 ```
 
 ```yaml
-token: ghp_...
+token: gho_...
 ```
+
+Any token that acts as the human works: the `gh` CLI's own is the simplest
+and needs no separate management.
+
+```bash
+gh auth refresh -h github.com -s workflow     # once, when the token lacks the scope
+umask 077 && printf 'token: %s\n' "$(gh auth token)" > ~/.isotty/github.yaml
+```
+
+The token needs the `repo` scope, and `workflow` to push a commit that
+changes `.github/workflows/`; GitHub refuses such a push without it, whoever
+pushes. `admin` pins change settings the `repo` scope already covers. The
+token is read when `attach` starts, so a new value takes effect at the next
+attach.
 
 Project config, synced with the rest of `.isotty/`:
 
