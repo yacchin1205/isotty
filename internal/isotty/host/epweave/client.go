@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,9 +27,12 @@ var searchEscapePattern = regexp.MustCompile(`([\s/():"\\])`)
 
 // Client speaks the Etherpad HTTP API plus ep_weave's search endpoint.
 type Client struct {
-	URL   string
+	URL  string
+	cfg  HostConfig
+	http *http.Client
+
+	mu    sync.Mutex
 	token string
-	http  *http.Client
 }
 
 type SearchDoc struct {
@@ -39,21 +43,37 @@ type SearchDoc struct {
 func NewClient(cfg HostConfig) (*Client, error) {
 	client := &Client{
 		URL:  strings.TrimRight(cfg.URL, "/"),
+		cfg:  cfg,
 		http: &http.Client{Timeout: 30 * time.Second},
 	}
-	token, err := client.fetchToken(cfg)
-	if err != nil {
+	if err := client.renewToken(); err != nil {
 		return nil, fmt.Errorf("obtain ep_weave token from %s: %w", client.URL, err)
 	}
-	client.token = token
 	return client, nil
 }
 
-func (c *Client) fetchToken(cfg HostConfig) (string, error) {
+func (c *Client) renewToken() error {
+	token, err := c.fetchToken()
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.token = token
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *Client) currentToken() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.token
+}
+
+func (c *Client) fetchToken() (string, error) {
 	form := url.Values{
 		"grant_type":    {"client_credentials"},
-		"client_id":     {cfg.ClientID},
-		"client_secret": {cfg.ClientSecret},
+		"client_id":     {c.cfg.ClientID},
+		"client_secret": {c.cfg.ClientSecret},
 		// Without `resource` the provider issues an opaque token that the API rejects.
 		"resource": {c.URL},
 	}
@@ -78,16 +98,22 @@ func (c *Client) fetchToken(cfg HostConfig) (string, error) {
 	return payload.AccessToken, nil
 }
 
+// api calls an Etherpad API method. The token expires after an hour while
+// an attach lasts as long as the human stays, so a 401 is answered with a
+// new token and one more try.
 func (c *Client) api(method string, params url.Values) (json.RawMessage, error) {
-	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/%s/%s", c.URL, apiVersion, method), strings.NewReader(params.Encode()))
-	if err != nil {
-		return nil, err
+	resp, body, err := c.post(method, params)
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		if err := c.renewToken(); err != nil {
+			return nil, fmt.Errorf("%s: renew ep_weave token: %w", method, err)
+		}
+		resp, body, err = c.post(method, params)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	body, err := c.do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", method, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s: %s: %s", method, resp.Status, strings.TrimSpace(string(body)))
 	}
 	var payload struct {
 		Code    int             `json:"code"`
@@ -138,22 +164,40 @@ func (c *Client) Search(query string, rows int) ([]SearchDoc, error) {
 	return payload.Docs, nil
 }
 
+func (c *Client) post(method string, params url.Values) (*http.Response, []byte, error) {
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/%s/%s", c.URL, apiVersion, method), strings.NewReader(params.Encode()))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.currentToken())
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return c.send(req)
+}
+
 // do sends the request and returns the body of a 200 response; any other
 // status is an error carrying the body text.
 func (c *Client) do(req *http.Request) ([]byte, error) {
-	resp, err := c.http.Do(req)
+	resp, body, err := c.send(req)
 	if err != nil {
 		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	return body, nil
+}
+
+func (c *Client) send(req *http.Request) (*http.Response, []byte, error) {
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read response: %w", err)
+	}
+	return resp, body, nil
 }
 
 // PadIDByTitle resolves a title through the search index. GET /t/<title>
