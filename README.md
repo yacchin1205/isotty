@@ -185,7 +185,7 @@ isotty host github add --remote origin --allow write
 isotty up
 ```
 
-The token lives on the host in `~/.isotty/github.yaml`; the project setting is stored in:
+The token lives on the host in `~/.isotty/github.yaml` (the `gh` CLI's token with the `repo` and `workflow` scopes will do; see the design doc); the project setting is stored in:
 
 ```text
 ./.isotty/github.yaml
