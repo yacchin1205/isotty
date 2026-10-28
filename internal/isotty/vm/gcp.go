@@ -214,20 +214,27 @@ func CreateGCPInstance(spec GCPInstanceSpec, instanceName string, debug bool) er
 	)
 }
 
-func GCPInstanceExists(projectID, zone, instanceName string) (bool, error) {
-	_, err := captureGcloud(
+const (
+	GCPStatusRunning    = "RUNNING"
+	GCPStatusTerminated = "TERMINATED"
+)
+
+// GCPInstanceStatus returns the instance's status as GCP reports it, such as
+// RUNNING or TERMINATED, and "" when the instance does not exist.
+func GCPInstanceStatus(projectID, zone, instanceName string) (string, error) {
+	output, err := captureGcloud(
 		"compute", "instances", "describe", instanceName,
 		"--project", projectID,
 		"--zone", zone,
-		"--format=value(name)",
+		"--format=value(status)",
 	)
 	if err == nil {
-		return true, nil
+		return strings.TrimSpace(output), nil
 	}
 	if gcloudExitCode(err) == 1 && strings.Contains(err.Error(), "was not found") {
-		return false, nil
+		return "", nil
 	}
-	return false, err
+	return "", err
 }
 
 func WaitForGCPSSH(conn GCPConnection) error {
@@ -333,6 +340,24 @@ func GCPCommandExitCode(err error) int {
 func DeleteGCPInstance(conn GCPConnection, debug bool) error {
 	return runGcloud(debug,
 		"compute", "instances", "delete", conn.InstanceName,
+		"--quiet",
+		"--project", conn.ProjectID,
+		"--zone", conn.Zone,
+	)
+}
+
+func StopGCPInstance(conn GCPConnection, debug bool) error {
+	return runGcloud(debug,
+		"compute", "instances", "stop", conn.InstanceName,
+		"--quiet",
+		"--project", conn.ProjectID,
+		"--zone", conn.Zone,
+	)
+}
+
+func StartGCPInstance(conn GCPConnection, debug bool) error {
+	return runGcloud(debug,
+		"compute", "instances", "start", conn.InstanceName,
 		"--quiet",
 		"--project", conn.ProjectID,
 		"--zone", conn.Zone,
