@@ -6,16 +6,18 @@ The first IsoTTY backend is a disposable GCP VM created with `gcloud`.
 
 ```bash
 isotty up
+isotty stop
 isotty down
 ```
 
 ## Contract
 
-* `up` creates or reuses one VM per project
-* `attach` opens an interactive shell with `gcloud compute ssh`
+* `up` creates or reuses one VM per project, starting it when `stop` left it stopped
+* `attach` opens an interactive shell with `gcloud compute ssh`; it refuses a VM that is not running, since `up` is what starts one
 * `id` prints a stable VM target id for remote attach
 * `attach --target ...` attaches without local project state
-* `down` deletes the VM and removes local state
+* `stop` stops the VM and keeps its disk and the local state; the sync session ends with it
+* `down` deletes the VM and removes local state, starting a stopped VM first to save the agents' logins and the audit log
 
 ## Identity
 

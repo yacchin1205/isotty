@@ -243,7 +243,7 @@ func TestCreateInstanceBuildsExpectedCommand(t *testing.T) {
 	}
 }
 
-func TestInstanceExistsTreatsNotFoundAsFalse(t *testing.T) {
+func TestInstanceStatusTreatsNotFoundAsAbsent(t *testing.T) {
 	originalCaptureGcloud := captureGcloud
 	originalGcloudExitCode := gcloudExitCode
 	captureGcloud = func(args ...string) (string, error) {
@@ -255,12 +255,58 @@ func TestInstanceExistsTreatsNotFoundAsFalse(t *testing.T) {
 		gcloudExitCode = originalGcloudExitCode
 	})
 
-	exists, err := GCPInstanceExists("demo-project", "us-central1-f", "isotty-abc123")
+	status, err := GCPInstanceStatus("demo-project", "us-central1-f", "isotty-abc123")
 	if err != nil {
-		t.Fatalf("GCPInstanceExists() error = %v", err)
+		t.Fatalf("GCPInstanceStatus() error = %v", err)
 	}
-	if exists {
-		t.Fatal("GCPInstanceExists() = true, want false")
+	if status != "" {
+		t.Fatalf("GCPInstanceStatus() = %q, want empty", status)
+	}
+}
+
+func TestInstanceStatusReportsWhatGcloudPrints(t *testing.T) {
+	originalCaptureGcloud := captureGcloud
+	var gotArgs []string
+	captureGcloud = func(args ...string) (string, error) {
+		gotArgs = append([]string(nil), args...)
+		return "TERMINATED\n", nil
+	}
+	t.Cleanup(func() { captureGcloud = originalCaptureGcloud })
+
+	status, err := GCPInstanceStatus("demo-project", "us-central1-f", "isotty-abc123")
+	if err != nil {
+		t.Fatalf("GCPInstanceStatus() error = %v", err)
+	}
+	if status != GCPStatusTerminated {
+		t.Fatalf("GCPInstanceStatus() = %q, want TERMINATED", status)
+	}
+	if joined := strings.Join(gotArgs, " "); !strings.Contains(joined, "instances describe isotty-abc123") || !strings.Contains(joined, "--format=value(status)") {
+		t.Fatalf("args = %v", gotArgs)
+	}
+}
+
+func TestStopAndStartInstanceBuildExpectedCommands(t *testing.T) {
+	var commands []string
+	originalRunGcloud := runGcloud
+	runGcloud = func(debug bool, args ...string) error {
+		commands = append(commands, strings.Join(args, " "))
+		return nil
+	}
+	t.Cleanup(func() { runGcloud = originalRunGcloud })
+
+	conn := GCPConnection{ProjectID: "demo-project", Zone: "us-central1-f", InstanceName: "isotty-abc123"}
+	if err := StopGCPInstance(conn, false); err != nil {
+		t.Fatalf("StopGCPInstance() error = %v", err)
+	}
+	if err := StartGCPInstance(conn, false); err != nil {
+		t.Fatalf("StartGCPInstance() error = %v", err)
+	}
+	want := []string{
+		"compute instances stop isotty-abc123 --quiet --project demo-project --zone us-central1-f",
+		"compute instances start isotty-abc123 --quiet --project demo-project --zone us-central1-f",
+	}
+	if strings.Join(commands, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("commands = %q, want %q", commands, want)
 	}
 }
 

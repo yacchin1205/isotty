@@ -84,6 +84,8 @@ func (a *App) Run(args []string) error {
 		return a.runAudit(args[1:])
 	case "down":
 		return a.runDown(args[1:])
+	case "stop":
+		return a.runStop(args[1:])
 	case "status":
 		return a.runStatus(args[1:])
 	case "list":
@@ -104,6 +106,7 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] id")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>] [--user <name>] [--no-host]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] down [--force]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] stop")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] audit logs [-f] [--archive <file>]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] audit archive")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host forward add <name> --local-port <port> --remote-port <port>")
@@ -423,8 +426,27 @@ func (a *App) runAttach(args []string) error {
 		}
 		return err
 	}
+	if err := requireRunningInstance(state.GCPProjectID, state.Zone, state.InstanceName); err != nil {
+		return err
+	}
 
 	return a.attachToState(projectPath, state, *user, *noHost)
+}
+
+// requireRunningInstance refuses to attach to a VM that is stopped or in
+// transition, where ssh would only time out; `up` is what starts it.
+func requireRunningInstance(projectID, zone, instanceName string) error {
+	status, err := vmcfg.GCPInstanceStatus(projectID, zone, instanceName)
+	if err != nil {
+		return fmt.Errorf("check instance: %w", err)
+	}
+	if status == "" {
+		return fmt.Errorf("instance %s was not found", instanceName)
+	}
+	if status != vmcfg.GCPStatusRunning {
+		return fmt.Errorf("instance %s is %s; `isotty up` in the project directory starts it", instanceName, status)
+	}
+	return nil
 }
 
 func (a *App) attachToTarget(targetID, user string, noHost bool) error {
@@ -442,6 +464,9 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 		InstanceName:  target.InstanceName,
 		User:          user,
 		SSHConfigPath: filepath.Join(homeDir, "ssh", "config"),
+	}
+	if err := requireRunningInstance(conn.ProjectID, conn.Zone, conn.InstanceName); err != nil {
+		return err
 	}
 
 	workspacePath, err := vmcfg.GetGCPWorkspacePath(conn)
@@ -949,10 +974,16 @@ func (a *App) runDown(args []string) error {
 		return err
 	}
 
-	exists, err := vmcfg.GCPInstanceExists(state.GCPProjectID, state.Zone, state.InstanceName)
+	conn := vmcfg.GCPConnection{
+		ProjectID:    state.GCPProjectID,
+		Zone:         state.Zone,
+		InstanceName: state.InstanceName,
+	}
+	status, err := vmcfg.GCPInstanceStatus(state.GCPProjectID, state.Zone, state.InstanceName)
 	if err != nil {
 		return fmt.Errorf("check instance: %w", err)
 	}
+	exists := status != ""
 
 	// The login archive is written into the synced .isotty/, so sync stops
 	// first; a VM about to be deleted has no use for it.
@@ -962,6 +993,24 @@ func (a *App) runDown(args []string) error {
 		return fmt.Errorf("terminate sync session: %w", err)
 	}
 	if exists {
+		// Logins and the audit log are read over SSH, so a stopped VM boots
+		// once more before it goes.
+		switch status {
+		case vmcfg.GCPStatusRunning:
+		case vmcfg.GCPStatusTerminated:
+			if err := a.runPhase("Starting VM %s to save its state", func() error {
+				return vmcfg.StartGCPInstance(conn, a.debug)
+			}, state.InstanceName); err != nil {
+				return fmt.Errorf("start instance: %w", err)
+			}
+			if err := a.runPhase("Waiting for SSH", func() error {
+				return vmcfg.WaitForGCPSSH(conn)
+			}); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("instance %s is %s; wait for it to settle before `isotty down`", state.InstanceName, status)
+		}
 		if err := a.saveAgentAuth(state); err != nil {
 			if !*force {
 				return fmt.Errorf("%w\nhint: `isotty down --force` removes the VM without saving; sync is stopped until the next `isotty up`", err)
@@ -978,11 +1027,7 @@ func (a *App) runDown(args []string) error {
 
 	if exists {
 		if err := a.runPhase("Deleting VM %s", func() error {
-			return vmcfg.DeleteGCPInstance(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, a.debug)
+			return vmcfg.DeleteGCPInstance(conn, a.debug)
 		}, state.InstanceName); err != nil {
 			return fmt.Errorf("delete instance: %w", err)
 		}
@@ -995,6 +1040,66 @@ func (a *App) runDown(args []string) error {
 	}
 
 	fmt.Fprintf(a.stdout, "IsoTTY environment removed.\n")
+	return nil
+}
+
+// runStop stops the VM for a while, overnight say, and keeps everything
+// else: the disk, the local state and the project config. The next `up`
+// starts it again without a bootstrap.
+func (a *App) runStop(args []string) error {
+	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("stop does not accept arguments")
+	}
+
+	projectPath, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+
+	state, err := LoadStateForProject(projectPath)
+	if err != nil {
+		return err
+	}
+
+	status, err := vmcfg.GCPInstanceStatus(state.GCPProjectID, state.Zone, state.InstanceName)
+	if err != nil {
+		return fmt.Errorf("check instance: %w", err)
+	}
+	if status == "" {
+		return fmt.Errorf("instance %s was not found; `isotty down` removes the local state", state.InstanceName)
+	}
+	if status != vmcfg.GCPStatusRunning {
+		return fmt.Errorf("instance %s is %s, not running", state.InstanceName, status)
+	}
+
+	// The last local edits reach the VM before it goes down, and the session
+	// does not spend the night reconnecting to a VM that is not there.
+	if err := a.runPhase("Flushing sync session", func() error {
+		return flushMutagenSession(state)
+	}); err != nil {
+		return fmt.Errorf("flush sync session: %w", err)
+	}
+	if err := a.runPhase("Stopping sync session", func() error {
+		return terminateMutagenSession(state)
+	}); err != nil {
+		return fmt.Errorf("terminate sync session: %w", err)
+	}
+	if err := a.runPhase("Stopping VM %s", func() error {
+		return vmcfg.StopGCPInstance(vmcfg.GCPConnection{
+			ProjectID:    state.GCPProjectID,
+			Zone:         state.Zone,
+			InstanceName: state.InstanceName,
+		}, a.debug)
+	}, state.InstanceName); err != nil {
+		return fmt.Errorf("stop instance: %w", err)
+	}
+
+	fmt.Fprintf(a.stdout, "IsoTTY environment stopped; `isotty up` starts it again.\n")
 	return nil
 }
 
@@ -1195,14 +1300,16 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		}
 		state.OpecoQRPort = opeco.ChooseQRPort(taken)
 	}
-	exists, err := vmcfg.GCPInstanceExists(cfg.GCPProjectID, cfg.Zone, state.InstanceName)
+	status, err := vmcfg.GCPInstanceStatus(cfg.GCPProjectID, cfg.Zone, state.InstanceName)
 	if err != nil {
 		return State{}, fmt.Errorf("check instance: %w", err)
 	}
+	exists := status != ""
 	if !hasState && exists {
 		return State{}, fmt.Errorf("instance %s already exists but no local IsoTTY state was found; use `isotty attach --target <id>` or remove the VM explicitly", state.InstanceName)
 	}
-	if !exists {
+	switch {
+	case !exists:
 		if err := a.runPhase("Creating VM %s", func() error {
 			return vmcfg.CreateGCPInstance(vmcfg.GCPInstanceSpec{
 				ProjectID:    cfg.GCPProjectID,
@@ -1217,8 +1324,20 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 			return State{}, err
 		}
 		created = true
-	} else {
+	case status == vmcfg.GCPStatusRunning:
 		a.phase("Reusing VM %s", state.InstanceName)
+	case status == vmcfg.GCPStatusTerminated:
+		if err := a.runPhase("Starting VM %s", func() error {
+			return vmcfg.StartGCPInstance(vmcfg.GCPConnection{
+				ProjectID:    cfg.GCPProjectID,
+				Zone:         cfg.Zone,
+				InstanceName: state.InstanceName,
+			}, a.debug)
+		}, state.InstanceName); err != nil {
+			return State{}, err
+		}
+	default:
+		return State{}, fmt.Errorf("instance %s is %s; wait for it to settle before `isotty up`", state.InstanceName, status)
 	}
 
 	if err := a.runPhase("Saving local state", func() error {
