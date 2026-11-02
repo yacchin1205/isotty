@@ -1,10 +1,13 @@
 package isotty
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/yazawa/isotty/internal/isotty/host"
+	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
@@ -75,6 +78,32 @@ func TestBuildAttachSSHArgsWithUser(t *testing.T) {
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "testuser@isotty-abc.us-central1-f.demo-project") {
 		t.Fatalf("args = %v, want user-qualified instance target", args)
+	}
+}
+
+func TestGatewayHandlerServesNothingWithNoHost(t *testing.T) {
+	record := func(runtimecfg.VMEventRecord) error { return nil }
+	fail := func(err error) { t.Fatal(err) }
+
+	_, services, err := (&App{}).gatewayHandler(true, "abc", nil, nil, nil, nil, nil, record, fail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(services) != 0 {
+		t.Fatalf("services = %v, want none so a second terminal can attach without the gateway", services)
+	}
+
+	mux, services, err := (&App{}).gatewayHandler(false, "abc", nil, nil, nil, nil, nil, record, fail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(services, ",") != "browser open" {
+		t.Fatalf("services = %v, want browser open", services)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/open", nil))
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("/open must be served when the gateway is wanted")
 	}
 }
 
