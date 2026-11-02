@@ -580,7 +580,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 		}
 	}
-	return a.attachWithConnection(conn, projectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, noHost, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -652,7 +652,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, noHost, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -677,7 +677,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, noHost bool, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -691,60 +691,15 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 	// record has no request to fail; it fails the attach once the session ends.
 	var deferredErrs []error
 	var deferredMu sync.Mutex
-	mux := http.NewServeMux()
-	var services []string
-	if epweaveCfg != nil {
-		handler, err := a.epweaveHandler(*epweaveCfg, projectHash, record)
-		if err != nil {
-			return err
-		}
-		mux.Handle("/epweave/", http.StripPrefix("/epweave", handler))
-		services = append(services, "ep_weave")
+	fail := func(err error) {
+		deferredMu.Lock()
+		deferredErrs = append(deferredErrs, err)
+		deferredMu.Unlock()
 	}
-	if githubCfg != nil {
-		handler, err := a.githubHandler(*githubCfg, projectHash, record)
-		if err != nil {
-			return err
-		}
-		mux.Handle("/github/", http.StripPrefix("/github", handler))
-		services = append(services, "GitHub")
+	mux, services, err := a.gatewayHandler(noHost, projectHash, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, record, fail)
+	if err != nil {
+		return err
 	}
-	if gitlabCfg != nil {
-		handler, err := a.gitlabHandler(*gitlabCfg, projectHash, record)
-		if err != nil {
-			return err
-		}
-		mux.Handle("/gitlab/", http.StripPrefix("/gitlab", handler))
-		services = append(services, "GitLab")
-	}
-	if googleCfg != nil {
-		handler, err := a.googleHandler(*googleCfg, projectHash, record)
-		if err != nil {
-			return err
-		}
-		mux.Handle("/google/", http.StripPrefix("/google", handler))
-		services = append(services, "Google")
-	}
-	if gasCfg != nil {
-		handler, err := a.gasHandler(*gasCfg, projectHash, record)
-		if err != nil {
-			return err
-		}
-		mux.Handle("/gas/", http.StripPrefix("/gas", handler))
-		services = append(services, "Apps Script")
-	}
-	mux.Handle("/open", browser.Handler(browser.OpenInBrowser, func(url string) {
-		event, err := runtimecfg.NewOpenVMEvent(projectHash, url)
-		if err == nil {
-			err = record(event)
-		}
-		if err != nil {
-			deferredMu.Lock()
-			deferredErrs = append(deferredErrs, fmt.Errorf("record open-url event for %s: %w", url, err))
-			deferredMu.Unlock()
-		}
-	}))
-	services = append(services, "browser open")
 	var reverse *reverseForward
 	if len(services) > 0 {
 		gw, err := gateway.Serve(mux)
@@ -807,6 +762,67 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 	deferredMu.Lock()
 	defer deferredMu.Unlock()
 	return errors.Join(append([]error{attachErr}, deferredErrs...)...)
+}
+
+// gatewayHandler mounts the host services the session may use. --no-host
+// mounts nothing, so no gateway starts and the VM gets no reverse forward,
+// which lets a second terminal attach beside the first.
+func (a *App) gatewayHandler(noHost bool, projectHash string, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
+	mux := http.NewServeMux()
+	var services []string
+	if epweaveCfg != nil {
+		handler, err := a.epweaveHandler(*epweaveCfg, projectHash, record)
+		if err != nil {
+			return nil, nil, err
+		}
+		mux.Handle("/epweave/", http.StripPrefix("/epweave", handler))
+		services = append(services, "ep_weave")
+	}
+	if githubCfg != nil {
+		handler, err := a.githubHandler(*githubCfg, projectHash, record)
+		if err != nil {
+			return nil, nil, err
+		}
+		mux.Handle("/github/", http.StripPrefix("/github", handler))
+		services = append(services, "GitHub")
+	}
+	if gitlabCfg != nil {
+		handler, err := a.gitlabHandler(*gitlabCfg, projectHash, record)
+		if err != nil {
+			return nil, nil, err
+		}
+		mux.Handle("/gitlab/", http.StripPrefix("/gitlab", handler))
+		services = append(services, "GitLab")
+	}
+	if googleCfg != nil {
+		handler, err := a.googleHandler(*googleCfg, projectHash, record)
+		if err != nil {
+			return nil, nil, err
+		}
+		mux.Handle("/google/", http.StripPrefix("/google", handler))
+		services = append(services, "Google")
+	}
+	if gasCfg != nil {
+		handler, err := a.gasHandler(*gasCfg, projectHash, record)
+		if err != nil {
+			return nil, nil, err
+		}
+		mux.Handle("/gas/", http.StripPrefix("/gas", handler))
+		services = append(services, "Apps Script")
+	}
+	if !noHost {
+		mux.Handle("/open", browser.Handler(browser.OpenInBrowser, func(url string) {
+			event, err := runtimecfg.NewOpenVMEvent(projectHash, url)
+			if err == nil {
+				err = record(event)
+			}
+			if err != nil {
+				fail(fmt.Errorf("record open-url event for %s: %w", url, err))
+			}
+		}))
+		services = append(services, "browser open")
+	}
+	return mux, services, nil
 }
 
 // epweaveHandler connects to ep_weave with the host credentials and serves
