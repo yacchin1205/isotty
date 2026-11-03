@@ -106,7 +106,7 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "Usage:")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe] [--user <name>] [--no-attach]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] id")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>] [--user <name>] [--no-host]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>] [--user <name>] [--no-host] [--no-tmux]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] down [--force]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] stop")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] audit logs [-f] [--archive <file>]")
@@ -242,7 +242,7 @@ func (a *App) runUp(args []string) error {
 	if *noAttach {
 		return nil
 	}
-	return a.attachToState(projectPath, state, *user, false)
+	return a.attachToState(projectPath, state, *user, false, false)
 }
 
 func (a *App) runAudit(args []string) error {
@@ -409,6 +409,7 @@ func (a *App) runAttach(args []string) error {
 	targetID := fs.String("target", "", "attach to a remote IsoTTY target id")
 	user := fs.String("user", "", "SSH username to use for attach")
 	noHost := fs.Bool("no-host", false, "attach without port forwards and without the host gateway")
+	noTmux := fs.Bool("no-tmux", false, "open a plain login shell instead of the tmux session")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -419,7 +420,7 @@ func (a *App) runAttach(args []string) error {
 		return err
 	}
 	if *targetID != "" {
-		return a.attachToTarget(*targetID, *user, *noHost)
+		return a.attachToTarget(*targetID, *user, *noHost, *noTmux)
 	}
 
 	projectPath, err := filepath.Abs(".")
@@ -438,7 +439,7 @@ func (a *App) runAttach(args []string) error {
 		return err
 	}
 
-	return a.attachToState(projectPath, state, *user, *noHost)
+	return a.attachToState(projectPath, state, *user, *noHost, *noTmux)
 }
 
 // requireRunningInstance refuses to attach to a VM that is stopped or in
@@ -457,7 +458,7 @@ func requireRunningInstance(projectID, zone, instanceName string) error {
 	return nil
 }
 
-func (a *App) attachToTarget(targetID, user string, noHost bool) error {
+func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 	target, err := vmcfg.ParseGCPID(targetID)
 	if err != nil {
 		return err
@@ -616,7 +617,11 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 		}
 	}
-	return a.attachWithConnection(conn, projectHash, workspacePath, noHost, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	shell, err := attachShellFor(homeDir, noHost, noTmux)
+	if err != nil {
+		return err
+	}
+	return a.attachWithConnection(conn, projectHash, workspacePath, shell, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -628,7 +633,15 @@ func fetchOptionalProjectFile(conn vmcfg.GCPConnection, pathInWorkspace string) 
 	return data, err
 }
 
-func (a *App) attachToState(projectPath string, state State, user string, noHost bool) error {
+func (a *App) attachToState(projectPath string, state State, user string, noHost, noTmux bool) error {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return err
+	}
+	shell, err := attachShellFor(homeDir, noHost, noTmux)
+	if err != nil {
+		return err
+	}
 	forwardCfg := host.ForwardConfig{Forwards: map[string]host.Forward{}}
 	var epweaveCfg *epweave.ProjectConfig
 	var githubCfg *github.ProjectConfig
@@ -639,12 +652,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	var childCfg *child.ProjectConfig
 	var agents []string
 	if !noHost {
-		var err error
 		forwardCfg, err = host.LoadForwardConfig(projectPath)
-		if err != nil {
-			return err
-		}
-		homeDir, err := isottyHome()
 		if err != nil {
 			return err
 		}
@@ -698,7 +706,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, noHost, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -723,7 +731,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, noHost bool, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -742,7 +750,7 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		deferredErrs = append(deferredErrs, err)
 		deferredMu.Unlock()
 	}
-	mux, services, err := a.gatewayHandler(noHost, conn, projectHash, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg, record, fail)
+	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg, record, fail)
 	if err != nil {
 		return err
 	}
@@ -759,7 +767,7 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		}()
 		reverse = &reverseForward{VMPort: gateway.VMPort, HostPort: gw.Port()}
 	}
-	sshArgs := buildAttachSSHArgs(conn, workspacePath, forwardCfg, reverse)
+	sshArgs := buildAttachSSHArgs(conn, workspacePath, forwardCfg, reverse, shell)
 
 	var with []string
 	if len(names) > 0 {
@@ -1026,7 +1034,24 @@ func (a *App) gasHandler(cfg gas.ProjectConfig, projectHash string, record func(
 	}), nil
 }
 
-func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg host.ForwardConfig, reverse *reverseForward) []string {
+// attachShell says what the attach session runs in the VM. Secondary is
+// `--no-host`: a second terminal beside the one that holds the gateway.
+type attachShell struct {
+	Tmux      bool
+	Secondary bool
+}
+
+func attachShellFor(homeDir string, noHost, noTmux bool) (attachShell, error) {
+	cfg, err := LoadAttachConfig(homeDir)
+	if err != nil {
+		return attachShell{}, err
+	}
+	return attachShell{Tmux: cfg.UseTmux() && !noTmux, Secondary: noHost}, nil
+}
+
+const tmuxSession = "isotty"
+
+func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg host.ForwardConfig, reverse *reverseForward, shell attachShell) []string {
 	instanceTarget := fmt.Sprintf("%s.%s.%s", conn.InstanceName, conn.Zone, conn.ProjectID)
 	if conn.User != "" {
 		instanceTarget = conn.User + "@" + instanceTarget
@@ -1046,16 +1071,42 @@ func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardC
 		forward := forwardCfg.Forwards[name]
 		sshArgs = append(sshArgs, "-L", fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", forward.LocalPort, forward.RemotePort))
 	}
-	// The session's shell gets BROWSER only when the gateway behind
-	// `isotty-open` exists, so a click in Codex or `gh` opens on the host
-	// while attached and fails plainly otherwise.
-	shell := "exec ${SHELL:-/bin/bash} -l"
 	if reverse != nil {
 		sshArgs = append(sshArgs, "-R", fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", reverse.VMPort, reverse.HostPort))
-		shell = "BROWSER=" + browser.ClientPath + " " + shell
 	}
-	sshArgs = append(sshArgs, instanceTarget, fmt.Sprintf("cd %s && %s", workspacePath, shell))
+	sshArgs = append(sshArgs, instanceTarget, "cd "+workspacePath+" && "+attachShellCommand(workspacePath, reverse != nil, shell))
 	return sshArgs
+}
+
+// attachShellCommand is what the attach runs once in the workspace.
+//
+// The session's shell gets BROWSER only when the gateway behind
+// `isotty-open` exists, so a click in Codex or `gh` opens on the host while
+// attached and fails plainly otherwise. In tmux the variable goes into the
+// session environment as well, for the windows opened later; the shells
+// already running keep what they had.
+//
+// With tmux, the attach that holds the gateway owns the session named
+// `isotty`, created when missing. A secondary attach joins it as a grouped
+// session, which shares the windows but has its own current window, and
+// goes away when that terminal detaches.
+func attachShellCommand(workspacePath string, browserSet bool, shell attachShell) string {
+	env := ""
+	if browserSet {
+		env = "BROWSER=" + browser.ClientPath + " "
+	}
+	if !shell.Tmux {
+		return env + "exec ${SHELL:-/bin/bash} -l"
+	}
+	create := env + "exec tmux new-session -A -s " + tmuxSession + " -c " + workspacePath
+	if browserSet {
+		create += " ';' set-environment -t " + tmuxSession + " BROWSER " + browser.ClientPath
+	}
+	if !shell.Secondary {
+		return create
+	}
+	join := "exec tmux new-session -t " + tmuxSession + " -c " + workspacePath + " ';' set-option destroy-unattached on"
+	return "if tmux has-session -t " + tmuxSession + " 2>/dev/null; then " + join + "; else " + create + "; fi"
 }
 
 // deleteChildren removes the VM's child VMs and the firewall rules of any
@@ -1681,6 +1732,15 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 		}); err != nil {
 			return State{}, err
 		}
+	}
+	if err := a.runPhase("Preparing tmux", func() error {
+		return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+			ProjectID:    state.GCPProjectID,
+			Zone:         state.Zone,
+			InstanceName: state.InstanceName,
+		}, runtimecfg.TmuxSetupCommand(), a.debug)
+	}); err != nil {
+		return State{}, err
 	}
 	if err := a.runPhase("Installing browser opener", func() error {
 		return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{

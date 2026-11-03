@@ -30,7 +30,10 @@ Every accepted open is recorded in the VM event log as `open-url`, so
 skill for each configured agent. `isotty attach` serves `/open` on the
 gateway and starts the session shell with `BROWSER=/usr/local/bin/isotty-open`,
 so the variable exists exactly when the opener works; `attach --no-host`
-has no gateway, no opener and no `BROWSER`.
+has no gateway, no opener and no `BROWSER`. In tmux the attach that holds
+the gateway also sets `BROWSER` in the session environment, for the windows
+opened later; a shell that was already running keeps what it had, and a
+click there fails plainly while no gateway attach is alive.
 
 [opeco](OPECO.md) pairs its device through the same path: the QR page it
 serves in the VM is one more URL `isotty-open` opens on the host.
