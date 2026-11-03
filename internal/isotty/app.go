@@ -17,6 +17,7 @@ import (
 
 	"github.com/yazawa/isotty/internal/isotty/host"
 	"github.com/yazawa/isotty/internal/isotty/host/browser"
+	"github.com/yazawa/isotty/internal/isotty/host/dns"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
 	"github.com/yazawa/isotty/internal/isotty/host/forge"
 	"github.com/yazawa/isotty/internal/isotty/host/gas"
@@ -131,6 +132,9 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host gas remove --script <id>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host gas clear")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host gas show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host dns add --project <id> --name <record name>... [--managed-zone <name>]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host dns remove --name <record name>")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host dns show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt add <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt remove <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt list")
@@ -484,6 +488,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 	var gitlabCfg *gitlab.ProjectConfig
 	var googleCfg *google.ProjectConfig
 	var gasCfg *gas.ProjectConfig
+	var dnsCfg *dns.ProjectConfig
 	var agents []string
 	if !noHost {
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/forward.yaml"); err != nil {
@@ -559,6 +564,19 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 			gasCfg = &verified
 		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/dns.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			synced, err := dns.ParseProjectConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote dns config: %w", err)
+			}
+			verified, err := dns.VerifyPinned(homeDir, projectHash, synced)
+			if err != nil {
+				return err
+			}
+			dnsCfg = &verified
+		}
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/agent.yaml"); err != nil {
 			return err
 		} else if data != nil {
@@ -580,7 +598,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 		}
 	}
-	return a.attachWithConnection(conn, projectHash, workspacePath, noHost, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, noHost, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -599,6 +617,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	var gitlabCfg *gitlab.ProjectConfig
 	var googleCfg *google.ProjectConfig
 	var gasCfg *gas.ProjectConfig
+	var dnsCfg *dns.ProjectConfig
 	var agents []string
 	if !noHost {
 		var err error
@@ -630,6 +649,10 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 		if err != nil {
 			return err
 		}
+		dnsCfg, err = host.LoadDNSProjectConfig(projectPath, state.ProjectHash, homeDir)
+		if err != nil {
+			return err
+		}
 		agents, err = runtimecfg.ListAgents(projectPath)
 		if err != nil {
 			return err
@@ -652,7 +675,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, noHost, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, noHost, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -677,7 +700,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, noHost bool, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, noHost bool, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -696,7 +719,7 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		deferredErrs = append(deferredErrs, err)
 		deferredMu.Unlock()
 	}
-	mux, services, err := a.gatewayHandler(noHost, projectHash, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, record, fail)
+	mux, services, err := a.gatewayHandler(noHost, projectHash, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, record, fail)
 	if err != nil {
 		return err
 	}
@@ -767,7 +790,7 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 // gatewayHandler mounts the host services the session may use. --no-host
 // mounts nothing, so no gateway starts and the VM gets no reverse forward,
 // which lets a second terminal attach beside the first.
-func (a *App) gatewayHandler(noHost bool, projectHash string, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
+func (a *App) gatewayHandler(noHost bool, projectHash string, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
 	mux := http.NewServeMux()
 	var services []string
 	if epweaveCfg != nil {
@@ -810,6 +833,14 @@ func (a *App) gatewayHandler(noHost bool, projectHash string, epweaveCfg *epweav
 		mux.Handle("/gas/", http.StripPrefix("/gas", handler))
 		services = append(services, "Apps Script")
 	}
+	if dnsCfg != nil {
+		handler, err := a.dnsHandler(*dnsCfg, projectHash, record)
+		if err != nil {
+			return nil, nil, err
+		}
+		mux.Handle("/dns/", http.StripPrefix("/dns", handler))
+		services = append(services, "DNS")
+	}
 	if !noHost {
 		mux.Handle("/open", browser.Handler(browser.OpenInBrowser, func(url string) {
 			event, err := runtimecfg.NewOpenVMEvent(projectHash, url)
@@ -823,6 +854,23 @@ func (a *App) gatewayHandler(noHost bool, projectHash string, epweaveCfg *epweav
 		services = append(services, "browser open")
 	}
 	return mux, services, nil
+}
+
+// dnsHandler changes records with the host's gcloud login within the
+// pinned names, recording every change and refusal in the VM event log.
+func (a *App) dnsHandler(cfg dns.ProjectConfig, projectHash string, record func(runtimecfg.VMEventRecord) error) (http.Handler, error) {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return nil, err
+	}
+	relay := dns.NewRelay(cfg, dns.NewClient(), homeDir, projectHash)
+	return dns.Handler(relay, func(event dns.ChangeEvent) error {
+		vmEvent, err := runtimecfg.NewDNSVMEvent(projectHash, event.Operation, event.Zone, event.Name, event.Type, event.Before, event.After, event.Result)
+		if err != nil {
+			return err
+		}
+		return record(vmEvent)
+	}), nil
 }
 
 // epweaveHandler connects to ep_weave with the host credentials and serves
@@ -969,6 +1017,31 @@ func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardC
 	return sshArgs
 }
 
+// warnDNSRecords names the records the VM created that still exist; the
+// human decides whether they go, so `down` only says they are there.
+func (a *App) warnDNSRecords(projectHash string) error {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return err
+	}
+	tracked, err := dns.LoadTracked(homeDir, projectHash)
+	if err != nil || len(tracked) == 0 {
+		return err
+	}
+	remaining, err := dns.Remaining(dns.NewClient(), tracked)
+	if err != nil {
+		return err
+	}
+	if len(remaining) == 0 {
+		return nil
+	}
+	fmt.Fprintln(a.stderr, "warning: DNS records this project created still exist; `isotty host dns show` lists them:")
+	for _, record := range remaining {
+		fmt.Fprintf(a.stderr, "  %s %s %s\n", record.Type, record.Name, strings.Join(record.Rrdatas, " "))
+	}
+	return nil
+}
+
 func (a *App) runDown(args []string) error {
 	fs := flag.NewFlagSet("down", flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
@@ -1047,6 +1120,10 @@ func (a *App) runDown(args []string) error {
 		}, state.InstanceName); err != nil {
 			return fmt.Errorf("delete instance: %w", err)
 		}
+	}
+
+	if err := a.warnDNSRecords(state.ProjectHash); err != nil {
+		fmt.Fprintf(a.stderr, "warning: could not check the DNS records this project created: %v\n", err)
 	}
 
 	if err := a.runPhase("Removing local state", func() error {
@@ -1489,6 +1566,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
 			}, gas.SetupCommand(cfg.Runtime.Agents), a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	}
+	if cfg.DNS != nil {
+		if err := a.runPhase("Installing DNS client", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, dns.SetupCommand(cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}

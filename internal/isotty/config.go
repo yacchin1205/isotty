@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/yazawa/isotty/internal/isotty/host"
+	"github.com/yazawa/isotty/internal/isotty/host/dns"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
 	"github.com/yazawa/isotty/internal/isotty/host/gas"
 	"github.com/yazawa/isotty/internal/isotty/host/github"
@@ -37,6 +38,8 @@ type Config struct {
 	Google *google.ProjectConfig
 	// GAS is nil when the project has not enabled the Apps Script relay.
 	GAS *gas.ProjectConfig
+	// DNS is nil when the project has no pinned DNS name.
+	DNS *dns.ProjectConfig
 }
 
 func LoadConfig(projectPath string) (Config, error) {
@@ -87,6 +90,10 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	dnsConfig, err := host.LoadDNSProjectConfig(projectPath, projectHash, homeDir)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		ProjectPath:  projectPath,
@@ -101,6 +108,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		GitLab:       gitlabConfig,
 		Google:       googleConfig,
 		GAS:          gasConfig,
+		DNS:          dnsConfig,
 	}, nil
 }
 
