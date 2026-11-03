@@ -373,6 +373,13 @@ func TestClientScript(t *testing.T) {
 	if out, code := run("list"); code != 0 || !strings.Contains(out, "web\tRUNNING") {
 		t.Fatalf("list = %q, %d", out, code)
 	}
+	// A child without ports comes back with Expose null from a List that
+	// made none; the client shows it as "-".
+	cloud.children = append(cloud.children, vmcfg.ChildInstance{Name: "bare", Instance: "isotty-abc123-bare", Status: "RUNNING", MachineType: "e2-standard-8", InternalIP: "10.128.0.10"})
+	if out, code := run("list"); code != 0 || !strings.Contains(out, "bare\tRUNNING\te2-standard-8\t10.128.0.10\t-\t-") {
+		t.Fatalf("list with a bare child = %q, %d", out, code)
+	}
+	cloud.children = cloud.children[:len(cloud.children)-1]
 	if out, code := run("stop", "web"); code != 0 || !strings.Contains(out, "web\tTERMINATED\te2-standard-8\t10.128.0.9\t-\t80,443") {
 		t.Fatalf("stop = %q, %d", out, code)
 	}

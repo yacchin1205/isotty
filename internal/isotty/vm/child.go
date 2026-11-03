@@ -109,8 +109,10 @@ func exposeLabel(ports []int) string {
 	return strings.Join(parts, "-")
 }
 
+// parseExposeLabel never returns nil: the list goes to the VM as JSON,
+// where a child without ports must be [] and not null.
 func parseExposeLabel(label string) []int {
-	var ports []int
+	ports := []int{}
 	for _, part := range strings.Split(label, "-") {
 		if port, err := strconv.Atoi(part); err == nil {
 			ports = append(ports, port)
@@ -166,6 +168,9 @@ func describeChild(parent GCPConnection, instance, name, machineType string, exp
 	fields := strings.Split(strings.TrimRight(output, "\n"), "\t")
 	if len(fields) != 3 {
 		return ChildInstance{}, fmt.Errorf("unexpected describe output for %s: %q", instance, output)
+	}
+	if expose == nil {
+		expose = []int{}
 	}
 	return ChildInstance{Name: name, Instance: instance, Status: fields[0], MachineType: machineType, InternalIP: fields[1], ExternalIP: fields[2], Expose: expose}, nil
 }

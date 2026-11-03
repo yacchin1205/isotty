@@ -154,7 +154,7 @@ func TestListAndDeleteChildren(t *testing.T) {
 	if err != nil || len(children) != 2 {
 		t.Fatalf("ListChildInstances() = %v, %v", children, err)
 	}
-	if children[0].Name != "web" || len(children[0].Expose) != 2 || children[0].Expose[1] != 443 || len(children[1].Expose) != 0 {
+	if children[0].Name != "web" || len(children[0].Expose) != 2 || children[0].Expose[1] != 443 || children[1].Expose == nil || len(children[1].Expose) != 0 {
 		t.Fatalf("children = %+v", children)
 	}
 	if !strings.Contains(f.captures[0], "--filter=labels.isotty_parent=isotty-abc123") {

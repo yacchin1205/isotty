@@ -59,7 +59,7 @@ def load_info(name):
 
 def print_children(children):
     for child in children:
-        ports = ','.join(str(p) for p in child['Expose']) or '-'
+        ports = ','.join(str(p) for p in child.get('Expose') or []) or '-'
         print(f"{child['Name']}\t{child['Status']}\t{child['MachineType']}\t{child['InternalIP']}\t{child['ExternalIP'] or '-'}\t{ports}")
 
 
