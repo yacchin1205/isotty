@@ -234,9 +234,9 @@ func NewDNSVMEvent(projectHash, operation, zone, name, recordType, before, after
 	return record, nil
 }
 
-// NewChildVMEvent records a child VM the relay created or deleted for the
-// VM, with its shape (machine type, disk, image), the ports it opens and
-// its external IP, or the request it refused.
+// NewChildVMEvent records a child VM the relay created, started, stopped or
+// deleted for the VM, with its shape (machine type, disk, image), the ports
+// it opens and its external IP, or the request it refused.
 func NewChildVMEvent(projectHash, operation, name, instance, shape, expose, externalIP, result string) (VMEventRecord, error) {
 	record, err := newVMEvent(projectHash, "child-"+operation)
 	if err != nil {

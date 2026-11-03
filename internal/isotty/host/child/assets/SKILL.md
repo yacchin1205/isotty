@@ -14,6 +14,8 @@ isotty-child status
 isotty-child list
 isotty-child create <name> --machine-type <type> [--boot-disk-size 100GB] [--expose 80] [--expose 443] [--image-family f --image-project p]
 isotty-child ssh <name> [-- <command>]
+isotty-child stop <name>
+isotty-child start <name>
 isotty-child delete <name>
 ```
 
@@ -40,6 +42,9 @@ isotty-child delete web
   ~/.ssh/isotty-child/<name>` or through `isotty-child ssh <name> -- ...`.
 - It goes when this VM stops or goes down, and with it everything on it.
   Keep results you need under `/workspace` here.
+- `stop` keeps the disk and the key, and `start` brings it back with a new
+  external IP: set its DNS records again. A child shut down from inside
+  stays down until `isotty-child start`; this VM cannot start it otherwise.
 
 ## What you may create
 
@@ -47,8 +52,8 @@ isotty-child delete web
   that `isotty-child status` lists. Anything else is refused by the gateway
   before any credential is used; if the task needs it, ask the human to
   change the pin with `isotty host children enable`.
-- The host records every create and delete, with the machine type, image,
-  open ports and external IP. What runs on the child is not recorded; say
+- The host records every create, start, stop and delete, with the machine
+  type, image, open ports and external IP. What runs on the child is not recorded; say
   in your report what you set up there.
 - Delete a child when you are done with it; it costs money while it runs.
 - Do not edit `/workspace/.isotty/children.yaml`. It is synced to the host,
@@ -56,6 +61,6 @@ isotty-child delete web
 
 ## Lifecycle: creation goes through the attached host
 
-`create`, `list` and `delete` work only while the host is attached; `ssh`
-works whenever the child runs. When the human detaches, the gateway
+`create`, `list`, `start`, `stop` and `delete` work only while the host is
+attached; `ssh` works whenever the child runs. When the human detaches, the gateway
 commands fail within seconds with an explicit error. Nothing is queued.

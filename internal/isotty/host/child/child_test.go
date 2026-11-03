@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -29,6 +30,7 @@ type fakeCloud struct {
 	children []vmcfg.ChildInstance
 	specs    []vmcfg.ChildSpec
 	deleted  []string
+	powered  []string
 	fail     error
 }
 
@@ -55,6 +57,27 @@ func (f *fakeCloud) Delete(parent vmcfg.GCPConnection, instance string, debug bo
 		}
 	}
 	f.children = kept
+	return nil
+}
+
+func (f *fakeCloud) Start(parent vmcfg.GCPConnection, instance string, debug bool) error {
+	return f.power(instance, "start", "RUNNING", "203.0.113.10")
+}
+
+func (f *fakeCloud) Stop(parent vmcfg.GCPConnection, instance string, debug bool) error {
+	return f.power(instance, "stop", "TERMINATED", "")
+}
+
+func (f *fakeCloud) power(instance, operation, status, externalIP string) error {
+	f.powered = append(f.powered, operation+" "+instance)
+	if f.fail != nil {
+		return f.fail
+	}
+	for i := range f.children {
+		if f.children[i].Instance == instance {
+			f.children[i].Status, f.children[i].ExternalIP = status, externalIP
+		}
+	}
 	return nil
 }
 
@@ -249,6 +272,39 @@ func TestRelayRefusesOutsideTheAgreement(t *testing.T) {
 	}
 }
 
+func TestRelayStartsAndStopsAChild(t *testing.T) {
+	cloud := &fakeCloud{}
+	gateway, events := newTestGateway(t, cloud)
+	if code, _ := doJSON(t, "POST", gateway.URL+"/create", map[string]any{"name": "web", "user": "agent", "machine_type": "e2-standard-8"}); code != http.StatusOK {
+		t.Fatalf("create = %d", code)
+	}
+	code, payload := doJSON(t, "POST", gateway.URL+"/stop", map[string]string{"name": "web"})
+	child := payload["child"].(map[string]any)
+	if code != http.StatusOK || child["Status"] != "TERMINATED" || child["ExternalIP"] != "" {
+		t.Fatalf("stop = %d, %v", code, payload)
+	}
+	code, payload = doJSON(t, "POST", gateway.URL+"/start", map[string]string{"name": "web"})
+	child = payload["child"].(map[string]any)
+	if code != http.StatusOK || child["Status"] != "RUNNING" || child["ExternalIP"] != "203.0.113.10" {
+		t.Fatalf("start = %d, %v", code, payload)
+	}
+	if strings.Join(cloud.powered, ",") != "stop isotty-abc123-web,start isotty-abc123-web" {
+		t.Fatalf("powered = %v", cloud.powered)
+	}
+	if code, payload := doJSON(t, "POST", gateway.URL+"/start", map[string]string{"name": "other"}); code != http.StatusNotFound {
+		t.Fatalf("start unknown = %d, %v", code, payload)
+	}
+	want := []Event{
+		{Operation: "create", Name: "web", Instance: "isotty-abc123-web", Shape: "e2-standard-8 50GB ubuntu-os-cloud/ubuntu-2404-lts-amd64", Expose: "none", ExternalIP: "203.0.113.9", Result: "RUNNING"},
+		{Operation: "stop", Name: "web", Instance: "isotty-abc123-web", Result: "TERMINATED"},
+		{Operation: "start", Name: "web", Instance: "isotty-abc123-web", ExternalIP: "203.0.113.10", Result: "RUNNING"},
+		{Operation: "start", Name: "other", Result: "other: no such child VM"},
+	}
+	if !reflect.DeepEqual(*events, want) {
+		t.Fatalf("events = %#v\nwant %#v", *events, want)
+	}
+}
+
 func TestRelayReportsACreateFailure(t *testing.T) {
 	cloud := &fakeCloud{fail: errors.New("gcloud: quota exceeded")}
 	gateway, events := newTestGateway(t, cloud)
@@ -316,6 +372,22 @@ func TestClientScript(t *testing.T) {
 	}
 	if out, code := run("list"); code != 0 || !strings.Contains(out, "web\tRUNNING") {
 		t.Fatalf("list = %q, %d", out, code)
+	}
+	// A child without ports comes back with Expose null from a List that
+	// made none; the client shows it as "-".
+	cloud.children = append(cloud.children, vmcfg.ChildInstance{Name: "bare", Instance: "isotty-abc123-bare", Status: "RUNNING", MachineType: "e2-standard-8", InternalIP: "10.128.0.10"})
+	if out, code := run("list"); code != 0 || !strings.Contains(out, "bare\tRUNNING\te2-standard-8\t10.128.0.10\t-\t-") {
+		t.Fatalf("list with a bare child = %q, %d", out, code)
+	}
+	cloud.children = cloud.children[:len(cloud.children)-1]
+	if out, code := run("stop", "web"); code != 0 || !strings.Contains(out, "web\tTERMINATED\te2-standard-8\t10.128.0.9\t-\t80,443") {
+		t.Fatalf("stop = %q, %d", out, code)
+	}
+	if out, code := run("start", "web"); code != 0 || !strings.Contains(out, "web\tRUNNING\te2-standard-8\t10.128.0.9\t203.0.113.10\t80,443") {
+		t.Fatalf("start = %q, %d", out, code)
+	}
+	if info := mustRead(t, filepath.Join(home, ".ssh", "isotty-child", "web.json")); !strings.Contains(string(info), `"external_ip": "203.0.113.10"`) {
+		t.Fatalf("info after start = %s", info)
 	}
 	if out, code := run("delete", "web"); code != 0 || !strings.Contains(out, "deleted isotty-abc123-web") {
 		t.Fatalf("delete = %q, %d", out, code)

@@ -109,8 +109,10 @@ func exposeLabel(ports []int) string {
 	return strings.Join(parts, "-")
 }
 
+// parseExposeLabel never returns nil: the list goes to the VM as JSON,
+// where a child without ports must be [] and not null.
 func parseExposeLabel(label string) []int {
-	var ports []int
+	ports := []int{}
 	for _, part := range strings.Split(label, "-") {
 		if port, err := strconv.Atoi(part); err == nil {
 			ports = append(ports, port)
@@ -167,6 +169,9 @@ func describeChild(parent GCPConnection, instance, name, machineType string, exp
 	if len(fields) != 3 {
 		return ChildInstance{}, fmt.Errorf("unexpected describe output for %s: %q", instance, output)
 	}
+	if expose == nil {
+		expose = []int{}
+	}
 	return ChildInstance{Name: name, Instance: instance, Status: fields[0], MachineType: machineType, InternalIP: fields[1], ExternalIP: fields[2], Expose: expose}, nil
 }
 
@@ -197,6 +202,26 @@ func ListChildInstances(parent GCPConnection) ([]ChildInstance, error) {
 		})
 	}
 	return children, nil
+}
+
+// StartChildInstance starts a stopped child; its external IP is a new one.
+func StartChildInstance(parent GCPConnection, instance string, debug bool) error {
+	return powerChild(parent, instance, "start", debug)
+}
+
+// StopChildInstance stops a child without deleting it; the disk, the rules
+// and the key stay, and `isotty stop` or `down` still delete it.
+func StopChildInstance(parent GCPConnection, instance string, debug bool) error {
+	return powerChild(parent, instance, "stop", debug)
+}
+
+func powerChild(parent GCPConnection, instance, operation string, debug bool) error {
+	return runGcloud(debug,
+		"compute", "instances", operation, instance,
+		"--quiet",
+		"--project", parent.ProjectID,
+		"--zone", parent.Zone,
+	)
 }
 
 // DeleteChildInstance removes the instance and then its firewall rules;

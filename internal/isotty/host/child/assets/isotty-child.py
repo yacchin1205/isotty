@@ -59,7 +59,7 @@ def load_info(name):
 
 def print_children(children):
     for child in children:
-        ports = ','.join(str(p) for p in child['Expose']) or '-'
+        ports = ','.join(str(p) for p in child.get('Expose') or []) or '-'
         print(f"{child['Name']}\t{child['Status']}\t{child['MachineType']}\t{child['InternalIP']}\t{child['ExternalIP'] or '-'}\t{ports}")
 
 
@@ -109,6 +109,18 @@ def cmd_ssh(args):
     os.execvp('ssh', command)
 
 
+def cmd_power(args):
+    answer = call('POST', '/' + args.command_name, {'name': args.name})
+    child = answer['child']
+    if os.path.exists(info_path(args.name)):
+        info = load_info(args.name)
+        info.update({'internal_ip': child['InternalIP'], 'external_ip': child['ExternalIP']})
+        with open(info_path(args.name), 'w', encoding='utf-8') as f:
+            json.dump(info, f)
+    print(f"# {child['Instance']} {child['Status']}", file=sys.stderr)
+    print_children([child])
+
+
 def cmd_delete(args):
     answer = call('POST', '/delete', {'name': args.name})
     for path in (key_path(args.name), info_path(args.name)):
@@ -140,6 +152,12 @@ def main():
     p.add_argument('name')
     p.add_argument('command', nargs=argparse.REMAINDER)
     p.set_defaults(func=cmd_ssh)
+    p = sub.add_parser('stop', help='stop a child VM; it keeps its disk and key, and start brings it back')
+    p.add_argument('name')
+    p.set_defaults(func=cmd_power)
+    p = sub.add_parser('start', help='start a stopped child VM; it gets a new external IP, so set its DNS records again')
+    p.add_argument('name')
+    p.set_defaults(func=cmd_power)
     p = sub.add_parser('delete', help='delete a child VM and its key')
     p.add_argument('name')
     p.set_defaults(func=cmd_delete)
