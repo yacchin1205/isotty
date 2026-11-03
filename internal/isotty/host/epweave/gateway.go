@@ -114,6 +114,9 @@ func Handler(notes *Notes, onWrite func(WriteEvent) error) http.Handler {
 		finishWrite(w, onWrite, WriteEvent{Operation: "append", Title: req.Title, PadID: result.PadID}, result)
 	})
 
+	// ep_ai_mcp's tools, with the VM's writes made as the project's author.
+	mux.Handle("/mcp", &mcpRelay{notes: notes, onWrite: onWrite})
+
 	mux.HandleFunc("GET /changes", func(w http.ResponseWriter, r *http.Request) {
 		title := r.URL.Query().Get("title")
 		if title == "" {

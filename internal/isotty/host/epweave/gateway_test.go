@@ -2,6 +2,7 @@ package epweave
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,27 @@ type fakeEtherpad struct {
 	// issued counts the tokens handed out; only the latest is accepted, so
 	// raising it stands for the token's hour running out.
 	issued int
+	// mcpCalls are the tools/call messages ep_ai_mcp received, as sent.
+	mcpCalls []toolCall
+}
+
+// authorized answers 401 for anything but the latest token, as Etherpad's
+// API and ep_weave's endpoints do.
+func (f *fakeEtherpad) authorized(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("Authorization") != fmt.Sprintf("Bearer tok%d", f.issued) {
+		http.Error(w, `{"code":4,"message":"no or wrong OAuth token","data":null}`, http.StatusUnauthorized)
+		return false
+	}
+	return true
+}
+
+// lineHTML renders lines the way getHTML does for plain text.
+func lineHTML(lines []string) string {
+	var out strings.Builder
+	for _, line := range lines {
+		out.WriteString(line + "<br>")
+	}
+	return out.String()
 }
 
 func (f *fakeEtherpad) expireToken() {
@@ -84,9 +106,15 @@ func (f *fakeEtherpad) handler(t *testing.T) http.Handler {
 		f.mu.Unlock()
 		fmt.Fprintf(w, `{"access_token":%q}`, token)
 	})
-	mux.HandleFunc("GET /search/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /ep_weave/api/search", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if !f.authorized(w, r) {
+			return
+		}
+		if _, err := strconv.Atoi(r.URL.Query().Get("rows")); err != nil {
+			t.Errorf("search rows = %q", r.URL.Query().Get("rows"))
+		}
 		query := r.URL.Query().Get("query")
 		var docs []map[string]string
 		for id, pad := range f.pads {
@@ -101,11 +129,69 @@ func (f *fakeEtherpad) handler(t *testing.T) http.Handler {
 		}
 		json.NewEncoder(w).Encode(map[string]any{"docs": docs})
 	})
+	// /mcp mimics ep_ai_mcp: JSON-RPC in, one SSE message out.
+	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if !f.authorized(w, r) {
+			return
+		}
+		if r.Header.Get("Authorization") == "" || r.Method != http.MethodPost {
+			http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+			return
+		}
+		var msg rpcMessage
+		if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+			t.Errorf("mcp body: %v", err)
+			return
+		}
+		respond := func(result any) {
+			answer, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": result})
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Mcp-Session-Id", "session-1")
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", answer)
+		}
+		text := func(s string, isError bool) map[string]any {
+			return map[string]any{"content": []map[string]string{{"type": "text", "text": s}}, "isError": isError}
+		}
+		switch msg.Method {
+		case "initialize":
+			respond(map[string]any{"protocolVersion": "2025-06-18", "serverInfo": map[string]string{"name": "etherpad"}})
+		case "tools/call":
+			var call toolCall
+			if err := json.Unmarshal(msg.Params, &call); err != nil {
+				t.Errorf("mcp params: %v", err)
+				return
+			}
+			f.mcpCalls = append(f.mcpCalls, call)
+			padID, _ := call.Arguments["padId"].(string)
+			body, _ := call.Arguments["text"].(string)
+			pad, exists := f.pads[padID]
+			switch call.Name {
+			case "edit_pad":
+				if !exists {
+					respond(text("Edit failed: no such pad", true))
+					return
+				}
+				lines := append(htmlLines(pad.html), strings.TrimPrefix(body, "\n"))
+				pad.set("<!DOCTYPE HTML><html><body>" + lineHTML(lines) + "</body></html>")
+				respond(text("Edit applied", false))
+			case "create_pad":
+				f.pads[padID] = &fakePad{html: "<!DOCTYPE HTML><html><body>" + lineHTML(strings.Split(strings.TrimSuffix(body, "\n"), "\n")) + "</body></html>"}
+				respond(text(`{"padId": "`+padID+`", "created": true}`, false))
+			case "get_pad_text":
+				respond(text(plainText(pad.html), false))
+			default:
+				t.Errorf("unexpected tool %s", call.Name)
+			}
+		default:
+			t.Errorf("unexpected method %s", msg.Method)
+		}
+	})
 	mux.HandleFunc("POST /api/1.3.1/{method}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		if r.Header.Get("Authorization") != fmt.Sprintf("Bearer tok%d", f.issued) {
-			http.Error(w, `{"code":4,"message":"no or wrong OAuth token","data":null}`, http.StatusUnauthorized)
+		if !f.authorized(w, r) {
 			return
 		}
 		ok := func(data any) {
@@ -153,6 +239,15 @@ func (f *fakeEtherpad) handler(t *testing.T) http.Handler {
 				fail("padID does not exist")
 				return
 			}
+			if raw := r.FormValue("rev"); raw != "" {
+				rev, err := strconv.Atoi(raw)
+				if err != nil || rev < 0 || rev >= len(pad.history) {
+					fail("rev is higher than the head revision of the pad")
+					return
+				}
+				ok(map[string]string{"text": plainText(pad.history[rev])})
+				return
+			}
 			ok(map[string]string{"text": plainText(pad.html)})
 		case "getRevisionsCount":
 			if !exists {
@@ -171,6 +266,10 @@ func (f *fakeEtherpad) handler(t *testing.T) http.Handler {
 	return mux
 }
 
+// failRecording makes the test gateway's audit recorder fail, as a full
+// disk in the VM would.
+var failRecording bool
+
 func newTestGateway(t *testing.T) (*httptest.Server, *fakeEtherpad, []WriteEvent, *[]WriteEvent) {
 	t.Helper()
 	lookupRetryDelay = time.Millisecond
@@ -188,6 +287,9 @@ func newTestGateway(t *testing.T) (*httptest.Server, *fakeEtherpad, []WriteEvent
 	}
 	var events []WriteEvent
 	gateway := httptest.NewServer(Handler(notes, func(event WriteEvent) error {
+		if failRecording {
+			return errors.New("no space left on device")
+		}
 		events = append(events, event)
 		return nil
 	}))

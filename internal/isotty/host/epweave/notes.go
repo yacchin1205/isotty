@@ -27,9 +27,11 @@ func (e PrefixError) Error() string {
 // Notes is the operation set the gateway exposes to the VM: read anything,
 // write only under the project prefix, never delete or replace wholesale.
 type Notes struct {
-	client   *Client
-	authorID string
-	prefix   string
+	client       *Client
+	authorID     string
+	authorMapper string
+	authorName   string
+	prefix       string
 }
 
 type ReadResult struct {
@@ -66,7 +68,13 @@ func Connect(host HostConfig, project ProjectConfig, authorMapper, authorName st
 	if err != nil {
 		return nil, err
 	}
-	return &Notes{client: client, authorID: authorID, prefix: project.TitlePrefix()}, nil
+	return &Notes{
+		client:       client,
+		authorID:     authorID,
+		authorMapper: authorMapper,
+		authorName:   authorName,
+		prefix:       project.TitlePrefix(),
+	}, nil
 }
 
 func (n *Notes) URL() string {

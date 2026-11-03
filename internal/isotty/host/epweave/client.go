@@ -25,7 +25,8 @@ const lookupAttempts = 10
 
 var searchEscapePattern = regexp.MustCompile(`([\s/():"\\])`)
 
-// Client speaks the Etherpad HTTP API plus ep_weave's search endpoint.
+// Client speaks the Etherpad HTTP API plus ep_weave's own endpoints, which
+// take the same token.
 type Client struct {
 	URL  string
 	cfg  HostConfig
@@ -98,17 +99,11 @@ func (c *Client) fetchToken() (string, error) {
 	return payload.AccessToken, nil
 }
 
-// api calls an Etherpad API method. The token expires after an hour while
-// an attach lasts as long as the human stays, so a 401 is answered with a
-// new token and one more try.
+// api calls an Etherpad API method.
 func (c *Client) api(method string, params url.Values) (json.RawMessage, error) {
-	resp, body, err := c.post(method, params)
-	if err == nil && resp.StatusCode == http.StatusUnauthorized {
-		if err := c.renewToken(); err != nil {
-			return nil, fmt.Errorf("%s: renew ep_weave token: %w", method, err)
-		}
-		resp, body, err = c.post(method, params)
-	}
+	resp, body, err := c.retryUnauthorized(func() (*http.Response, []byte, error) {
+		return c.post(method, params)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", method, err)
 	}
@@ -147,13 +142,14 @@ func (c *Client) Search(query string, rows int) ([]SearchDoc, error) {
 		"start": {"0"},
 		"rows":  {strconv.Itoa(rows)},
 	}
-	req, err := http.NewRequest(http.MethodGet, c.URL+"/search/?"+q.Encode(), nil)
-	if err != nil {
-		return nil, err
-	}
-	body, err := c.do(req)
+	resp, body, err := c.retryUnauthorized(func() (*http.Response, []byte, error) {
+		return c.get("/ep_weave/api/search?" + q.Encode())
+	})
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("search: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	var payload struct {
 		Docs []SearchDoc `json:"docs"`
@@ -172,6 +168,29 @@ func (c *Client) post(method string, params url.Values) (*http.Response, []byte,
 	req.Header.Set("Authorization", "Bearer "+c.currentToken())
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return c.send(req)
+}
+
+func (c *Client) get(path string) (*http.Response, []byte, error) {
+	req, err := http.NewRequest(http.MethodGet, c.URL+path, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.currentToken())
+	return c.send(req)
+}
+
+// retryUnauthorized sends a request with the current token. The token
+// expires after an hour while an attach lasts as long as the human stays,
+// so a 401 is answered with a new token and one more try.
+func (c *Client) retryUnauthorized(send func() (*http.Response, []byte, error)) (*http.Response, []byte, error) {
+	resp, body, err := send()
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		if err := c.renewToken(); err != nil {
+			return nil, nil, fmt.Errorf("renew ep_weave token: %w", err)
+		}
+		resp, body, err = send()
+	}
+	return resp, body, err
 }
 
 // do sends the request and returns the body of a 200 response; any other
@@ -241,11 +260,16 @@ func (c *Client) RevisionsCount(padID string) (int, error) {
 	return data.Revisions, nil
 }
 
+// Text returns the pad's text as Etherpad renders it for reading, lists included.
 func (c *Client) Text(padID string) (string, error) {
+	return c.text(url.Values{"padID": {padID}})
+}
+
+func (c *Client) text(params url.Values) (string, error) {
 	var data struct {
 		Text string `json:"text"`
 	}
-	if err := c.apiInto("getText", url.Values{"padID": {padID}}, &data); err != nil {
+	if err := c.apiInto("getText", params, &data); err != nil {
 		return "", err
 	}
 	return data.Text, nil

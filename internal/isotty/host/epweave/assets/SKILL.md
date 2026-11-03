@@ -18,6 +18,28 @@ isotty-notes append '__ISOTTY_EPWEAVE_PREFIX__<topic>' < more.md
 isotty-notes changes '<title>' --since <rev> [--html]
 ```
 
+## MCP tools: the `epweave` server
+
+The same gateway relays ep_weave's MCP server (ep_ai_mcp) as the `epweave`
+MCP server of this agent. Its tools take a pad id, which `isotty-notes
+search` and the stderr line of `read` give you; a title alone is not enough.
+
+- Writing: `create_pad` (text; the first line is the title, the last line
+  the hashtags) and `edit_pad` with `action: append` (text starting with a
+  newline). They write plain text: a `# heading` stays literal. `edit_pad`
+  changes only the lines you add, so once a human has touched a pad, add to
+  it with `edit_pad`; `isotty-notes append` rewrites the whole pad as you.
+  Every write goes as this project's author; the gateway sets that,
+  whatever `authorName` you pass, and refuses pads outside
+  `__ISOTTY_EPWEAVE_PREFIX__` before ep_weave sees them.
+- Reading: `get_pad_text`, `get_pad_authorship` (who wrote each paragraph),
+  `get_pad_diff`, `get_pad_contributors`, `get_pad_activity`. Prefer
+  `isotty-notes search` over `search_pads`, which scans pads one by one and
+  knows nothing about titles.
+- `edit_pad` with `replace` or `insert` changes existing text, including a
+  human's lines when the pad is under your prefix. Append unless the human
+  asked for a correction.
+
 ## Input and output formats
 
 - You write Markdown, a small subset on purpose: `#`/`##`/`###` headings,
@@ -82,7 +104,7 @@ with a link is enough.
 
 ## Pads that humans edit
 
-Never recreate a pad once a human has touched it; `append` only. To pick up
-human annotations, remember the revision you last saw and run
-`changes --since <rev>`; it returns the added lines and the author of each
-change.
+Never recreate a pad once a human has touched it, and add to it with the
+MCP `edit_pad`, not `append`. To pick up human annotations, remember the
+revision you last saw and run `changes --since <rev>`; it returns the added
+lines and the author of each change.

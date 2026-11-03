@@ -162,6 +162,7 @@ Stored in:
 ep_weave notes:
 
 The agent in the VM can read and write pads in the [ep_weave](https://github.com/NII-cloud-operation/ep_weave) running on the host, through a gateway that `isotty attach` provides.
+Run ep_weave from the `isotty` branch of [yacchin1205/ep_weave](https://github.com/yacchin1205/ep_weave/tree/isotty), which bundles the API endpoints and the MCP plugin the gateway uses.
 The VM never sees ep_weave itself or its credentials, and can write only under the project's title prefix.
 
 ```bash
@@ -181,6 +182,8 @@ Inside the VM:
 isotty-notes status
 isotty-notes create 'myproject/design' --tags '#myproject' < memo.md
 ```
+
+The agent also gets ep_weave's MCP tools as the `epweave` MCP server, with every write made as the project's author and kept under the prefix.
 
 See [ep_weave design](docs/EPWEAVE.md).
 
