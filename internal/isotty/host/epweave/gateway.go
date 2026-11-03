@@ -25,11 +25,6 @@ type createRequest struct {
 	Tags     string `json:"tags"`
 }
 
-type appendRequest struct {
-	Title    string `json:"title"`
-	Markdown string `json:"markdown"`
-}
-
 // Handler serves the Notes operations; the host gateway mounts it under
 // /epweave for the VM.
 func Handler(notes *Notes, onWrite func(WriteEvent) error) http.Handler {
@@ -97,22 +92,8 @@ func Handler(notes *Notes, onWrite func(WriteEvent) error) http.Handler {
 		finishWrite(w, onWrite, WriteEvent{Operation: "create", Title: req.Title, PadID: result.PadID}, result)
 	})
 
-	mux.HandleFunc("POST /append", func(w http.ResponseWriter, r *http.Request) {
-		var req appendRequest
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		if req.Title == "" {
-			gateway.WriteError(w, http.StatusBadRequest, "title is required")
-			return
-		}
-		result, err := notes.Append(req.Title, req.Markdown)
-		if err != nil {
-			writeNotesError(w, err)
-			return
-		}
-		finishWrite(w, onWrite, WriteEvent{Operation: "append", Title: req.Title, PadID: result.PadID}, result)
-	})
+	// ep_ai_mcp's tools, with the VM's writes made as the project's author.
+	mux.Handle("/mcp", &mcpRelay{notes: notes, onWrite: onWrite})
 
 	mux.HandleFunc("GET /changes", func(w http.ResponseWriter, r *http.Request) {
 		title := r.URL.Query().Get("title")

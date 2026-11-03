@@ -80,10 +80,9 @@ change means running `isotty host epweave enable` on the host again.
 
 | operation | prefix check | Etherpad calls |
 |---|---|---|
-| search(query) | no | `/search/` |
+| search(query) | no | `/ep_weave/api/search` |
 | read(title) | no | getRevisionsCount, getText / getHTML |
 | create(title, markdown, tags) | yes | createPad, setHTML |
-| append(title, markdown) | yes | getHTML, setHTML |
 | changes(title, since) | no | getText at both revisions, createDiffHTML, getAuthorName |
 
 Writes are allowed only for titles under `<prefix>/`. Reads and search cover
@@ -97,9 +96,53 @@ landed. `changes` returns the lines added between two revisions and the
 authors involved; the full diff HTML is available on request only, because
 it runs to tens of kilobytes.
 
-`append` inserts above the trailing hashtag line so tags stay last. Markdown
-support is a small subset on purpose: `#`/`##`/`###` headings, `-` bullets,
-paragraphs.
+Markdown support is a small subset on purpose: `#`/`##`/`###` headings,
+`-` bullets, paragraphs. Adding to an existing pad is the MCP relay's
+`edit_pad` below, which leaves the other lines to their authors; `setHTML`
+would attribute the whole pad to the agent.
+
+## MCP relay
+
+ep_weave can run [ep_ai_mcp](https://github.com/ether/ep_ai_mcp), which
+exposes pad text, authorship and editing as MCP tools at `/mcp`. The gateway
+relays it at `/epweave/mcp`, and `isotty up` registers that URL as the
+`epweave` MCP server of each configured agent (Claude in `~/.claude.json`,
+Codex in `~/.codex/config.toml`).
+
+The relay adds the host token and passes everything through except the
+three tools that change a pad: `edit_pad`, `create_pad` and
+`send_chat_message`. For those it
+
+* sets `authorMapper` and `authorName` to the project's author, whatever
+  the VM sent, so the writes carry the same author as the `isotty-notes`
+  operations;
+* finds the pad's title (the first line of its text; for `create_pad` the
+  first line of the new text) and refuses, as a tool error the agent sees,
+  a title outside the prefix before ep_weave sees the call;
+* gives a new pad a UUID id like the ones ep_weave creates;
+* records the write in the VM event log as `epweave-<tool>`.
+
+`edit_pad` uses `makeSplice`, so a human's lines keep their author. It
+writes plain text only; the Markdown subset stays with `isotty-notes`.
+
+`list_pads` and `search_pads` are left out of the tool list and refused
+when called: they list every pad by id and know nothing about titles or
+the prefix, which `isotty-notes search 'title:<prefix>*'` does. The relay
+adds one tool of its own, `wait_for_edits`: it watches a pad's head
+revision until an edit has been followed by `settleSeconds` of quiet (180
+by default) or `maxWaitSeconds` pass (1800 by default, 3300 at most), and
+returns the lines added since `sinceRev` with their authors, as `changes`
+does. The Codex registration raises that server's tool timeout to an hour
+for it; Claude Code's default is longer.
+
+The ep_weave to run is the `isotty` branch of
+https://github.com/yacchin1205/ep_weave. Its image bundles ep_ai_core and
+ep_ai_mcp, the latter from the fork
+https://github.com/yacchin1205/ep_ai_mcp (branch `isotty`): the upstream
+1.0.2 does not hand Etherpad's already parsed request body to the MCP
+transport, so `/mcp` never answers, and it makes a new author on every
+call; the fork fixes the first and adds `authorMapper` for the second. The
+branch also authenticates `/ep_weave/api/search` like the Etherpad API.
 
 ## Attribution
 
@@ -109,7 +152,7 @@ agent wrote what by colour and in the timeslider.
 
 ## Audit
 
-Every create and append is recorded in the VM event log
+Every write is recorded in the VM event log
 (`/var/log/isotty/events.jsonl`) with the title and pad id, so
 `isotty audit logs` shows what the VM wrote. Recording happens over a
 separate SSH command per write; if it fails, the client is told that the note
@@ -120,7 +163,9 @@ was written but the audit record was not.
 `isotty up` installs, on every run:
 
 * `/usr/local/bin/isotty-notes`, a Python client with `status`, `search`,
-  `read`, `create`, `append` and `changes`
+  `read`, `create` and `changes`
+* the gateway's `/epweave/mcp` as the `epweave` MCP server of each agent in
+  `agent.yaml`, through `/usr/local/share/isotty/mcp-merge.py`
 * `/etc/ssh/sshd_config.d/00-isotty.conf` with `ClientAliveInterval 15` and
   `ClientAliveCountMax 3`; the `00-` prefix matters because sshd keeps the
   first value it reads and the cloud image's `50-cloudimg-settings.conf`
@@ -138,7 +183,7 @@ detaches, or their machine sleeps, ep_weave itself is unreachable as well,
 so there is nothing to buffer against.
 
 Writes are therefore never queued. A queue would let the agent believe a
-note was written when it was not, reorder appends against human edits, and
+note was written when it was not, reorder writes against human edits, and
 lose the queue with `isotty down`. Instead a failed write fails within
 seconds with a message that says why and what to do:
 

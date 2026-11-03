@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/yazawa/isotty/internal/isotty/host/browser"
+	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 )
 
 // minimumVersion is the oldest opeco-link release whose CLI offers what
@@ -22,9 +23,6 @@ const minimumVersion = "2026.10.2"
 
 //go:embed assets/opeco-setup.sh
 var setupScript string
-
-//go:embed assets/opeco-merge.py
-var mergeScript string
 
 // Active reports whether the VM gets opeco: always, once there is an agent
 // to use it.
@@ -50,7 +48,7 @@ func SetupCommand(agents []string, qrPort int) string {
 		"__OPEN_CLIENT__", browser.ClientPath,
 		"__INSTALL_CLAUDE__", flag("claude"),
 		"__INSTALL_CODEX__", flag("codex"),
-		"__MERGE_SCRIPT_B64__", base64.StdEncoding.EncodeToString([]byte(mergeScript)),
+		"__MERGE_SCRIPT_B64__", base64.StdEncoding.EncodeToString([]byte(gateway.MergeScript())),
 	).Replace(setupScript)
 	return fmt.Sprintf("printf %%s %s | base64 -d | bash", base64.StdEncoding.EncodeToString([]byte(script)))
 }

@@ -68,11 +68,6 @@ def cmd_create(args):
     report_write(call('POST', '/create', body=body))
 
 
-def cmd_append(args):
-    body = {'title': args.title, 'markdown': sys.stdin.read()}
-    report_write(call('POST', '/append', body=body))
-
-
 def cmd_changes(args):
     params = {'title': args.title, 'since': args.since, 'format': 'html' if args.html else 'text'}
     result = call('GET', '/changes', params)
@@ -104,9 +99,6 @@ def main():
     p.add_argument('title')
     p.add_argument('--tags', help='hashtags for the last line, e.g. "#isotty #worklog"')
     p.set_defaults(func=cmd_create)
-    p = sub.add_parser('append', help='append markdown from stdin to an existing pad')
-    p.add_argument('title')
-    p.set_defaults(func=cmd_append)
     p = sub.add_parser('changes', help='show the lines added since a revision, with authors')
     p.add_argument('title')
     p.add_argument('--since', type=int, required=True)

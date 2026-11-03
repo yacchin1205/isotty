@@ -1,7 +1,6 @@
 package epweave
 
 import (
-	"errors"
 	"fmt"
 	"html"
 	"regexp"
@@ -12,7 +11,6 @@ var (
 	headingPattern = regexp.MustCompile(`^(#{1,3}) (.*)$`)
 	bulletPattern  = regexp.MustCompile(`^[-*] `)
 	// A trailing line made only of hashtags, as ep_weave renders it in getHTML output.
-	hashtagLinePattern = regexp.MustCompile(`(?:#(?:[^\s<&]|&#\d+;|&[a-z]+;)+\s*)+<br>`)
 )
 
 // MarkdownToHTML converts a deliberately small subset: #/##/### headings,
@@ -76,17 +74,4 @@ func htmlLines(doc string) []string {
 		}
 	}
 	return lines
-}
-
-// insertionPoint keeps the hashtag line last: insert before it when the pad
-// has one, otherwise before </body>.
-func insertionPoint(currentHTML string) (int, error) {
-	if tags := hashtagLinePattern.FindAllStringIndex(currentHTML, -1); len(tags) > 0 {
-		return tags[len(tags)-1][0], nil
-	}
-	at := strings.Index(currentHTML, "</body>")
-	if at < 0 {
-		return 0, errors.New("unexpected getHTML output: no </body>")
-	}
-	return at, nil
 }

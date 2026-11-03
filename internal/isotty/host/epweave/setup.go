@@ -2,6 +2,7 @@ package epweave
 
 import (
 	_ "embed"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -18,11 +19,17 @@ var notesSkill string
 const (
 	ClientPath = "/usr/local/bin/isotty-notes"
 	SkillName  = "isotty-notes"
+	// MCPServerName is how the agents know the ep_ai_mcp relay.
+	MCPServerName = "epweave"
 )
 
+// MCPURL is where the VM reaches ep_ai_mcp through the gateway.
+var MCPURL = fmt.Sprintf("http://127.0.0.1:%d/epweave/mcp", gateway.VMPort)
+
 // SetupCommand installs the VM-side client, the sshd keepalive and, for
-// each configured agent, the skill describing the client. It runs on
-// every `isotty up`, so enabling ep_weave on an existing VM works too.
+// each configured agent, the skill describing the client and the ep_ai_mcp
+// relay as an MCP server. It runs on every `isotty up`, so enabling
+// ep_weave on an existing VM works too.
 func SetupCommand(cfg ProjectConfig, agents []string) string {
 	parts := []string{
 		"set -euo pipefail",
@@ -31,6 +38,7 @@ func SetupCommand(cfg ProjectConfig, agents []string) string {
 	}
 	parts = append(parts, gateway.KeepaliveCommands()...)
 	parts = append(parts, gateway.SkillCommands(runtimecfg.AgentSkillDirs(agents), SkillName, render(notesSkill, cfg))...)
+	parts = append(parts, gateway.MCPServerCommands(agents, MCPServerName, MCPURL)...)
 	return strings.Join(parts, " && ")
 }
 
