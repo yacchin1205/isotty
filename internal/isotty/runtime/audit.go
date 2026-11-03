@@ -82,6 +82,11 @@ type VMEventRecord struct {
 	Script         string `json:"script,omitempty"`
 	Function       string `json:"function,omitempty"`
 	Parameters     string `json:"parameters,omitempty"`
+	Zone           string `json:"zone,omitempty"`
+	Name           string `json:"name,omitempty"`
+	RecordType     string `json:"record_type,omitempty"`
+	Before         string `json:"before,omitempty"`
+	After          string `json:"after,omitempty"`
 }
 
 type RemoteTarget struct {
@@ -205,6 +210,22 @@ func NewGASVMEvent(projectHash, account, script, function, parameters, result st
 	record.Script = script
 	record.Function = function
 	record.Parameters = parameters
+	record.Result = result
+	return record, nil
+}
+
+// NewDNSVMEvent records a DNS record the relay changed for the VM, with the
+// record's values before and after, or the change it refused.
+func NewDNSVMEvent(projectHash, operation, zone, name, recordType, before, after, result string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, "dns-"+operation)
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.Zone = zone
+	record.Name = name
+	record.RecordType = recordType
+	record.Before = before
+	record.After = after
 	record.Result = result
 	return record, nil
 }

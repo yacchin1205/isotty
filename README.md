@@ -286,6 +286,32 @@ isotty-gas run <script-id> sendRequests '["<sheet-id>", "2026-10"]'
 
 See [Apps Script design](docs/GAS.md).
 
+DNS:
+
+The agent in the VM can create, change and delete DNS records under the names you pin, through a relay that `isotty attach` provides with your gcloud login.
+The VM never holds a credential, sees only the records under the pinned names, and every change is recorded with the record before and after.
+
+```bash
+isotty host dns add --project example-project --name lab.example.org
+isotty up
+```
+
+The project setting is stored in:
+
+```text
+./.isotty/dns.yaml
+```
+
+Inside the VM:
+
+```bash
+isotty-dns set A app.lab.example.org 203.0.113.10
+isotty-dns delete A app.lab.example.org
+```
+
+`isotty host dns show` lists the records the VM created that still exist, and `isotty down` warns about them.
+See [DNS design](docs/DNS.md).
+
 Browser:
 
 The agent can open a URL in your browser: `isotty-open <url>` in the VM shows it on the host while you are attached, and the attached session has `BROWSER` set to it, so a click in Codex or `gh` does the same. `http` and `https` only; every open is in the audit log.
@@ -410,6 +436,7 @@ IsoTTY stores local state under:
 * [GitLab design](docs/GITLAB.md)
 * [Google design](docs/GOOGLE.md)
 * [Apps Script design](docs/GAS.md)
+* [DNS design](docs/DNS.md)
 * [Browser design](docs/BROWSER.md)
 * [opeco design](docs/OPECO.md)
 * [Audit design](docs/AUDIT.md)
