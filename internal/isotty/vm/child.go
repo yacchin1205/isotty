@@ -199,6 +199,26 @@ func ListChildInstances(parent GCPConnection) ([]ChildInstance, error) {
 	return children, nil
 }
 
+// StartChildInstance starts a stopped child; its external IP is a new one.
+func StartChildInstance(parent GCPConnection, instance string, debug bool) error {
+	return powerChild(parent, instance, "start", debug)
+}
+
+// StopChildInstance stops a child without deleting it; the disk, the rules
+// and the key stay, and `isotty stop` or `down` still delete it.
+func StopChildInstance(parent GCPConnection, instance string, debug bool) error {
+	return powerChild(parent, instance, "stop", debug)
+}
+
+func powerChild(parent GCPConnection, instance, operation string, debug bool) error {
+	return runGcloud(debug,
+		"compute", "instances", operation, instance,
+		"--quiet",
+		"--project", parent.ProjectID,
+		"--zone", parent.Zone,
+	)
+}
+
 // DeleteChildInstance removes the instance and then its firewall rules;
 // the rules go last so a half-deleted child is never reachable.
 func DeleteChildInstance(parent GCPConnection, instance string, debug bool) error {

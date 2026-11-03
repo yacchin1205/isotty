@@ -106,7 +106,8 @@ and refuse to continue when they differ or when no pin exists.
 `isotty up` installs, on every run:
 
 * `/usr/local/bin/isotty-child`, a Python client with `status`, `list`,
-  `create`, `ssh` and `delete`; `create` keeps the key, `ssh` uses it
+  `create`, `ssh`, `stop`, `start` and `delete`; `create` keeps the key,
+  `ssh` uses it
 * the sshd keepalive the other gateway services rely on
 * the `isotty-child` skill for each agent in `agent.yaml`
 
@@ -121,16 +122,23 @@ is wanted again is created again. A parent stopped by other means keeps its
 children until the next `isotty stop` or `down`. The agent can delete one at
 any time with `isotty-child delete`.
 
+The agent can also stop and start a child through the relay. A stopped
+child keeps its disk, its firewall rules and its key, counts against the
+agreement's number of children, and is deleted with the others. Starting
+gives it a new ephemeral external IP, which the relay answers with so the
+agent can set its DNS records again. A child shut down from inside stays
+stopped until `isotty-child start`: the VM has no other way to start it.
+
 The relay itself lives as long as the attach session; `isotty-child ssh`
 works whenever the child runs.
 
 ## Audit
 
-Every create and delete is recorded in the VM event log
-(`/var/log/isotty/events.jsonl`) as `child-create` or `child-delete`, with
-the name, the instance, the shape (machine type, disk, image), the ports
-opened and the external IP, and the result; a refused request is recorded
-too. `stop` and `down` record the deletions they make while the parent can
+Every create, start, stop and delete is recorded in the VM event log
+(`/var/log/isotty/events.jsonl`) as `child-create`, `child-start`,
+`child-stop` or `child-delete`, with the name, the instance, the shape
+(machine type, disk, image), the ports opened and the external IP, and the
+result; a refused request is recorded too. `stop` and `down` record the deletions they make while the parent can
 still take the record, and `down` does so before it archives the log. A
 create whose record fails answers with an error and the key is not handed
 over; the child exists and `isotty-child delete` removes it. What runs on a

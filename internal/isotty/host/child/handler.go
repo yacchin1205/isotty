@@ -19,8 +19,9 @@ import (
 
 const maxRequestBody = 1 << 20
 
-// Event describes a child the relay created or deleted for the VM, or the
-// request it refused, so the caller can record it in the VM audit log.
+// Event describes a child the relay created, started, stopped or deleted
+// for the VM, or the request it refused, so the caller can record it in the
+// VM audit log.
 type Event struct {
 	Operation  string
 	Name       string
@@ -36,6 +37,8 @@ type Cloud interface {
 	Create(spec vmcfg.ChildSpec, debug bool) (vmcfg.ChildInstance, error)
 	List(parent vmcfg.GCPConnection) ([]vmcfg.ChildInstance, error)
 	Delete(parent vmcfg.GCPConnection, instance string, debug bool) error
+	Start(parent vmcfg.GCPConnection, instance string, debug bool) error
+	Stop(parent vmcfg.GCPConnection, instance string, debug bool) error
 }
 
 type gcpCloud struct{}
@@ -49,11 +52,18 @@ func (gcpCloud) List(parent vmcfg.GCPConnection) ([]vmcfg.ChildInstance, error) 
 func (gcpCloud) Delete(parent vmcfg.GCPConnection, instance string, debug bool) error {
 	return vmcfg.DeleteChildInstance(parent, instance, debug)
 }
+func (gcpCloud) Start(parent vmcfg.GCPConnection, instance string, debug bool) error {
+	return vmcfg.StartChildInstance(parent, instance, debug)
+}
+func (gcpCloud) Stop(parent vmcfg.GCPConnection, instance string, debug bool) error {
+	return vmcfg.StopChildInstance(parent, instance, debug)
+}
 
 // GCP is the Cloud backed by the host's gcloud.
 var GCP Cloud = gcpCloud{}
 
-// Relay creates and deletes children of one parent within the agreement.
+// Relay creates, starts, stops and deletes children of one parent within
+// the agreement.
 type Relay struct {
 	cfg         ProjectConfig
 	cloud       Cloud
@@ -110,13 +120,11 @@ func Handler(relay *Relay, onEvent func(Event) error) http.Handler {
 		gateway.WriteJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("POST /delete", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Name string `json:"name"`
-		}
-		if !decodeBody(w, r, &req) {
+		name, ok := decodeName(w, r)
+		if !ok {
 			return
 		}
-		event, err := relay.delete(req.Name)
+		event, err := relay.delete(name)
 		if recordErr := onEvent(event); recordErr != nil {
 			err = errors.Join(err, fmt.Errorf("recording the audit event failed: %w", recordErr))
 		}
@@ -126,6 +134,23 @@ func Handler(relay *Relay, onEvent func(Event) error) http.Handler {
 		}
 		gateway.WriteJSON(w, http.StatusOK, map[string]string{"instance": event.Instance})
 	})
+	for _, operation := range []string{"start", "stop"} {
+		mux.HandleFunc("POST /"+operation, func(w http.ResponseWriter, r *http.Request) {
+			name, ok := decodeName(w, r)
+			if !ok {
+				return
+			}
+			child, event, err := relay.power(operation, name)
+			if recordErr := onEvent(event); recordErr != nil {
+				err = errors.Join(err, fmt.Errorf("recording the audit event failed: %w", recordErr))
+			}
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			gateway.WriteJSON(w, http.StatusOK, map[string]any{"child": child})
+		})
+	}
 	return mux
 }
 
@@ -210,6 +235,49 @@ func (r *Relay) delete(name string) (Event, error) {
 	return event, fmt.Errorf("%s: %w", name, errNoChild)
 }
 
+// power starts or stops a child that exists and answers with the child as
+// it is afterwards: a start gives it a new external IP.
+func (r *Relay) power(operation, name string) (vmcfg.ChildInstance, Event, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	event := Event{Operation: operation, Name: name}
+	child, err := r.find(name)
+	if err != nil {
+		event.Result = err.Error()
+		return vmcfg.ChildInstance{}, event, err
+	}
+	event.Instance = child.Instance
+	if operation == "start" {
+		err = r.cloud.Start(r.parent, child.Instance, false)
+	} else {
+		err = r.cloud.Stop(r.parent, child.Instance, false)
+	}
+	if err != nil {
+		event.Result = err.Error()
+		return vmcfg.ChildInstance{}, event, err
+	}
+	if child, err = r.find(name); err != nil {
+		event.Result = err.Error()
+		return vmcfg.ChildInstance{}, event, err
+	}
+	event.ExternalIP = child.ExternalIP
+	event.Result = child.Status
+	return child, event, nil
+}
+
+func (r *Relay) find(name string) (vmcfg.ChildInstance, error) {
+	children, err := r.cloud.List(r.parent)
+	if err != nil {
+		return vmcfg.ChildInstance{}, err
+	}
+	for _, child := range children {
+		if child.Name == name {
+			return child, nil
+		}
+	}
+	return vmcfg.ChildInstance{}, fmt.Errorf("%s: %w", name, errNoChild)
+}
+
 // newKeyPair returns an authorized_keys line and the matching OpenSSH
 // private key.
 func newKeyPair(comment string) (string, string, error) {
@@ -226,6 +294,16 @@ func newKeyPair(comment string) (string, string, error) {
 		return "", "", err
 	}
 	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPublic))), string(pem.EncodeToMemory(block)), nil
+}
+
+func decodeName(w http.ResponseWriter, r *http.Request) (string, bool) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !decodeBody(w, r, &req) {
+		return "", false
+	}
+	return req.Name, true
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, out any) bool {
