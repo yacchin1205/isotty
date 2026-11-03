@@ -397,7 +397,7 @@ func TestListGCPInstances(t *testing.T) {
 	var gotArgs []string
 	captureGcloud = func(args ...string) (string, error) {
 		gotArgs = args
-		return "isotty-abc123\tus-central1-f\tRUNNING\nisotty-def456\tasia-northeast1-b\tTERMINATED\n", nil
+		return "isotty-abc123\tus-central1-f\tRUNNING\t\nisotty-def456\tasia-northeast1-b\tTERMINATED\t\nisotty-abc123-web\tus-central1-f\tRUNNING\tisotty-abc123\n", nil
 	}
 	t.Cleanup(func() { captureGcloud = originalCaptureGcloud })
 
@@ -408,6 +408,7 @@ func TestListGCPInstances(t *testing.T) {
 	want := []GCPInstance{
 		{Name: "isotty-abc123", Zone: "us-central1-f", Status: "RUNNING"},
 		{Name: "isotty-def456", Zone: "asia-northeast1-b", Status: "TERMINATED"},
+		{Name: "isotty-abc123-web", Zone: "us-central1-f", Status: "RUNNING", Parent: "isotty-abc123"},
 	}
 	if !reflect.DeepEqual(instances, want) {
 		t.Fatalf("instances = %#v, want %#v", instances, want)

@@ -76,7 +76,11 @@ func listRows(states []State, defaultProjectID string, instances func(projectID 
 		for _, instance := range list {
 			id := vmcfg.FormatGCPID(projectID, instance.Zone, instance.Name)
 			found[id] = instance.Status
-			rows = append(rows, listRow{ID: id, Status: instance.Status, Project: listProjectNoState})
+			project := listProjectNoState
+			if instance.Parent != "" {
+				project = "child of " + instance.Parent
+			}
+			rows = append(rows, listRow{ID: id, Status: instance.Status, Project: project})
 		}
 	}
 	for _, state := range states {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/yazawa/isotty/internal/isotty/host"
 	"github.com/yazawa/isotty/internal/isotty/host/browser"
+	"github.com/yazawa/isotty/internal/isotty/host/child"
 	"github.com/yazawa/isotty/internal/isotty/host/dns"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
 	"github.com/yazawa/isotty/internal/isotty/host/forge"
@@ -135,6 +136,9 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host dns add --project <id> --name <record name>... [--managed-zone <name>]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host dns remove --name <record name>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host dns show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host children enable [--machine-type <type>]... [--max <n>] [--boot-disk-size <size>] [--expose <port>]...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host children disable")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host children show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt add <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt remove <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt list")
@@ -489,6 +493,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 	var googleCfg *google.ProjectConfig
 	var gasCfg *gas.ProjectConfig
 	var dnsCfg *dns.ProjectConfig
+	var childCfg *child.ProjectConfig
 	var agents []string
 	if !noHost {
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/forward.yaml"); err != nil {
@@ -577,6 +582,19 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 			dnsCfg = &verified
 		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/children.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			synced, err := child.ParseProjectConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote children config: %w", err)
+			}
+			verified, err := child.VerifyPinned(homeDir, projectHash, synced)
+			if err != nil {
+				return err
+			}
+			childCfg = &verified
+		}
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/agent.yaml"); err != nil {
 			return err
 		} else if data != nil {
@@ -598,7 +616,7 @@ func (a *App) attachToTarget(targetID, user string, noHost bool) error {
 			}
 		}
 	}
-	return a.attachWithConnection(conn, projectHash, workspacePath, noHost, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, noHost, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -618,6 +636,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	var googleCfg *google.ProjectConfig
 	var gasCfg *gas.ProjectConfig
 	var dnsCfg *dns.ProjectConfig
+	var childCfg *child.ProjectConfig
 	var agents []string
 	if !noHost {
 		var err error
@@ -653,6 +672,10 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 		if err != nil {
 			return err
 		}
+		childCfg, err = host.LoadChildProjectConfig(projectPath, state.ProjectHash, homeDir)
+		if err != nil {
+			return err
+		}
 		agents, err = runtimecfg.ListAgents(projectPath)
 		if err != nil {
 			return err
@@ -675,7 +698,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, noHost, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, noHost, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -700,7 +723,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, noHost bool, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, noHost bool, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -719,7 +742,7 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		deferredErrs = append(deferredErrs, err)
 		deferredMu.Unlock()
 	}
-	mux, services, err := a.gatewayHandler(noHost, projectHash, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, record, fail)
+	mux, services, err := a.gatewayHandler(noHost, conn, projectHash, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg, record, fail)
 	if err != nil {
 		return err
 	}
@@ -790,7 +813,7 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 // gatewayHandler mounts the host services the session may use. --no-host
 // mounts nothing, so no gateway starts and the VM gets no reverse forward,
 // which lets a second terminal attach beside the first.
-func (a *App) gatewayHandler(noHost bool, projectHash string, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
+func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
 	mux := http.NewServeMux()
 	var services []string
 	if epweaveCfg != nil {
@@ -841,6 +864,10 @@ func (a *App) gatewayHandler(noHost bool, projectHash string, epweaveCfg *epweav
 		mux.Handle("/dns/", http.StripPrefix("/dns", handler))
 		services = append(services, "DNS")
 	}
+	if childCfg != nil {
+		mux.Handle("/child/", http.StripPrefix("/child", a.childHandler(*childCfg, conn, projectHash, record)))
+		services = append(services, "child VMs")
+	}
 	if !noHost {
 		mux.Handle("/open", browser.Handler(browser.OpenInBrowser, func(url string) {
 			event, err := runtimecfg.NewOpenVMEvent(projectHash, url)
@@ -854,6 +881,20 @@ func (a *App) gatewayHandler(noHost bool, projectHash string, epweaveCfg *epweav
 		services = append(services, "browser open")
 	}
 	return mux, services, nil
+}
+
+// childHandler creates and deletes child VMs of the attached VM with the
+// host's gcloud login, recording every one in the VM event log.
+func (a *App) childHandler(cfg child.ProjectConfig, conn vmcfg.GCPConnection, projectHash string, record func(runtimecfg.VMEventRecord) error) http.Handler {
+	defaults := child.Defaults{BootDiskSize: vmcfg.DefaultChildDiskSize, ImageFamily: vmcfg.DefaultChildImageFamily, ImageProject: vmcfg.DefaultChildImageProject}
+	relay := child.NewRelay(cfg, child.GCP, conn, projectHash, defaults)
+	return child.Handler(relay, func(event child.Event) error {
+		vmEvent, err := runtimecfg.NewChildVMEvent(projectHash, event.Operation, event.Name, event.Instance, event.Shape, event.Expose, event.ExternalIP, event.Result)
+		if err != nil {
+			return err
+		}
+		return record(vmEvent)
+	})
 }
 
 // dnsHandler changes records with the host's gcloud login within the
@@ -1017,6 +1058,42 @@ func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardC
 	return sshArgs
 }
 
+// deleteChildren removes the VM's child VMs and the firewall rules of any
+// child already gone; they live only as long as the VM runs, and nothing
+// about them is kept. With record, each deletion goes into the VM event log.
+func (a *App) deleteChildren(conn vmcfg.GCPConnection, record bool) error {
+	children, err := vmcfg.ListChildInstances(conn)
+	if err != nil {
+		return fmt.Errorf("list child VMs: %w", err)
+	}
+	for _, c := range children {
+		if err := a.runPhase("Deleting child VM %s", func() error {
+			return vmcfg.DeleteChildInstance(conn, c.Instance, a.debug)
+		}, c.Instance); err != nil {
+			return fmt.Errorf("delete child VM: %w", err)
+		}
+		if !record {
+			continue
+		}
+		event, err := runtimecfg.NewChildVMEvent(hashOf(conn), "delete", c.Name, c.Instance, c.MachineType, "", c.ExternalIP, "deleted")
+		if err != nil {
+			return err
+		}
+		if err := runtimecfg.RecordVMEvent(a.auditTarget(conn), event, a.debug); err != nil {
+			return fmt.Errorf("record child-delete event: %w", err)
+		}
+	}
+	if err := vmcfg.DeleteOrphanRules(conn, a.debug); err != nil {
+		return fmt.Errorf("delete child VM firewall rules: %w", err)
+	}
+	return nil
+}
+
+// hashOf is the project hash an instance name carries.
+func hashOf(conn vmcfg.GCPConnection) string {
+	return strings.TrimPrefix(conn.InstanceName, "isotty-")
+}
+
 // warnDNSRecords names the records the VM created that still exist; the
 // human decides whether they go, so `down` only says they are there.
 func (a *App) warnDNSRecords(projectHash string) error {
@@ -1106,6 +1183,10 @@ func (a *App) runDown(args []string) error {
 			}
 			fmt.Fprintf(a.stderr, "warning: agent logins were not saved: %v\n", err)
 		}
+		// Before the archive, so the deletions are in it.
+		if err := a.deleteChildren(conn, true); err != nil {
+			return err
+		}
 		if _, err := a.archiveAudit(state); err != nil {
 			if !*force {
 				return fmt.Errorf("%w\nhint: `isotty down --force` removes the VM without the archive; sync is stopped until the next `isotty up`", err)
@@ -1120,6 +1201,9 @@ func (a *App) runDown(args []string) error {
 		}, state.InstanceName); err != nil {
 			return fmt.Errorf("delete instance: %w", err)
 		}
+	} else if err := a.deleteChildren(conn, false); err != nil {
+		// A parent deleted by hand may still have children.
+		return err
 	}
 
 	if err := a.warnDNSRecords(state.ProjectHash); err != nil {
@@ -1166,6 +1250,16 @@ func (a *App) runStop(args []string) error {
 	if status == "" {
 		return fmt.Errorf("instance %s was not found; `isotty down` removes the local state", state.InstanceName)
 	}
+	conn := vmcfg.GCPConnection{
+		ProjectID:    state.GCPProjectID,
+		Zone:         state.Zone,
+		InstanceName: state.InstanceName,
+	}
+	// Children go even when the parent was stopped by other means; their
+	// deletion is recorded only while the parent can take the record.
+	if err := a.deleteChildren(conn, status == vmcfg.GCPStatusRunning); err != nil {
+		return err
+	}
 	if status != vmcfg.GCPStatusRunning {
 		return fmt.Errorf("instance %s is %s, not running", state.InstanceName, status)
 	}
@@ -1183,11 +1277,7 @@ func (a *App) runStop(args []string) error {
 		return fmt.Errorf("terminate sync session: %w", err)
 	}
 	if err := a.runPhase("Stopping VM %s", func() error {
-		return vmcfg.StopGCPInstance(vmcfg.GCPConnection{
-			ProjectID:    state.GCPProjectID,
-			Zone:         state.Zone,
-			InstanceName: state.InstanceName,
-		}, a.debug)
+		return vmcfg.StopGCPInstance(conn, a.debug)
 	}, state.InstanceName); err != nil {
 		return fmt.Errorf("stop instance: %w", err)
 	}
@@ -1577,6 +1667,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
 			}, dns.SetupCommand(cfg.Runtime.Agents), a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	}
+	if cfg.Children != nil {
+		if err := a.runPhase("Installing child VM client", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, child.SetupCommand(cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}

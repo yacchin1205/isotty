@@ -85,7 +85,7 @@ func TestGatewayHandlerServesNothingWithNoHost(t *testing.T) {
 	record := func(runtimecfg.VMEventRecord) error { return nil }
 	fail := func(err error) { t.Fatal(err) }
 
-	_, services, err := (&App{}).gatewayHandler(true, "abc", nil, nil, nil, nil, nil, nil, record, fail)
+	_, services, err := (&App{}).gatewayHandler(true, vmcfg.GCPConnection{}, "abc", nil, nil, nil, nil, nil, nil, nil, record, fail)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestGatewayHandlerServesNothingWithNoHost(t *testing.T) {
 		t.Fatalf("services = %v, want none so a second terminal can attach without the gateway", services)
 	}
 
-	mux, services, err := (&App{}).gatewayHandler(false, "abc", nil, nil, nil, nil, nil, nil, record, fail)
+	mux, services, err := (&App{}).gatewayHandler(false, vmcfg.GCPConnection{}, "abc", nil, nil, nil, nil, nil, nil, nil, record, fail)
 	if err != nil {
 		t.Fatal(err)
 	}

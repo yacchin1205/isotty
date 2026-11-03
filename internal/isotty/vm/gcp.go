@@ -17,10 +17,15 @@ import (
 )
 
 const (
-	defaultGCPMachineType     = "e2-standard-4"
-	defaultGCPDiskSize        = "50GB"
-	defaultGCPImageProject    = "ubuntu-os-cloud"
-	defaultGCPImageFamily     = "ubuntu-2404-lts-amd64"
+	defaultGCPMachineType  = "e2-standard-4"
+	defaultGCPDiskSize     = "50GB"
+	defaultGCPImageProject = "ubuntu-os-cloud"
+	defaultGCPImageFamily  = "ubuntu-2404-lts-amd64"
+	// A child VM starts from the same image and disk size as a VM with no
+	// vm.yaml does.
+	DefaultChildDiskSize      = defaultGCPDiskSize
+	DefaultChildImageProject  = defaultGCPImageProject
+	DefaultChildImageFamily   = defaultGCPImageFamily
 	defaultGCPWorkspacePath   = "/workspace"
 	gcpWorkspaceMetadataKey   = "isotty-workspace-path"
 	gcpProjectHashMetadataKey = "isotty-project-hash"
@@ -531,6 +536,8 @@ type GCPInstance struct {
 	Name   string
 	Zone   string
 	Status string
+	// Parent is the instance a child VM belongs to, empty for a project's own VM.
+	Parent string
 }
 
 // ListGCPInstances returns the VMs of a GCP project that `up` created, by the
@@ -540,21 +547,21 @@ func ListGCPInstances(projectID string) ([]GCPInstance, error) {
 		"compute", "instances", "list",
 		"--project", projectID,
 		"--filter=labels.app=isotty",
-		"--format=value(name,zone.basename(),status)",
+		"--format=value(name,zone.basename(),status,labels.isotty_parent)",
 	)
 	if err != nil {
 		return nil, err
 	}
 	var instances []GCPInstance
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+	for _, line := range strings.Split(strings.TrimRight(output, "\n"), "\n") {
 		if line == "" {
 			continue
 		}
 		fields := strings.Split(line, "\t")
-		if len(fields) != 3 {
+		if len(fields) != 4 {
 			return nil, fmt.Errorf("unexpected instance line from gcloud: %q", line)
 		}
-		instances = append(instances, GCPInstance{Name: fields[0], Zone: fields[1], Status: fields[2]})
+		instances = append(instances, GCPInstance{Name: fields[0], Zone: fields[1], Status: fields[2], Parent: fields[3]})
 	}
 	return instances, nil
 }
