@@ -83,7 +83,6 @@ change means running `isotty host epweave enable` on the host again.
 | search(query) | no | `/ep_weave/api/search` |
 | read(title) | no | getRevisionsCount, getText / getHTML |
 | create(title, markdown, tags) | yes | createPad, setHTML |
-| append(title, markdown) | yes | getHTML, setHTML |
 | changes(title, since) | no | getText at both revisions, createDiffHTML, getAuthorName |
 
 Writes are allowed only for titles under `<prefix>/`. Reads and search cover
@@ -97,9 +96,10 @@ landed. `changes` returns the lines added between two revisions and the
 authors involved; the full diff HTML is available on request only, because
 it runs to tens of kilobytes.
 
-`append` inserts above the trailing hashtag line so tags stay last. Markdown
-support is a small subset on purpose: `#`/`##`/`###` headings, `-` bullets,
-paragraphs.
+Markdown support is a small subset on purpose: `#`/`##`/`###` headings,
+`-` bullets, paragraphs. Adding to an existing pad is the MCP relay's
+`edit_pad` below, which leaves the other lines to their authors; `setHTML`
+would attribute the whole pad to the agent.
 
 ## MCP relay
 
@@ -152,7 +152,7 @@ agent wrote what by colour and in the timeslider.
 
 ## Audit
 
-Every create and append is recorded in the VM event log
+Every write is recorded in the VM event log
 (`/var/log/isotty/events.jsonl`) with the title and pad id, so
 `isotty audit logs` shows what the VM wrote. Recording happens over a
 separate SSH command per write; if it fails, the client is told that the note
@@ -163,7 +163,7 @@ was written but the audit record was not.
 `isotty up` installs, on every run:
 
 * `/usr/local/bin/isotty-notes`, a Python client with `status`, `search`,
-  `read`, `create`, `append` and `changes`
+  `read`, `create` and `changes`
 * the gateway's `/epweave/mcp` as the `epweave` MCP server of each agent in
   `agent.yaml`, through `/usr/local/share/isotty/mcp-merge.py`
 * `/etc/ssh/sshd_config.d/00-isotty.conf` with `ClientAliveInterval 15` and
@@ -183,7 +183,7 @@ detaches, or their machine sleeps, ep_weave itself is unreachable as well,
 so there is nothing to buffer against.
 
 Writes are therefore never queued. A queue would let the agent believe a
-note was written when it was not, reorder appends against human edits, and
+note was written when it was not, reorder writes against human edits, and
 lose the queue with `isotty down`. Instead a failed write fails within
 seconds with a message that says why and what to do:
 

@@ -339,7 +339,7 @@ func TestGatewayStatus(t *testing.T) {
 	}
 }
 
-func TestGatewayCreateAppendRead(t *testing.T) {
+func TestGatewayCreateRead(t *testing.T) {
 	gateway, etherpad, _, events := newTestGateway(t)
 
 	status, payload := doJSON(t, http.MethodPost, gateway.URL+"/create", map[string]string{
@@ -362,17 +362,8 @@ func TestGatewayCreateAppendRead(t *testing.T) {
 		t.Fatalf("duplicate create status = %d, payload = %v", status, payload)
 	}
 
-	// Simulate ep_weave rendering the hashtag line the way getHTML returns it.
-	etherpad.pads[padID].history[1] = "<!DOCTYPE HTML><html><body>isotty/design<br>Body<br>#isotty #決定<br></body></html>"
-	etherpad.pads[padID].html = etherpad.pads[padID].history[1]
-	status, payload = doJSON(t, http.MethodPost, gateway.URL+"/append", map[string]string{"title": "isotty/design", "markdown": "## Later\nmore"})
-	if status != http.StatusOK {
-		t.Fatalf("append status = %d, payload = %v", status, payload)
-	}
-	want = "<!DOCTYPE HTML><html><body>isotty/design<br>Body<br><h2>Later</h2><p>more</p>#isotty #決定<br></body></html>"
-	if got := etherpad.pads[padID].html; got != want {
-		t.Fatalf("appended html = %s, want %s", got, want)
-	}
+	// A human adds two lines in the editor.
+	etherpad.pads[padID].set("<!DOCTYPE HTML><html><body><h1>isotty/design</h1><h1>Why</h1><ul><li>one</li><li>two</li></ul><p>Body &lt;b&gt;</p><p>Later</p><p>more</p><p>#isotty #決定</p></body></html>")
 
 	status, payload = doJSON(t, http.MethodGet, gateway.URL+"/read?title=isotty%2Fdesign&format=html", nil)
 	if status != http.StatusOK || payload["pad_id"] != padID || payload["revisions"].(float64) != 2 {
@@ -395,7 +386,7 @@ func TestGatewayCreateAppendRead(t *testing.T) {
 		t.Fatalf("html changes status = %d, payload = %v", status, payload)
 	}
 
-	if len(*events) != 2 || (*events)[0].Operation != "create" || (*events)[1].Operation != "append" || (*events)[1].PadID != padID {
+	if len(*events) != 1 || (*events)[0].Operation != "create" || (*events)[0].PadID != padID {
 		t.Fatalf("write events = %#v", *events)
 	}
 }
@@ -406,9 +397,9 @@ func TestGatewayRenewsExpiredToken(t *testing.T) {
 		t.Fatalf("create = %d %v", status, body)
 	}
 	etherpad.expireToken()
-	status, body := doJSON(t, "POST", gateway.URL+"/append", map[string]string{"title": "isotty/a", "markdown": "y"})
+	status, body := doJSON(t, "POST", gateway.URL+"/create", map[string]string{"title": "isotty/b", "markdown": "y"})
 	if status != 200 {
-		t.Fatalf("append after expiry = %d %v", status, body)
+		t.Fatalf("create after expiry = %d %v", status, body)
 	}
 	if len(*events) != 2 {
 		t.Fatalf("events = %+v", *events)
@@ -427,10 +418,6 @@ func TestGatewayRejectsWritesOutsidePrefix(t *testing.T) {
 		status, payload := doJSON(t, http.MethodPost, gateway.URL+"/create", map[string]string{"title": title})
 		if status != http.StatusForbidden {
 			t.Fatalf("create %q status = %d, payload = %v", title, status, payload)
-		}
-		status, payload = doJSON(t, http.MethodPost, gateway.URL+"/append", map[string]string{"title": title})
-		if status != http.StatusForbidden {
-			t.Fatalf("append %q status = %d, payload = %v", title, status, payload)
 		}
 	}
 	if len(etherpad.pads) != 0 || len(*events) != 0 {

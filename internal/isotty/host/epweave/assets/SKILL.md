@@ -14,7 +14,6 @@ isotty-notes status
 isotty-notes search 'hash:"#worklog"'
 isotty-notes read '<title>' [--html]
 isotty-notes create '__ISOTTY_EPWEAVE_PREFIX__<topic>' --tags '#isotty #decision' < memo.md
-isotty-notes append '__ISOTTY_EPWEAVE_PREFIX__<topic>' < more.md
 isotty-notes changes '<title>' --since <rev> [--html]
 ```
 
@@ -25,13 +24,13 @@ MCP server of this agent. Its tools take a pad id, which `isotty-notes
 search` and the stderr line of `read` give you; a title alone is not enough.
 
 - Writing: `create_pad` (text; the first line is the title, the last line
-  the hashtags) and `edit_pad` with `action: append` (text starting with a
-  newline). They write plain text: a `# heading` stays literal. `edit_pad`
-  changes only the lines you add, so once a human has touched a pad, add to
-  it with `edit_pad`; `isotty-notes append` rewrites the whole pad as you.
-  Every write goes as this project's author; the gateway sets that,
-  whatever `authorName` you pass, and refuses pads outside
-  `__ISOTTY_EPWEAVE_PREFIX__` before ep_weave sees them.
+  the hashtags) and `edit_pad`, the only way to add to an existing pad. Both
+  write plain text: a `# heading` stays literal. `edit_pad` changes only the
+  lines you add, so the other lines keep their authors. To keep the hashtag
+  line last, `replace` it with your text followed by the hashtag line again;
+  `append` would put your text after it. Every write goes as this project's
+  author; the gateway sets that, whatever `authorName` you pass, and refuses
+  pads outside `__ISOTTY_EPWEAVE_PREFIX__` before ep_weave sees them.
 - Reading: `get_pad_text`, `get_pad_authorship` (who wrote each paragraph),
   `get_pad_diff`, `get_pad_contributors`, `get_pad_activity`. The pads you
   may write are `isotty-notes search 'title:__ISOTTY_EPWEAVE_PREFIX__*'`;
@@ -53,7 +52,7 @@ search` and the stderr line of `read` give you; a title alone is not enough.
 - `read` returns Etherpad's text form, not Markdown: headings and list items
   come back prefixed with `*` or a tab and `*`. Use `--html` when structure
   matters.
-- `read`, `create` and `append` print one line to stderr first, for example
+- `read` and `create` print one line to stderr first, for example
   `# pad 0088e464-... rev 6`. The number after `rev` is the revision to pass
   to `changes --since` later. The pad URL on stdout is for humans on the
   host; this VM cannot open it.
@@ -73,15 +72,14 @@ error. Writes are never queued, so a failed write did not happen.
 - If a write fails, keep the note as a Markdown file under `/workspace` and
   retry after the host re-attaches. Say so in your report.
 - `isotty-notes status` is a cheap way to check before composing.
-- The file you redirect into `append` must exist; a shell redirection error
+- The file you redirect into `create` must exist; a shell redirection error
   happens before `isotty-notes` runs and leaves the pad untouched.
 
 ## What you may write
 
-- Only titles under `__ISOTTY_EPWEAVE_PREFIX__` can be created or appended.
+- Only titles under `__ISOTTY_EPWEAVE_PREFIX__` can be created or edited.
   Every pad can be read and searched.
-- There is no delete and no whole-pad rewrite. `append` adds to the end,
-  above the hashtag line.
+- There is no delete and no whole-pad rewrite.
 - Do not edit `/workspace/.isotty/`. It is synced to the host, and the host
   refuses to attach when `epweave.yaml` differs from what the human pinned.
 
@@ -109,7 +107,7 @@ with a link is enough.
 
 ## Pads that humans edit
 
-Never recreate a pad once a human has touched it, and add to it with the
-MCP `edit_pad`, not `append`. To pick up human annotations, remember the
-revision you last saw and run `changes --since <rev>`; it returns the added
-lines and the author of each change.
+Never recreate a pad once a human has touched it; add to it with
+`edit_pad`. To pick up human annotations, remember the revision you last saw
+and run `changes --since <rev>`; it returns the added lines and the author
+of each change.

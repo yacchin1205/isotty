@@ -82,22 +82,6 @@ func TestMarkdownToHTML(t *testing.T) {
 	}
 }
 
-func TestInsertionPoint(t *testing.T) {
-	withTags := "<html><body>t<br>body<br>#a #b<br></body></html>"
-	at, err := insertionPoint(withTags)
-	if err != nil || withTags[at:] != "#a #b<br></body></html>" {
-		t.Fatalf("insertionPoint() = %d, %v", at, err)
-	}
-	withoutTags := "<html><body>t<br>body<br></body></html>"
-	at, err = insertionPoint(withoutTags)
-	if err != nil || withoutTags[at:] != "</body></html>" {
-		t.Fatalf("insertionPoint() = %d, %v", at, err)
-	}
-	if _, err := insertionPoint("<p>no body</p>"); err == nil {
-		t.Fatal("insertionPoint() should fail without </body>")
-	}
-}
-
 func TestSetupCommand(t *testing.T) {
 	command := SetupCommand(ProjectConfig{Prefix: "demo"}, []string{"claude", "codex"})
 	for _, want := range []string{"set -euo pipefail", "sudo tee " + ClientPath, "sudo chmod 755 " + ClientPath, "sshd_config.d/00-isotty.conf", "systemctl reload ssh", ".claude/skills/" + SkillName + "/SKILL.md", ".codex/skills/" + SkillName + "/SKILL.md"} {

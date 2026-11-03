@@ -11,7 +11,7 @@ import (
 
 var (
 	ErrPadNotFound = errors.New("no pad with that title")
-	ErrPadExists   = errors.New("a pad with that title already exists; use append")
+	ErrPadExists   = errors.New("a pad with that title already exists; add to it with edit_pad")
 )
 
 // PrefixError reports a write outside the project's title prefix.
@@ -143,29 +143,6 @@ func (n *Notes) writeResult(padID string) (WriteResult, error) {
 		return WriteResult{}, err
 	}
 	return WriteResult{PadID: padID, URL: n.padURL(padID), Revisions: revisions}, nil
-}
-
-func (n *Notes) Append(title, markdown string) (WriteResult, error) {
-	if err := n.checkPrefix(title); err != nil {
-		return WriteResult{}, err
-	}
-	padID, err := n.lookup(title)
-	if err != nil {
-		return WriteResult{}, err
-	}
-	current, err := n.client.HTML(padID)
-	if err != nil {
-		return WriteResult{}, err
-	}
-	at, err := insertionPoint(current)
-	if err != nil {
-		return WriteResult{}, err
-	}
-	updated := current[:at] + MarkdownToHTML(markdown) + current[at:]
-	if err := n.client.SetHTML(padID, updated, n.authorID); err != nil {
-		return WriteResult{}, err
-	}
-	return n.writeResult(padID)
 }
 
 func (n *Notes) Changes(title string, since int, includeHTML bool) (ChangesResult, error) {
