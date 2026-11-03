@@ -17,6 +17,7 @@ func TestListRowsJoinsStatesWithInstances(t *testing.T) {
 		"demo-project": {
 			{Name: "isotty-aaa", Zone: "us-central1-f", Status: "RUNNING"},
 			{Name: "isotty-ccc", Zone: "asia-northeast1-b", Status: "TERMINATED"},
+			{Name: "isotty-aaa-web", Zone: "us-central1-f", Status: "RUNNING", Parent: "isotty-aaa"},
 		},
 		"other-project": nil,
 	}
@@ -38,6 +39,7 @@ func TestListRowsJoinsStatesWithInstances(t *testing.T) {
 	want := []listRow{
 		{ID: "gcp:demo-project:asia-northeast1-b:isotty-ccc", Status: "TERMINATED", Project: "(no state on this host)"},
 		{ID: "gcp:demo-project:us-central1-f:isotty-aaa", Status: "RUNNING", Project: "/work/a"},
+		{ID: "gcp:demo-project:us-central1-f:isotty-aaa-web", Status: "RUNNING", Project: "child of isotty-aaa"},
 		{ID: "gcp:other-project:us-central1-f:isotty-bbb", Status: "ABSENT", Project: "/work/b"},
 	}
 	if !reflect.DeepEqual(rows, want) {

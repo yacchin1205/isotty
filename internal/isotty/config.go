@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/yazawa/isotty/internal/isotty/host"
+	"github.com/yazawa/isotty/internal/isotty/host/child"
 	"github.com/yazawa/isotty/internal/isotty/host/dns"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
 	"github.com/yazawa/isotty/internal/isotty/host/gas"
@@ -40,6 +41,8 @@ type Config struct {
 	GAS *gas.ProjectConfig
 	// DNS is nil when the project has no pinned DNS name.
 	DNS *dns.ProjectConfig
+	// Children is nil when the project may not create child VMs.
+	Children *child.ProjectConfig
 }
 
 func LoadConfig(projectPath string) (Config, error) {
@@ -94,6 +97,10 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	childConfig, err := host.LoadChildProjectConfig(projectPath, projectHash, homeDir)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		ProjectPath:  projectPath,
@@ -109,6 +116,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		Google:       googleConfig,
 		GAS:          gasConfig,
 		DNS:          dnsConfig,
+		Children:     childConfig,
 	}, nil
 }
 

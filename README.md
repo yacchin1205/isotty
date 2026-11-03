@@ -312,6 +312,32 @@ isotty-dns delete A app.lab.example.org
 `isotty host dns show` lists the records the VM created that still exist, and `isotty down` warns about them.
 See [DNS design](docs/DNS.md).
 
+Child VMs:
+
+The agent in the VM can create disposable VMs next to it, for a test server with a public hostname or for more CPU and memory, within the size you agree to.
+A child takes SSH from its parent only, with a key that exists only there, and is deleted when the parent stops or goes down.
+
+```bash
+isotty host children enable
+isotty up
+```
+
+The project setting is stored in:
+
+```text
+./.isotty/children.yaml
+```
+
+Inside the VM:
+
+```bash
+isotty-child create web --machine-type e2-standard-8 --expose 80 --expose 443
+isotty-child ssh web -- sudo apt-get install -y nginx
+isotty-child delete web
+```
+
+See [Child VM design](docs/CHILD.md).
+
 Browser:
 
 The agent can open a URL in your browser: `isotty-open <url>` in the VM shows it on the host while you are attached, and the attached session has `BROWSER` set to it, so a click in Codex or `gh` does the same. `http` and `https` only; every open is in the audit log.
@@ -437,6 +463,7 @@ IsoTTY stores local state under:
 * [Google design](docs/GOOGLE.md)
 * [Apps Script design](docs/GAS.md)
 * [DNS design](docs/DNS.md)
+* [Child VM design](docs/CHILD.md)
 * [Browser design](docs/BROWSER.md)
 * [opeco design](docs/OPECO.md)
 * [Audit design](docs/AUDIT.md)
