@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 )
@@ -16,6 +17,42 @@ import (
 // them as the project's author, only under the title prefix, and records
 // them in the audit log.
 var mcpWriteTools = map[string]bool{"edit_pad": true, "create_pad": true, "send_chat_message": true}
+
+// hiddenTools are not offered to the VM: they list every pad by id and
+// know nothing about titles or the prefix, while `isotty-notes search`
+// does; an agent that sees them uses them.
+var hiddenTools = map[string]bool{"list_pads": true, "search_pads": true}
+
+const waitTool = "wait_for_edits"
+
+// waitPollInterval paces the revision checks of wait_for_edits. Tests shorten it.
+var waitPollInterval = 5 * time.Second
+
+const (
+	defaultSettleSeconds  = 180
+	defaultMaxWaitSeconds = 1800
+	// maxWaitLimit keeps a wait inside the tool timeout the Codex setup
+	// configures; Claude Code's default is far longer.
+	maxWaitLimit = 3300
+)
+
+// waitToolDefinition is what tools/list offers for the gateway's own tool.
+var waitToolDefinition = map[string]any{
+	"name": waitTool,
+	"description": "Wait for someone to edit a pad, then return once the pad has been quiet for " +
+		"settleSeconds. Returns the lines added since sinceRev and their authors; timedOut is " +
+		"true when nothing settled within maxWaitSeconds.",
+	"inputSchema": map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"padId":          map[string]any{"type": "string"},
+			"sinceRev":       map[string]any{"type": "integer", "description": "Revision to compare against; defaults to the current one"},
+			"settleSeconds":  map[string]any{"type": "integer", "description": "Quiet time after the last edit before returning (default 180)"},
+			"maxWaitSeconds": map[string]any{"type": "integer", "description": "Give up after this long (default 1800, at most 3300)"},
+		},
+		"required": []string{"padId"},
+	},
+}
 
 // relayedHeaders travel between the VM and ep_ai_mcp unchanged; the
 // Authorization header never does, the gateway sets its own.
@@ -56,20 +93,52 @@ func (m *mcpRelay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// post inspects a JSON-RPC message before forwarding it. Anything that is
-// not a tools/call of a writing tool, including bodies ep_ai_mcp will
-// reject itself, passes through unchanged.
+// post inspects a JSON-RPC message before forwarding it. Anything the
+// gateway has no say in, including bodies ep_ai_mcp will reject itself,
+// passes through unchanged.
 func (m *mcpRelay) post(w http.ResponseWriter, r *http.Request, body []byte) {
 	var msg rpcMessage
-	var call toolCall
-	if json.Unmarshal(body, &msg) != nil || msg.Method != "tools/call" ||
-		json.Unmarshal(msg.Params, &call) != nil || !mcpWriteTools[call.Name] {
+	if json.Unmarshal(body, &msg) != nil {
 		m.forward(w, r, body)
 		return
 	}
-	if call.Arguments == nil {
-		call.Arguments = map[string]any{}
+	switch msg.Method {
+	case "tools/list":
+		status, header, result := m.send(r, body)
+		if status == http.StatusOK {
+			if rewritten, ok := offeredTools(result, header.Get("Content-Type"), msg.ID); ok {
+				gateway.WriteJSON(w, http.StatusOK, rewritten)
+				return
+			}
+		}
+		reply(w, status, header, result)
+	case "tools/call":
+		var call toolCall
+		if json.Unmarshal(msg.Params, &call) != nil {
+			m.forward(w, r, body)
+			return
+		}
+		if call.Arguments == nil {
+			call.Arguments = map[string]any{}
+		}
+		switch {
+		case hiddenTools[call.Name]:
+			toolError(w, msg.ID, fmt.Sprintf("%s is not available here; `isotty-notes search 'title:%s*'` lists the pads under this project's prefix, and `isotty-notes search` finds any pad by title", call.Name, m.notes.prefix))
+		case call.Name == waitTool:
+			m.wait(w, msg.ID, call.Arguments)
+		case mcpWriteTools[call.Name]:
+			m.write(w, r, msg, call)
+		default:
+			m.forward(w, r, body)
+		}
+	default:
+		m.forward(w, r, body)
 	}
+}
+
+// write sends a pad-changing call as the project's author, after the
+// prefix check, and records it.
+func (m *mcpRelay) write(w http.ResponseWriter, r *http.Request, msg rpcMessage, call toolCall) {
 	title, padID, err := m.writeTarget(call)
 	if err != nil {
 		toolError(w, msg.ID, err.Error())
@@ -83,7 +152,7 @@ func (m *mcpRelay) post(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	}
 	msg.Params = params
-	body, err = json.Marshal(msg)
+	body, err := json.Marshal(msg)
 	if err != nil {
 		toolError(w, msg.ID, err.Error())
 		return
@@ -96,6 +165,107 @@ func (m *mcpRelay) post(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 	}
 	reply(w, status, header, result)
+}
+
+// offeredTools is ep_ai_mcp's tool list without the hidden tools and with
+// the gateway's own.
+func offeredTools(body []byte, contentType string, id json.RawMessage) (map[string]any, bool) {
+	var answer struct {
+		Result struct {
+			Tools []map[string]any `json:"tools"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(lastMessage(body, contentType), &answer) != nil || answer.Result.Tools == nil {
+		return nil, false
+	}
+	tools := []map[string]any{}
+	for _, tool := range answer.Result.Tools {
+		if name, _ := tool["name"].(string); !hiddenTools[name] {
+			tools = append(tools, tool)
+		}
+	}
+	tools = append(tools, waitToolDefinition)
+	return map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"tools": tools}}, true
+}
+
+// wait answers wait_for_edits: it watches the pad's head revision until a
+// change has been followed by settleSeconds of quiet, or maxWaitSeconds
+// pass, and returns what changed since sinceRev.
+func (m *mcpRelay) wait(w http.ResponseWriter, id json.RawMessage, args map[string]any) {
+	padID, _ := args["padId"].(string)
+	if padID == "" {
+		toolError(w, id, "padId is required")
+		return
+	}
+	head, err := m.notes.client.RevisionsCount(padID)
+	if err != nil {
+		toolError(w, id, err.Error())
+		return
+	}
+	since, err := intArg(args, "sinceRev", head)
+	if err == nil && since > head {
+		err = fmt.Errorf("sinceRev %d is past the current revision %d", since, head)
+	}
+	settle, err2 := intArg(args, "settleSeconds", defaultSettleSeconds)
+	maxWait, err3 := intArg(args, "maxWaitSeconds", defaultMaxWaitSeconds)
+	if err = errors.Join(err, err2, err3); err != nil {
+		toolError(w, id, err.Error())
+		return
+	}
+	maxWait = min(maxWait, maxWaitLimit)
+
+	start := time.Now()
+	var lastChange time.Time
+	if since < head {
+		lastChange = start
+	}
+	timedOut := false
+	for {
+		if !lastChange.IsZero() && time.Since(lastChange) >= time.Duration(settle)*time.Second {
+			break
+		}
+		if time.Since(start) >= time.Duration(maxWait)*time.Second {
+			timedOut = true
+			break
+		}
+		time.Sleep(waitPollInterval)
+		rev, err := m.notes.client.RevisionsCount(padID)
+		if err != nil {
+			toolError(w, id, err.Error())
+			return
+		}
+		if rev != head {
+			head = rev
+			lastChange = time.Now()
+		}
+	}
+	changes, err := m.notes.changesSince(padID, since, false)
+	if err != nil {
+		toolError(w, id, err.Error())
+		return
+	}
+	text, err := json.MarshalIndent(struct {
+		ChangesResult
+		TimedOut bool `json:"timed_out"`
+	}{changes, timedOut}, "", "  ")
+	if err != nil {
+		toolError(w, id, err.Error())
+		return
+	}
+	toolResult(w, id, string(text), false)
+}
+
+// intArg reads an optional non-negative integer argument.
+func intArg(args map[string]any, name string, fallback int) (int, error) {
+	raw, present := args[name]
+	if !present {
+		return fallback, nil
+	}
+	value, ok := raw.(float64)
+	if !ok || value != float64(int(value)) || value < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", name)
+	}
+	return int(value), nil
 }
 
 // writeTarget names the pad a writing call touches and checks that it is
@@ -177,18 +347,25 @@ func reply(w http.ResponseWriter, status int, header http.Header, body []byte) {
 	w.Write(body)
 }
 
-// succeeded reports whether a tools/call answer carries a result that is
-// not a tool error; ep_ai_mcp answers in JSON or as one SSE message.
-func succeeded(body []byte, contentType string) bool {
-	raw := body
-	if strings.HasPrefix(contentType, "text/event-stream") {
-		raw = nil
-		for _, line := range strings.Split(string(body), "\n") {
-			if data, ok := strings.CutPrefix(line, "data:"); ok {
-				raw = []byte(strings.TrimSpace(data))
-			}
+// lastMessage is the JSON-RPC message of an answer; ep_ai_mcp answers in
+// JSON or as SSE, where the last data line is the response.
+func lastMessage(body []byte, contentType string) []byte {
+	if !strings.HasPrefix(contentType, "text/event-stream") {
+		return body
+	}
+	var raw []byte
+	for _, line := range strings.Split(string(body), "\n") {
+		if data, ok := strings.CutPrefix(line, "data:"); ok {
+			raw = []byte(strings.TrimSpace(data))
 		}
 	}
+	return raw
+}
+
+// succeeded reports whether a tools/call answer carries a result that is
+// not a tool error.
+func succeeded(body []byte, contentType string) bool {
+	raw := lastMessage(body, contentType)
 	var answer struct {
 		Result *struct {
 			IsError bool `json:"isError"`
@@ -200,6 +377,10 @@ func succeeded(body []byte, contentType string) bool {
 // toolError answers the call the way ep_ai_mcp reports a failed tool, so
 // the agent sees the reason as the tool's output.
 func toolError(w http.ResponseWriter, id json.RawMessage, text string) {
+	toolResult(w, id, text, true)
+}
+
+func toolResult(w http.ResponseWriter, id json.RawMessage, text string, isError bool) {
 	if id == nil {
 		id = json.RawMessage("null")
 	}
@@ -208,7 +389,7 @@ func toolError(w http.ResponseWriter, id json.RawMessage, text string) {
 		"id":      id,
 		"result": map[string]any{
 			"content": []map[string]string{{"type": "text", "text": text}},
-			"isError": true,
+			"isError": isError,
 		},
 	})
 }

@@ -114,7 +114,9 @@ const mergeScriptPath = "/usr/local/share/isotty/mcp-merge.py"
 
 // MCPServerCommands register a streamable HTTP MCP server under `name` with
 // each configured agent: Claude in ~/.claude.json, Codex in
-// ~/.codex/config.toml.
+// ~/.codex/config.toml. Codex's per-tool timeout is raised from its 60
+// seconds to an hour, since a tool may wait for a human; Claude Code's
+// default is longer still.
 func MCPServerCommands(agents []string, name, url string) []string {
 	parts := []string{
 		"sudo mkdir -p " + path.Dir(mergeScriptPath),
@@ -125,7 +127,7 @@ func MCPServerCommands(agents []string, name, url string) []string {
 		case "claude":
 			parts = append(parts, fmt.Sprintf("python3 %s mcp-json-url \"$HOME\"/.claude.json %s %s", mergeScriptPath, name, url))
 		case "codex":
-			parts = append(parts, fmt.Sprintf("python3 %s mcp-toml-url \"$HOME\"/.codex/config.toml %s %s %s", mergeScriptPath, name, name, url))
+			parts = append(parts, fmt.Sprintf("python3 %s mcp-toml-url \"$HOME\"/.codex/config.toml %s %s %s 'tool_timeout_sec = 3600'", mergeScriptPath, name, name, url))
 		}
 	}
 	return parts

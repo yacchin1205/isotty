@@ -125,6 +125,16 @@ three tools that change a pad: `edit_pad`, `create_pad` and
 `edit_pad` uses `makeSplice`, so a human's lines keep their author. It
 writes plain text only; the Markdown subset stays with `isotty-notes`.
 
+`list_pads` and `search_pads` are left out of the tool list and refused
+when called: they list every pad by id and know nothing about titles or
+the prefix, which `isotty-notes search 'title:<prefix>*'` does. The relay
+adds one tool of its own, `wait_for_edits`: it watches a pad's head
+revision until an edit has been followed by `settleSeconds` of quiet (180
+by default) or `maxWaitSeconds` pass (1800 by default, 3300 at most), and
+returns the lines added since `sinceRev` with their authors, as `changes`
+does. The Codex registration raises that server's tool timeout to an hour
+for it; Claude Code's default is longer.
+
 The ep_weave to run is the `isotty` branch of
 https://github.com/yacchin1205/ep_weave. Its image bundles ep_ai_core and
 ep_ai_mcp, the latter from the fork

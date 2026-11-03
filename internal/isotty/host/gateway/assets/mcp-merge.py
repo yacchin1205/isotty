@@ -4,7 +4,8 @@
 mcp-json PATH NAME ENV_JSON COMMAND ARG...        ~/.claude.json style {"mcpServers": {...}}, stdio
 mcp-json-url PATH NAME URL                        the same for a streamable HTTP server
 mcp-toml PATH LABEL NAME ENV_JSON COMMAND ARG...  ~/.codex/config.toml, kept between "# isotty LABEL" markers
-mcp-toml-url PATH LABEL NAME URL                  the same for a streamable HTTP server
+mcp-toml-url PATH LABEL NAME URL [LINE...]        the same for a streamable HTTP server, LINEs
+                                                  appended to its table as written
 hooks PATH HOOKS_JSON SERVER                      merge the "hooks" object of HOOKS_JSON, replacing
                                                   groups that already call SERVER
 """
@@ -52,8 +53,8 @@ def mcp_toml(path, label, name, env_json, command, *args):
     save_mcp_toml(path, label, name, table)
 
 
-def mcp_toml_url(path, label, name, url):
-    save_mcp_toml(path, label, name, f'url = {json.dumps(url)}\n')
+def mcp_toml_url(path, label, name, url, *lines):
+    save_mcp_toml(path, label, name, f'url = {json.dumps(url)}\n' + ''.join(line + '\n' for line in lines))
 
 
 def save_mcp_toml(path, label, name, table):

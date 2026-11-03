@@ -157,6 +157,12 @@ func (f *fakeEtherpad) handler(t *testing.T) http.Handler {
 		switch msg.Method {
 		case "initialize":
 			respond(map[string]any{"protocolVersion": "2025-06-18", "serverInfo": map[string]string{"name": "etherpad"}})
+		case "tools/list":
+			respond(map[string]any{"tools": []map[string]any{
+				{"name": "list_pads", "inputSchema": map[string]any{}},
+				{"name": "search_pads", "inputSchema": map[string]any{}},
+				{"name": "edit_pad", "inputSchema": map[string]any{}},
+			}})
 		case "tools/call":
 			var call toolCall
 			if err := json.Unmarshal(msg.Params, &call); err != nil {

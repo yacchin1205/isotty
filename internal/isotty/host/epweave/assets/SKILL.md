@@ -33,9 +33,14 @@ search` and the stderr line of `read` give you; a title alone is not enough.
   whatever `authorName` you pass, and refuses pads outside
   `__ISOTTY_EPWEAVE_PREFIX__` before ep_weave sees them.
 - Reading: `get_pad_text`, `get_pad_authorship` (who wrote each paragraph),
-  `get_pad_diff`, `get_pad_contributors`, `get_pad_activity`. Prefer
-  `isotty-notes search` over `search_pads`, which scans pads one by one and
-  knows nothing about titles.
+  `get_pad_diff`, `get_pad_contributors`, `get_pad_activity`. The pads you
+  may write are `isotty-notes search 'title:__ISOTTY_EPWEAVE_PREFIX__*'`;
+  there is no listing tool.
+- Waiting for a review: `wait_for_edits` with the pad id and the revision
+  you last saw returns once someone has edited the pad and it has been
+  quiet for `settleSeconds` (default 180), with the added lines and their
+  authors; `timed_out` is true after `maxWaitSeconds` (default 1800)
+  without that. Use it instead of polling.
 - `edit_pad` with `replace` or `insert` changes existing text, including a
   human's lines when the pad is under your prefix. Append unless the human
   asked for a correction.

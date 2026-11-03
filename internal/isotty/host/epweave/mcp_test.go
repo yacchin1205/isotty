@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // mcpCall sends one tools/call through the gateway and returns the status,
@@ -186,5 +187,77 @@ func TestMCPRelayReportsAFailedAuditRecord(t *testing.T) {
 	}
 	if got := plainText(etherpad.pads["pad1"].html); got != "isotty/notes\nfirst\nsecond\n" {
 		t.Fatalf("pad text = %q, the write itself must stand", got)
+	}
+}
+
+func TestMCPRelayHidesTheListingTools(t *testing.T) {
+	gateway, etherpad, _, _ := newTestGateway(t)
+
+	status, _, answer := mcpPost(t, gateway.URL, map[string]any{"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+	if status != http.StatusOK {
+		t.Fatalf("tools/list status = %d, answer = %v", status, answer)
+	}
+	var names []string
+	for _, tool := range answer["result"].(map[string]any)["tools"].([]any) {
+		names = append(names, tool.(map[string]any)["name"].(string))
+	}
+	if strings.Join(names, ",") != "edit_pad,wait_for_edits" {
+		t.Fatalf("tools = %v, want the listing tools hidden and wait_for_edits added", names)
+	}
+
+	status, _, answer = mcpCall(t, gateway.URL, "list_pads", map[string]any{})
+	text, isError := toolText(t, answer)
+	if status != http.StatusOK || !isError || !strings.Contains(text, "isotty-notes search 'title:isotty/*'") {
+		t.Fatalf("list_pads: status = %d, answer = %v", status, answer)
+	}
+	if len(etherpad.mcpCalls) != 0 {
+		t.Fatalf("ep_ai_mcp saw %v; hidden tools must not reach it", etherpad.mcpCalls)
+	}
+}
+
+func TestMCPRelayWaitsForEditsToSettle(t *testing.T) {
+	gateway, etherpad, _, _ := newTestGateway(t)
+	waitPollInterval = time.Millisecond
+	t.Cleanup(func() { waitPollInterval = 5 * time.Second })
+	pad := &fakePad{}
+	pad.set("<!DOCTYPE HTML><html><body>isotty/notes<br>first<br></body></html>")
+	etherpad.pads["pad1"] = pad
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		etherpad.mu.Lock()
+		pad.set("<!DOCTYPE HTML><html><body>isotty/notes<br>first<br>a human's remark<br></body></html>")
+		etherpad.mu.Unlock()
+	}()
+	status, _, answer := mcpCall(t, gateway.URL, "wait_for_edits", map[string]any{"padId": "pad1", "settleSeconds": 0, "maxWaitSeconds": 5})
+	text, isError := toolText(t, answer)
+	if status != http.StatusOK || isError {
+		t.Fatalf("status = %d, answer = %v", status, answer)
+	}
+	var result struct {
+		FromRev    int      `json:"from_rev"`
+		ToRev      int      `json:"to_rev"`
+		AddedLines []string `json:"added_lines"`
+		TimedOut   bool     `json:"timed_out"`
+	}
+	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.TimedOut || result.FromRev != 1 || result.ToRev != 2 || strings.Join(result.AddedLines, "|") != "a human's remark" {
+		t.Fatalf("result = %+v", result)
+	}
+
+	status, _, answer = mcpCall(t, gateway.URL, "wait_for_edits", map[string]any{"padId": "pad1", "sinceRev": 2, "maxWaitSeconds": 0})
+	text, isError = toolText(t, answer)
+	if err := json.Unmarshal([]byte(text), &result); status != http.StatusOK || isError || err != nil {
+		t.Fatalf("status = %d, answer = %v", status, answer)
+	}
+	if !result.TimedOut || result.FromRev != 2 || result.ToRev != 2 || len(result.AddedLines) != 0 {
+		t.Fatalf("result = %+v, want a timeout with nothing added", result)
+	}
+
+	_, _, answer = mcpCall(t, gateway.URL, "wait_for_edits", map[string]any{"padId": "pad1", "settleSeconds": -1})
+	if text, isError := toolText(t, answer); !isError || text != "settleSeconds must be a non-negative integer" {
+		t.Fatalf("answer = %v", answer)
 	}
 }

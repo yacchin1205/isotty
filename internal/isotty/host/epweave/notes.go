@@ -173,6 +173,10 @@ func (n *Notes) Changes(title string, since int, includeHTML bool) (ChangesResul
 	if err != nil {
 		return ChangesResult{}, err
 	}
+	return n.changesSince(padID, since, includeHTML)
+}
+
+func (n *Notes) changesSince(padID string, since int, includeHTML bool) (ChangesResult, error) {
 	revisions, err := n.client.RevisionsCount(padID)
 	if err != nil {
 		return ChangesResult{}, err
