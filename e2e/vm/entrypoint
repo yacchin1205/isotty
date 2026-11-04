@@ -1,0 +1,8 @@
+#!/bin/sh
+# AUTHORIZED_KEY is the public key the host side of the test will use.
+set -eu
+install -d -m 700 -o isotty -g isotty /home/isotty/.ssh
+printf '%s\n' "$AUTHORIZED_KEY" > /home/isotty/.ssh/authorized_keys
+chown isotty:isotty /home/isotty/.ssh/authorized_keys
+chmod 600 /home/isotty/.ssh/authorized_keys
+exec /usr/sbin/sshd -D -e

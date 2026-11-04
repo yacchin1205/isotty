@@ -23,3 +23,25 @@ jobs:
 
       - name: Run tests
         run: go test ./...
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install mutagen
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSL https://github.com/mutagen-io/mutagen/releases/download/v0.18.1/mutagen_linux_amd64_v0.18.1.tar.gz | tar -xz -C "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run end-to-end tests
+        run: go test -tags e2e -count=1 -v -timeout 20m ./e2e/
+        env:
+          ISOTTY_E2E: "1"
