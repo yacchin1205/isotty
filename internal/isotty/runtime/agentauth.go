@@ -46,11 +46,13 @@ func CaptureAgentAuthCommand(agent string) string {
 }
 
 // SaveAgentAuth encrypts and stores an archive. An empty archive (the agent
-// had no state) removes the file, so the project mirrors the VM at `down`.
+// had no state in the VM) leaves the saved one alone: a VM whose `up` failed
+// before the restore has nothing, and what it has not received it cannot
+// have logged out of.
 func SaveAgentAuth(homeDir, projectPath, agent string, archive []byte) error {
 	path := AgentAuthArchivePath(projectPath, agent)
 	if len(archive) == 0 {
-		return removeIfExists(path)
+		return nil
 	}
 	key, err := agentAuthKey(homeDir, true)
 	if err != nil {

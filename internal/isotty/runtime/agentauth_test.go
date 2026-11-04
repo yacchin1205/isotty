@@ -40,11 +40,12 @@ func TestAgentAuthRoundTrip(t *testing.T) {
 		t.Fatalf("LoadAgentAuth() = %q, %v, %v", loaded, ok, err)
 	}
 
+	// A VM without agent state does not take the saved login with it.
 	if err := SaveAgentAuth(home, project, "claude", nil); err != nil {
 		t.Fatalf("SaveAgentAuth(empty) error = %v", err)
 	}
-	if _, ok, err := LoadAgentAuth(home, project, "claude"); err != nil || ok {
-		t.Fatalf("LoadAgentAuth() after empty save = %v, %v", ok, err)
+	if loaded, ok, err := LoadAgentAuth(home, project, "claude"); err != nil || !ok || !bytes.Equal(loaded, archive) {
+		t.Fatalf("LoadAgentAuth() after empty save = %q, %v, %v", loaded, ok, err)
 	}
 }
 
