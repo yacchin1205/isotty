@@ -15,7 +15,7 @@ isotty down
 * `up` creates or reuses one VM per project, starting it when `stop` left it stopped
 * `attach` opens a tmux session named `isotty` in the workspace over `gcloud compute ssh`, attaching to it when it exists, so what runs there survives a detach or a dropped connection; it refuses a VM that is not running, since `up` is what starts one
 * `attach --no-host` joins that session as a grouped tmux session: the same windows, its own current window, gone when it detaches
-* `attach --no-tmux`, or `tmux: false` in `~/.isotty/attach.yaml` on the host, gives a plain login shell; `up` installs tmux when the image lacks it
+* `attach --no-tmux`, or `tmux: false` in `~/.isotty/attach.yaml` on the host, gives a plain login shell; `up` installs tmux when the image lacks it and writes `/etc/tmux.conf`, which tells tmux to relay OSC 8 hyperlinks to the attached terminal: tmux relays them only to a terminal it knows takes them, which it tells from `TERM_PROGRAM`, and ssh does not carry that, so a link an agent prints would otherwise stop at tmux
 * `id` prints a stable VM target id for remote attach
 * `attach --target ...` attaches without local project state
 * `stop` stops the VM and keeps its disk and the local state; the sync session ends with it

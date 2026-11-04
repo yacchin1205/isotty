@@ -1090,8 +1090,8 @@ func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardC
 // attachShellCommand is what the attach runs once in the workspace.
 //
 // The session's shell gets BROWSER only when the gateway behind
-// `isotty-open` exists, so a click in Codex or `gh` opens on the host while
-// attached and fails plainly otherwise. In tmux the variable goes into the
+// `isotty-open` exists, so an agent's own open or `gh` opens on the host
+// while attached and fails plainly otherwise. In tmux the variable goes into the
 // session environment as well, for the windows opened later; the shells
 // already running keep what they had.
 //
