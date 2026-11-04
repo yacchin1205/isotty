@@ -77,5 +77,7 @@ sees the archive too: it cannot read or forge it (a modified archive fails to
 decrypt), but it can delete it, after which the next `up` asks for a login.
 
 `down` fails when the state cannot be saved, so a login is not lost
-silently; `down --force` removes the VM anyway. Removing an agent with
+silently; `down --force` removes the VM anyway. A VM that has no agent
+state at all, because its `up` failed before the restore, leaves the saved
+state as it is. Removing an agent with
 `isotty runtime agent remove` deletes its saved state.
