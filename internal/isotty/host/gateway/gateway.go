@@ -148,7 +148,7 @@ func MCPServerCommands(agents []string, name, url string) []string {
 		case "claude":
 			parts = append(parts, fmt.Sprintf("python3 %s mcp-json-url \"$HOME\"/.claude.json %s %s", MergeScriptPath, name, url))
 		case "codex":
-			parts = append(parts, fmt.Sprintf("python3 %s mcp-toml-url \"$HOME\"/.codex/config.toml %s %s %s 'tool_timeout_sec = 3600'", MergeScriptPath, name, name, url))
+			parts = append(parts, fmt.Sprintf("python3 %s mcp-toml-url \"$HOME\"/.codex/config.toml %s %s '{\"tool_timeout_sec\": 3600}'", MergeScriptPath, name, url))
 		}
 	}
 	return parts

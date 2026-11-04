@@ -101,3 +101,48 @@ func TestDefaultSettingsKeepWhatIsSet(t *testing.T) {
 		}
 	}
 }
+
+// The MCP server table is isotty's by its name and is written whole; every
+// other value in the file, whatever wrote it and in whatever form, stays.
+func TestMCPServerTableIsReplacedWhole(t *testing.T) {
+	needPython(t)
+	dir := t.TempDir()
+	config := filepath.Join(dir, "codex", "config.toml")
+
+	if out, err := merge(t, dir, "mcp-toml", config, "opeco-link", `{"BROWSER": "/usr/local/bin/isotty-open"}`, "/usr/local/bin/opeco", "--qr-port", "61006", "mcp"); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	want := map[string]any{"mcp_servers": map[string]any{"opeco-link": map[string]any{
+		"command": "/usr/local/bin/opeco",
+		"args":    []any{"--qr-port", "61006", "mcp"},
+		"env":     map[string]any{"BROWSER": "/usr/local/bin/isotty-open"},
+	}}}
+	if got := readTOML(t, config); !reflect.DeepEqual(got, want) {
+		t.Fatalf("a missing file becomes the table alone: %v", got)
+	}
+
+	// A file as an earlier release left it, after Codex added to isotty's
+	// table and appended its hook trust, and the human added a server
+	// inline.
+	existing := "model = \"o3\"\n\n# isotty epweave begin\n[mcp_servers.epweave]\nurl = \"http://127.0.0.1:61001/epweave/mcp\"\n# isotty epweave end\n\n# isotty opeco begin\n[mcp_servers.opeco-link]\ncommand = \"/usr/local/bin/opeco\"\nargs = [\"--qr-port\", \"61005\", \"mcp\"]\nenabled = false\n\n[hooks.state]\n\n[hooks.state.\"/home/u/.codex/hooks.json:stop:0:0\"]\ntrusted_hash = \"sha256:abc\"\n# isotty opeco end\n\n[mcp_servers]\nmine = { command = \"mine\" }\n"
+	if err := os.WriteFile(config, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"epweave", "opeco-link"} {
+		if out, err := merge(t, dir, "mcp-toml-url", config, name, "http://127.0.0.1:61001/"+name+"/mcp", `{"tool_timeout_sec": 3600}`); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+	}
+	want = map[string]any{
+		"model": "o3",
+		"mcp_servers": map[string]any{
+			"epweave":    map[string]any{"url": "http://127.0.0.1:61001/epweave/mcp", "tool_timeout_sec": float64(3600)},
+			"opeco-link": map[string]any{"url": "http://127.0.0.1:61001/opeco-link/mcp", "tool_timeout_sec": float64(3600)},
+			"mine":       map[string]any{"command": "mine"},
+		},
+		"hooks": map[string]any{"state": map[string]any{"/home/u/.codex/hooks.json:stop:0:0": map[string]any{"trusted_hash": "sha256:abc"}}},
+	}
+	if got := readTOML(t, config); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+}

@@ -61,9 +61,9 @@ On every `isotty up`:
   `opeco --qr-port <port> mcp` with `BROWSER=/usr/local/bin/isotty-open`,
   opeco's agent hooks merged into `~/.claude/settings.json`, and opeco's
   skill under `~/.claude/skills/`
-* for Codex: the same server and environment in `~/.codex/config.toml`
-  between marker comments, opeco's hooks merged into `~/.codex/hooks.json`,
-  and opeco's skill under `~/.codex/skills/`
+* for Codex: the same server and environment as the `[mcp_servers.opeco-link]`
+  table of `~/.codex/config.toml`, opeco's hooks merged into
+  `~/.codex/hooks.json`, and opeco's skill under `~/.codex/skills/`
 
 The hooks and the skill are fetched from the opeco repository at the same
 release, so opeco stays the only place that defines them.

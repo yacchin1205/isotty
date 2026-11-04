@@ -56,6 +56,6 @@ fi
 if [ "$install_codex" = 1 ]; then
   install_skill "$HOME/.codex/skills"
   curl -fsSL -o "$tmp/codex-hooks.json" "$raw/examples/agent-hooks/codex.json"
-  python3 "$merge" mcp-toml "$HOME/.codex/config.toml" opeco opeco-link "$env" /usr/local/bin/opeco --qr-port "$qr_port" mcp
+  python3 "$merge" mcp-toml "$HOME/.codex/config.toml" opeco-link "$env" /usr/local/bin/opeco --qr-port "$qr_port" mcp
   python3 "$merge" hooks "$HOME/.codex/hooks.json" "$tmp/codex-hooks.json" opeco-link
 fi
