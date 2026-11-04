@@ -21,6 +21,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install the merge script's TOML writer
+        run: sudo apt-get update && sudo apt-get install -y python3-tomli-w
+
       - name: Run tests
         run: go test ./...
 

@@ -31,10 +31,14 @@ func TestAttachKeepsTheSessionInTmux(t *testing.T) {
 
 	first := h.attach()
 	typedReaches(t, h, first, "touch first-terminal", "first-terminal")
-	// A click in the session opens on the host: the shell has BROWSER.
+	// An open in the session reaches the host: the shell has BROWSER.
 	typedReaches(t, h, first, `echo "$BROWSER" > browser`, "browser")
 	if out := h.mustVM("cat /workspace/browser"); strings.TrimSpace(out) != "/usr/local/bin/isotty-open" {
 		t.Fatalf("BROWSER in the session shell = %q", out)
+	}
+	// A link an agent prints reaches the terminal: tmux relays OSC 8 to it.
+	if out := h.mustVM("tmux list-clients -t isotty -F '#{client_termfeatures}'"); !strings.Contains(out, "hyperlinks") {
+		t.Fatalf("features of the attached terminal = %q, want hyperlinks", strings.TrimSpace(out))
 	}
 
 	// A second terminal works in the same session and leaves nothing

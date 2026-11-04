@@ -48,6 +48,23 @@ Agent installation happens during `isotty up`.
 IsoTTY prepares the required Node.js runtime first, then installs the configured agent CLIs in the VM.
 Node.js is installed through the NodeSource apt repository.
 
+## Notifications
+
+An agent that finishes or waits for an answer rings the terminal bell. The
+bell character is the one signal that passes ssh and tmux to whatever
+terminal the human attached from, where it shows as a badge on the tab, a
+bounce or a sound, as that terminal is set. Left to itself each agent
+rings nothing in a VM: Claude Code's automatic choice asks the terminal
+program, which ssh does not forward, and on Apple Terminal reads the
+host's profile, which the VM cannot; Codex rings only while the terminal
+is unfocused, which it learns from focus events that tmux does not forward
+and Apple Terminal never sends. So `up` sets, for Claude,
+`preferredNotifChannel` to `terminal_bell` in `~/.claude/settings.json`,
+and for Codex, `notification_method` to `bel` and `notification_condition`
+to `always` under `[tui]` in `~/.codex/config.toml`. A key that is already
+set is left as it is, so a human who wants another channel sets it once in
+the VM and the saved state carries it on.
+
 ## Credentials
 
 IsoTTY never copies credentials from the host into the VM. Authentication
@@ -66,7 +83,8 @@ The agent's state at `down` is the state the next VM starts with, including
 logins, settings, and the agent's own record of trusting `/workspace`; only
 the agent's temporary files and caches are left out. The settings IsoTTY
 itself writes into those files are merged again on every `up`, after the
-restore.
+restore. Codex's `config.toml` is read and written as data, so a comment in
+it does not live past an `up`.
 
 The state is stored with the project as `.isotty/<agent>.tar.gz.enc`,
 encrypted with AES-256-GCM under `~/.isotty/agents.key` (mode 600, created on

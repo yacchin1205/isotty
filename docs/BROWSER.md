@@ -3,10 +3,12 @@
 The VM has no display, but the human attached to it has a browser. IsoTTY
 lets the agent open a URL there: `isotty-open <url>` in the VM asks the host
 gateway, which runs the host desktop's opener. The shell `isotty attach`
-opens has `BROWSER` set to the command, so `gh`, Python's `webbrowser`, a
-click on a link in Codex and an agent's own "open in browser" reach the
-host without being told. A file the agent wrote under the workspace is
-shown the same way, as the host's synced copy.
+opens has `BROWSER` set to the command, so `gh`, Python's `webbrowser`
+and an agent's own "open in browser" reach the host without being told.
+A file the agent wrote under the workspace is shown the same way, as the
+host's synced copy. A link an agent prints is the terminal's business:
+Codex marks a URL up as an OSC 8 hyperlink, the human's terminal opens it
+on a click, and the VM's tmux relays it (see [VM.md](VM.md)).
 
 ```text
 VM:   isotty-open https://...   (BROWSER=/usr/local/bin/isotty-open)

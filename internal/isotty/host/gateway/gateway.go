@@ -110,7 +110,31 @@ func MergeScript() string {
 	return mergeScript
 }
 
-const mergeScriptPath = "/usr/local/share/isotty/mcp-merge.py"
+// MergeScriptPath is where the merge script lives in the VM.
+const MergeScriptPath = "/usr/local/share/isotty/mcp-merge.py"
+
+// MergeScriptCommands put the merge script in the VM with the TOML writer
+// it needs; the commands below, runtime.NotifyCommand and the opeco setup
+// run it.
+func MergeScriptCommands() []string {
+	return []string{
+		"dpkg -s python3-tomli-w >/dev/null 2>&1 || (sudo apt-get update -q && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3-tomli-w)",
+		"sudo mkdir -p " + path.Dir(MergeScriptPath),
+		WriteFileCommand(MergeScriptPath, mergeScript, true),
+	}
+}
+
+// DefaultSettingCommand sets a key of an agent's config file unless the
+// file already has it, so a value the human chose stays theirs.
+func DefaultSettingCommand(agent, key, valueJSON string) string {
+	switch agent {
+	case "claude":
+		return fmt.Sprintf("python3 %s json-default \"$HOME\"/.claude/settings.json %s '%s'", MergeScriptPath, key, valueJSON)
+	case "codex":
+		return fmt.Sprintf("python3 %s toml-default \"$HOME\"/.codex/config.toml tui %s '%s'", MergeScriptPath, key, valueJSON)
+	}
+	panic("unsupported agent " + agent)
+}
 
 // MCPServerCommands register a streamable HTTP MCP server under `name` with
 // each configured agent: Claude in ~/.claude.json, Codex in
@@ -118,16 +142,13 @@ const mergeScriptPath = "/usr/local/share/isotty/mcp-merge.py"
 // seconds to an hour, since a tool may wait for a human; Claude Code's
 // default is longer still.
 func MCPServerCommands(agents []string, name, url string) []string {
-	parts := []string{
-		"sudo mkdir -p " + path.Dir(mergeScriptPath),
-		WriteFileCommand(mergeScriptPath, mergeScript, true),
-	}
+	parts := MergeScriptCommands()
 	for _, agent := range agents {
 		switch agent {
 		case "claude":
-			parts = append(parts, fmt.Sprintf("python3 %s mcp-json-url \"$HOME\"/.claude.json %s %s", mergeScriptPath, name, url))
+			parts = append(parts, fmt.Sprintf("python3 %s mcp-json-url \"$HOME\"/.claude.json %s %s", MergeScriptPath, name, url))
 		case "codex":
-			parts = append(parts, fmt.Sprintf("python3 %s mcp-toml-url \"$HOME\"/.codex/config.toml %s %s %s 'tool_timeout_sec = 3600'", mergeScriptPath, name, name, url))
+			parts = append(parts, fmt.Sprintf("python3 %s mcp-toml-url \"$HOME\"/.codex/config.toml %s %s '{\"tool_timeout_sec\": 3600}'", MergeScriptPath, name, url))
 		}
 	}
 	return parts
