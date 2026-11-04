@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stands in for a service command in a container without systemd.
+exit 0

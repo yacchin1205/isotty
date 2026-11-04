@@ -205,7 +205,8 @@ Three settings make that failure prompt instead of a hang:
 
 A second `isotty attach` to the same VM therefore fails while the first is
 alive; use `isotty attach --no-host` for the second terminal. That flag
-skips the forwards and the gateway.
+skips the forwards and the gateway, and joins the first terminal's tmux
+session.
 
 ## Security Posture
 

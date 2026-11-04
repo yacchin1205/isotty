@@ -69,6 +69,8 @@ Attach later when you are ready to work in the VM. This also enables any configu
 isotty attach
 ```
 
+The shell runs in a tmux session named `isotty`, so detaching (`C-b d`) or losing the connection leaves the agents running, and the next `isotty attach` returns to them. `tmux: false` in `~/.isotty/attach.yaml` gives a plain shell instead.
+
 Stop the VM for the night and keep everything else:
 
 ```bash

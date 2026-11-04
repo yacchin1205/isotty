@@ -3,6 +3,7 @@ package isotty
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -25,7 +26,7 @@ func TestBuildAttachSSHArgs(t *testing.T) {
 		},
 	}
 
-	args := buildAttachSSHArgs(conn, "/workspace", forwardCfg, nil)
+	args := buildAttachSSHArgs(conn, "/workspace", forwardCfg, nil, attachShell{})
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-F /tmp/isotty/ssh/config -tt") {
 		t.Fatalf("args = %v, want ssh config and tty flags", args)
@@ -55,7 +56,7 @@ func TestBuildAttachSSHArgsWithEpweaveGateway(t *testing.T) {
 		SSHConfigPath: "/tmp/isotty/ssh/config",
 	}
 
-	args := buildAttachSSHArgs(conn, "/workspace", host.ForwardConfig{Forwards: map[string]host.Forward{}}, &reverseForward{VMPort: 61001, HostPort: 54321})
+	args := buildAttachSSHArgs(conn, "/workspace", host.ForwardConfig{Forwards: map[string]host.Forward{}}, &reverseForward{VMPort: 61001, HostPort: 54321}, attachShell{})
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-R 127.0.0.1:61001:127.0.0.1:54321") {
 		t.Fatalf("args = %v, want reverse forward to the gateway", args)
@@ -74,10 +75,50 @@ func TestBuildAttachSSHArgsWithUser(t *testing.T) {
 		SSHConfigPath: "/tmp/isotty/ssh/config",
 	}
 
-	args := buildAttachSSHArgs(conn, "/workspace", host.ForwardConfig{Forwards: map[string]host.Forward{}}, nil)
+	args := buildAttachSSHArgs(conn, "/workspace", host.ForwardConfig{Forwards: map[string]host.Forward{}}, nil, attachShell{})
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "testuser@isotty-abc.us-central1-f.demo-project") {
 		t.Fatalf("args = %v, want user-qualified instance target", args)
+	}
+}
+
+func TestAttachShellCommandInTmux(t *testing.T) {
+	cases := []struct {
+		name       string
+		browserSet bool
+		shell      attachShell
+		want       string
+	}{
+		{"gateway attach", true, attachShell{Tmux: true}, "BROWSER=/usr/local/bin/isotty-open exec tmux new-session -A -s isotty -c /workspace ';' set-environment -t isotty BROWSER /usr/local/bin/isotty-open"},
+		{"attach without a gateway", false, attachShell{Tmux: true}, "exec tmux new-session -A -s isotty -c /workspace"},
+		{"second terminal", false, attachShell{Tmux: true, Secondary: true}, "if tmux has-session -t isotty 2>/dev/null; then exec tmux new-session -t isotty -c /workspace ';' set-option destroy-unattached on; else exec tmux new-session -A -s isotty -c /workspace; fi"},
+		{"plain second terminal", false, attachShell{Secondary: true}, "exec ${SHELL:-/bin/bash} -l"},
+	}
+	for _, tc := range cases {
+		if got := attachShellCommand("/workspace", tc.browserSet, tc.shell); got != tc.want {
+			t.Fatalf("%s: command = %q\nwant %q", tc.name, got, tc.want)
+		}
+	}
+	args := buildAttachSSHArgs(vmcfg.GCPConnection{InstanceName: "isotty-abc", ProjectID: "demo-project", Zone: "us-central1-f", SSHConfigPath: "/tmp/isotty/ssh/config"}, "/workspace", host.ForwardConfig{Forwards: map[string]host.Forward{}}, nil, attachShell{Tmux: true})
+	if last := args[len(args)-1]; last != "cd /workspace && exec tmux new-session -A -s isotty -c /workspace" {
+		t.Fatalf("remote command = %q", last)
+	}
+}
+
+func TestAttachShellFor(t *testing.T) {
+	dir := t.TempDir()
+	shell, err := attachShellFor(dir, true, false)
+	if err != nil || shell != (attachShell{Tmux: true, Secondary: true}) {
+		t.Fatalf("default = %#v, %v", shell, err)
+	}
+	if shell, err = attachShellFor(dir, false, true); err != nil || shell.Tmux {
+		t.Fatalf("--no-tmux = %#v, %v", shell, err)
+	}
+	if err := os.WriteFile(AttachConfigPath(dir), []byte("tmux: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if shell, err = attachShellFor(dir, false, false); err != nil || shell.Tmux {
+		t.Fatalf("tmux: false = %#v, %v", shell, err)
 	}
 }
 
