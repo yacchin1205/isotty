@@ -4,7 +4,7 @@
 FROM ubuntu:24.04
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        openssh-server sudo python3 tmux auditd ca-certificates \
+        openssh-server sudo python3 python3-tomli-w tmux auditd ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /run/sshd \
     && touch /var/log/audit/audit.log && chmod 600 /var/log/audit/audit.log

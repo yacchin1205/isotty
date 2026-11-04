@@ -34,7 +34,8 @@ func Active(agents []string) bool {
 // `opeco-link` MCP server of each configured agent with the agent hooks that
 // opeco publishes and `isotty-open` as its BROWSER, and installs opeco's
 // skill. qrPort is the port the project state holds for opeco. The script
-// travels base64-encoded so no shell quoting applies to it.
+// travels base64-encoded so no shell quoting applies to it, after the
+// commands that put the merge script it runs in the VM.
 func SetupCommand(agents []string, qrPort int) string {
 	flag := func(agent string) string {
 		if slices.Contains(agents, agent) {
@@ -48,7 +49,8 @@ func SetupCommand(agents []string, qrPort int) string {
 		"__OPEN_CLIENT__", browser.ClientPath,
 		"__INSTALL_CLAUDE__", flag("claude"),
 		"__INSTALL_CODEX__", flag("codex"),
-		"__MERGE_SCRIPT_B64__", base64.StdEncoding.EncodeToString([]byte(gateway.MergeScript())),
+		"__MERGE_SCRIPT__", gateway.MergeScriptPath,
 	).Replace(setupScript)
-	return fmt.Sprintf("printf %%s %s | base64 -d | bash", base64.StdEncoding.EncodeToString([]byte(script)))
+	run := fmt.Sprintf("printf %%s %s | base64 -d | bash", base64.StdEncoding.EncodeToString([]byte(script)))
+	return strings.Join(append(gateway.MergeScriptCommands(), run), " && ")
 }

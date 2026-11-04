@@ -17,11 +17,16 @@ func TestOpecoActiveNeedsAnAgent(t *testing.T) {
 
 func TestOpecoSetupCommand(t *testing.T) {
 	command := SetupCommand([]string{"claude"}, 61002)
+	parts := strings.Split(command, " && ")
+	if !strings.Contains(command, "python3-tomli-w") || !strings.Contains(command, " | sudo tee /usr/local/share/isotty/mcp-merge.py ") {
+		t.Fatalf("command = %q, want the merge script put in the VM first", command)
+	}
+	run := parts[len(parts)-1]
 	prefix, suffix := "printf %s ", " | base64 -d | bash"
-	if !strings.HasPrefix(command, prefix) || !strings.HasSuffix(command, suffix) {
+	if !strings.HasPrefix(run, prefix) || !strings.HasSuffix(run, suffix) {
 		t.Fatalf("command = %q", command)
 	}
-	script, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(strings.TrimPrefix(command, prefix), suffix))
+	script, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(strings.TrimPrefix(run, prefix), suffix))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,6 +39,7 @@ func TestOpecoSetupCommand(t *testing.T) {
 		"sha256sum --ignore-missing -c checksums.txt",
 		"sudo install -m 0755",
 		`env="{\"BROWSER\": \"$open_client\"}"`,
+		`merge="/usr/local/share/isotty/mcp-merge.py"`,
 		`install_skill "$HOME/.claude/skills"`,
 		`install_skill "$HOME/.codex/skills"`,
 	} {

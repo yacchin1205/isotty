@@ -35,7 +35,7 @@ if [ ! -f "$marker" ] || [ "$(cat "$marker")" != "$version" ]; then
   echo "$version" | sudo tee "$marker" >/dev/null
 fi
 
-printf %s "__MERGE_SCRIPT_B64__" | base64 -d > "$tmp/merge.py"
+merge="__MERGE_SCRIPT__"
 env="{\"BROWSER\": \"$open_client\"}"
 
 mkdir -p "$tmp/skill/references"
@@ -49,13 +49,13 @@ install_skill() {
 if [ "$install_claude" = 1 ]; then
   install_skill "$HOME/.claude/skills"
   curl -fsSL -o "$tmp/claude-hooks.json" "$raw/examples/agent-hooks/claude.json"
-  python3 "$tmp/merge.py" mcp-json "$HOME/.claude.json" opeco-link "$env" /usr/local/bin/opeco --qr-port "$qr_port" mcp
-  python3 "$tmp/merge.py" hooks "$HOME/.claude/settings.json" "$tmp/claude-hooks.json" opeco-link
+  python3 "$merge" mcp-json "$HOME/.claude.json" opeco-link "$env" /usr/local/bin/opeco --qr-port "$qr_port" mcp
+  python3 "$merge" hooks "$HOME/.claude/settings.json" "$tmp/claude-hooks.json" opeco-link
 fi
 
 if [ "$install_codex" = 1 ]; then
   install_skill "$HOME/.codex/skills"
   curl -fsSL -o "$tmp/codex-hooks.json" "$raw/examples/agent-hooks/codex.json"
-  python3 "$tmp/merge.py" mcp-toml "$HOME/.codex/config.toml" opeco opeco-link "$env" /usr/local/bin/opeco --qr-port "$qr_port" mcp
-  python3 "$tmp/merge.py" hooks "$HOME/.codex/hooks.json" "$tmp/codex-hooks.json" opeco-link
+  python3 "$merge" mcp-toml "$HOME/.codex/config.toml" opeco opeco-link "$env" /usr/local/bin/opeco --qr-port "$qr_port" mcp
+  python3 "$merge" hooks "$HOME/.codex/hooks.json" "$tmp/codex-hooks.json" opeco-link
 fi

@@ -1751,6 +1751,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	}); err != nil {
 		return State{}, err
 	}
+	if command := runtimecfg.NotifyCommand(cfg.Runtime.Agents); command != "" {
+		if err := a.runPhase("Making the agents ring the terminal bell", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, command, a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	}
 	if err := a.runPhase("Installing browser opener", func() error {
 		return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
 			ProjectID:    state.GCPProjectID,
