@@ -293,3 +293,37 @@ func TestHandlerReportsASyncFailure(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", status, text)
 	}
 }
+
+func TestFilesShowAMarkdownFileAsAPage(t *testing.T) {
+	project := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(project, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := "# Report\n\n![plot](../figs/plot.png) and <https://example.com/>\n\n<script>fetch('/')</script>\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+	if err := os.WriteFile(filepath.Join(project, "docs", "report.md"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := newFiles(t, project, func() error { return nil })
+
+	// The page is the server's own HTML, not the file: the source's HTML is
+	// left out, the headers that keep a page inert are still there, and the
+	// image's relative path is kept for the browser to resolve under the
+	// same token, next to the page.
+	resp := get(t, files.url("docs/report.md"), "")
+	body, _ := io.ReadAll(resp.Body)
+	page := string(body)
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("served %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	for _, want := range []string{"<title>report.md</title>", "<h1", ">Report</h1>", `<img src="../figs/plot.png"`, "<table>", `<a href="https://example.com/"`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("page lacks %s:\n%s", want, page)
+		}
+	}
+	if strings.Contains(page, "<script") || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "sandbox") {
+		t.Fatalf("the page is not inert:\n%s", page)
+	}
+	if resp := get(t, files.url("docs/README.MD"), ""); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("a missing file is still missing: %d", resp.StatusCode)
+	}
+}

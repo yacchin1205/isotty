@@ -18,7 +18,8 @@ it on their own. Only `http` and `https` URLs are opened.
 A path under `/workspace` opens in that browser too: the workspace is
 synced to the host, so the file is already on their machine. The host
 waits for the sync to carry it over and shows its copy in the browser, a
-PNG as an image, an HTML report as a page. Nothing is uploaded anywhere,
+PNG as an image, a Markdown or HTML report as a page with the images it
+refers to by relative path. Nothing is uploaded anywhere,
 and no server is needed. Only paths under `/workspace`, and only what the
 sync shares: secrets, keys and the like stay out of it on both sides. The
 page is shown inert; a script in an HTML file you wrote does not run.

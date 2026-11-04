@@ -43,6 +43,14 @@ instead of being shown. Served over `http`, the browser renders what it
 can and offers the rest as a download, which is the posture every URL open
 already has.
 
+A Markdown file is shown as a page, since that is what a report the agent
+writes most often is. The host converts it as it serves it, so the page is
+the file server's own HTML and not the file's: raw HTML in the source is
+left out, and an image the file names by a relative path is a request for
+the neighbour under the same prefix, resolved and checked like any other.
+Nothing that needs a script, such as a diagram or formula block, is
+rendered.
+
 What the VM wrote is shown inert. Every response carries a
 `Content-Security-Policy` of `sandbox`, so a script in an HTML or SVG file
 does not run and the document has no origin to read the server with, and

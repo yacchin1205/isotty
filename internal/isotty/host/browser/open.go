@@ -119,6 +119,10 @@ func (f *Files) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if isMarkdown(rel) {
+		renderMarkdown(w, path.Base(rel), file)
+		return
+	}
 	http.ServeContent(w, r, path.Base(rel), info.ModTime(), file)
 }
 
