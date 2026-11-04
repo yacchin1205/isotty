@@ -14,6 +14,7 @@ require (
 require (
 	github.com/creack/pty v1.1.21 // indirect
 	github.com/u-root/u-root v0.11.0 // indirect
+	github.com/yuin/goldmark v1.8.7 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/sys v0.44.0 // indirect
 )

@@ -621,7 +621,8 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, projectHash, workspacePath, shell, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	// Without a project on the host there is no synced copy to open.
+	return a.attachWithConnection(conn, projectHash, workspacePath, shell, nil, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -706,7 +707,15 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	if err != nil {
 		return err
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	var files *browser.Files
+	if !noHost {
+		files = &browser.Files{Workspace: workspacePath, Project: state.ProjectPath, Flush: func() error { return flushMutagenSession(state) }, Ignored: syncIgnored}
+		if err := files.Serve(); err != nil {
+			return err
+		}
+		defer files.Close()
+	}
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -731,7 +740,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, files *browser.Files, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -750,7 +759,7 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		deferredErrs = append(deferredErrs, err)
 		deferredMu.Unlock()
 	}
-	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg, record, fail)
+	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, files, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg, record, fail)
 	if err != nil {
 		return err
 	}
@@ -821,7 +830,7 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 // gatewayHandler mounts the host services the session may use. --no-host
 // mounts nothing, so no gateway starts and the VM gets no reverse forward,
 // which lets a second terminal attach beside the first.
-func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
+func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
 	mux := http.NewServeMux()
 	var services []string
 	if epweaveCfg != nil {
@@ -877,15 +886,15 @@ func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash 
 		services = append(services, "child VMs")
 	}
 	if !noHost {
-		mux.Handle("/open", browser.Handler(browser.OpenInBrowser, func(url string) {
-			event, err := runtimecfg.NewOpenVMEvent(projectHash, url)
+		mux.Handle("/open", browser.Handler(browser.OpenInBrowser, func(target string) {
+			event, err := runtimecfg.NewOpenVMEvent(projectHash, target)
 			if err == nil {
 				err = record(event)
 			}
 			if err != nil {
-				fail(fmt.Errorf("record open-url event for %s: %w", url, err))
+				fail(fmt.Errorf("record open-url event for %s: %w", target, err))
 			}
-		}))
+		}, files))
 		services = append(services, "browser open")
 	}
 	return mux, services, nil
