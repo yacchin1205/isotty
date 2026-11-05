@@ -795,12 +795,16 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 	if err != nil {
 		return err
 	}
-	if err := runtimecfg.RecordVMEvent(target, startEvent, a.debug); err != nil {
-		return fmt.Errorf("record attach-start event: %w", err)
-	}
-
-	if err := vmcfg.RefreshGCPSSHConfig(conn, a.debug); err != nil {
-		return fmt.Errorf("refresh SSH config: %w", err)
+	if err := a.waitAtTidepool(func() error {
+		if err := runtimecfg.RecordVMEvent(target, startEvent, a.debug); err != nil {
+			return fmt.Errorf("record attach-start event: %w", err)
+		}
+		if err := vmcfg.RefreshGCPSSHConfig(conn, a.debug); err != nil {
+			return fmt.Errorf("refresh SSH config: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	attachErr := vmcfg.RunGCPInteractiveSSH(sshArgs...)
