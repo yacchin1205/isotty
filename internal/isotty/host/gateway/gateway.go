@@ -92,6 +92,45 @@ func KeepaliveCommands() []string {
 	}
 }
 
+// PortHeld is the exit code of PortFreeCommand when the port stayed taken.
+const PortHeld = 75
+
+// PortWait covers the time sshd takes to notice a dead session under
+// KeepaliveCommands, with a margin.
+const PortWait = 90 * time.Second
+
+// portFree binds the port the way sshd does for `ssh -R`, so it succeeds
+// exactly when an attach's reverse forward would.
+const portFree = `import errno, socket, sys, time
+port, wait, held = int(sys.argv[1]), float(sys.argv[2]), int(sys.argv[3])
+deadline = time.monotonic() + wait
+while True:
+    with socket.socket() as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("127.0.0.1", port))
+            sys.exit(0)
+        except OSError as e:
+            if e.errno != errno.EADDRINUSE:
+                raise
+    if time.monotonic() >= deadline:
+        sys.exit(held)
+    time.sleep(0.5)
+`
+
+// PortFreeCommand succeeds once VMPort is free in the VM and exits with
+// PortHeld when it is still taken after wait. A session whose host went
+// away keeps the port until sshd notices, and the next attach cannot bind it
+// until then.
+func PortFreeCommand(wait time.Duration) string {
+	return portFreeCommand(VMPort, wait)
+}
+
+func portFreeCommand(port int, wait time.Duration) string {
+	encoded := base64.StdEncoding.EncodeToString([]byte(portFree))
+	return fmt.Sprintf("printf %%s %s | base64 -d | python3 - %d %g %d", encoded, port, wait.Seconds(), PortHeld)
+}
+
 // WriteFileCommand ships the content as base64 so no shell quoting applies to it.
 func WriteFileCommand(path, content string, sudo bool) string {
 	tee := "tee"
