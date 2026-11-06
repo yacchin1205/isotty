@@ -2,6 +2,7 @@ package opeco
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -122,5 +123,34 @@ func TestOpecoSetupCommand(t *testing.T) {
 	}
 	if strings.Contains(string(script), "__") {
 		t.Fatalf("script has an unrendered placeholder:\n%s", script)
+	}
+}
+
+// The reminder reaches an agent as the hook its runtime runs when a request
+// arrives: opeco's tool for that agent, with the words to say while no
+// session is running.
+func TestPairingHooksPassTheReminderToTheAgentsHookTool(t *testing.T) {
+	for _, agent := range []string{"claude", "codex"} {
+		var parsed struct {
+			Hooks map[string][]struct {
+				Hooks []struct {
+					Type, Server, Tool string
+					Input              map[string]string
+				}
+			}
+		}
+		if err := json.Unmarshal([]byte(pairingHooks(agent)), &parsed); err != nil {
+			t.Fatal(err)
+		}
+		if len(parsed.Hooks) != 1 || len(parsed.Hooks["UserPromptSubmit"]) != 1 || len(parsed.Hooks["UserPromptSubmit"][0].Hooks) != 1 {
+			t.Fatalf("%s: hooks = %+v, want one hook on UserPromptSubmit alone", agent, parsed.Hooks)
+		}
+		hook := parsed.Hooks["UserPromptSubmit"][0].Hooks[0]
+		if hook.Type != "mcp_tool" || hook.Server != "opeco-link" || hook.Tool != agent+"_hook_check" {
+			t.Fatalf("%s: hook = %+v", agent, hook)
+		}
+		if hook.Input["event"] != "UserPromptSubmit" || !strings.Contains(hook.Input["without_session"], "session_create") {
+			t.Fatalf("%s: input = %+v", agent, hook.Input)
+		}
 	}
 }
