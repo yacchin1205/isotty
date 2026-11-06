@@ -139,6 +139,9 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host children enable [--machine-type <type>]... [--max <n>] [--boot-disk-size <size>] [--expose <port>]...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host children disable")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host children show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host opeco enable")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host opeco disable")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host opeco show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt add <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt remove <package>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] runtime apt list")
@@ -604,7 +607,18 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 				return fmt.Errorf("parse remote agent config: %w", err)
 			}
 		}
-		if opeco.Active(agents) {
+		opecoSettings := opeco.Settings{}
+		if opecoSettings.User, err = opeco.LoadConfig(opeco.UserConfigPath(homeDir)); err != nil {
+			return err
+		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/opeco.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			if opecoSettings.Project, err = opeco.ParseConfig(data); err != nil {
+				return fmt.Errorf("parse remote opeco config: %w", err)
+			}
+		}
+		if opeco.Active(agents, opecoSettings) {
 			state, err := LoadState(projectHash)
 			if os.IsNotExist(err) {
 				return fmt.Errorf("this host has no state for project %s, so the opeco QR port that `isotty up` allocated is unknown; run `isotty up` in the project directory, or attach with --no-host", projectHash)
@@ -689,7 +703,11 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 		if err != nil {
 			return err
 		}
-		if opeco.Active(agents) {
+		opecoSettings, err := opeco.LoadSettings(homeDir, projectPath)
+		if err != nil {
+			return err
+		}
+		if opeco.Active(agents, opecoSettings) {
 			if err := addOpecoForward(forwardCfg, state.OpecoQRPort); err != nil {
 				return err
 			}
@@ -1534,7 +1552,7 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	if hasState {
 		state.OpecoQRPort = previous.OpecoQRPort
 	}
-	if opeco.Active(cfg.Runtime.Agents) && state.OpecoQRPort == 0 {
+	if opeco.Active(cfg.Runtime.Agents, cfg.Opeco) && state.OpecoQRPort == 0 {
 		others, err := ListStates()
 		if err != nil {
 			return State{}, err
@@ -1775,7 +1793,7 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	}); err != nil {
 		return State{}, err
 	}
-	if opeco.Active(cfg.Runtime.Agents) {
+	if opeco.Active(cfg.Runtime.Agents, cfg.Opeco) {
 		if err := a.runPhase("Installing opeco (QR page on port %d)", func() error {
 			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
 				ProjectID:    state.GCPProjectID,
@@ -1783,6 +1801,16 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 				InstanceName: state.InstanceName,
 			}, opeco.SetupCommand(cfg.Runtime.Agents, state.OpecoQRPort), a.debug)
 		}, state.OpecoQRPort); err != nil {
+			return State{}, err
+		}
+	} else if len(cfg.Runtime.Agents) > 0 {
+		if err := a.runPhase("Removing opeco", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, opeco.RemoveCommand(), a.debug)
+		}); err != nil {
 			return State{}, err
 		}
 	}

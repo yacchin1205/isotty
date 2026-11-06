@@ -36,8 +36,34 @@ The QR forward appears as `opeco-qr` beside the project's own forwards and
 exists only while attached. `attach --no-host` skips it together with the
 other forwards and the gateway.
 
-There is nothing to configure: opeco is installed whenever
-`.isotty/agent.yaml` lists an agent.
+opeco needs no configuration: it is installed whenever
+`.isotty/agent.yaml` lists an agent, unless it is turned off.
+
+## Turning it off
+
+For one project:
+
+```bash
+isotty host opeco disable
+isotty host opeco enable
+isotty host opeco show
+```
+
+`disable` writes `enabled: false` to `.isotty/opeco.yaml` and `enable`
+removes that file. For every project of a host user, the same line goes in
+`~/.isotty/opeco.yaml`, which is never synced.
+
+Either file turns opeco off, and neither turns it on over the other. The
+project's file is synced into the VM, where the agent can rewrite it; were
+it able to overrule the host user's, the VM could bring back the QR forward
+and the opener a human had refused. All the VM can do with its file is turn
+its own opeco off.
+
+The setting takes effect at the next `isotty up`. With opeco off, `up`
+removes it from the VM instead of installing it: the binary, the MCP server
+and the hooks in each agent's settings, and the skill. It does so on every
+`up`, since an agent's saved state carries the registration into the next
+VM. `attach` then adds no QR forward.
 
 ## The QR port
 
@@ -52,7 +78,7 @@ attach, because the forward cannot bind.
 
 ## What `up` installs
 
-On every `isotty up`:
+On every `isotty up`, unless opeco is turned off:
 
 * the latest opeco release from GitHub Releases, verified against its
   `checksums.txt`, as `/usr/local/bin/opeco`

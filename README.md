@@ -350,6 +350,7 @@ opeco notifications:
 
 When an agent is configured, `isotty up` also installs [opeco](https://github.com/yacchin1205/opeco-link) in the VM and registers it as the agent's `opeco-link` MCP server, so the agent can keep you informed on your phone while your machine sleeps.
 Pairing happens once while attached: the QR page opens in your browser through the attach session.
+`isotty host opeco disable` keeps it out of a project's VM, and `enabled: false` in `~/.isotty/opeco.yaml` out of all of yours.
 
 See [opeco design](docs/OPECO.md).
 

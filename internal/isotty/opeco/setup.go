@@ -24,10 +24,13 @@ const minimumVersion = "2026.10.2"
 //go:embed assets/opeco-setup.sh
 var setupScript string
 
-// Active reports whether the VM gets opeco: always, once there is an agent
-// to use it.
-func Active(agents []string) bool {
-	return len(agents) > 0
+//go:embed assets/opeco-remove.sh
+var removeScript string
+
+// Active reports whether the VM gets opeco: unless it is turned off, once
+// there is an agent to use it.
+func Active(agents []string, settings Settings) bool {
+	return len(agents) > 0 && settings.Enabled()
 }
 
 // SetupCommand installs the latest opeco release, registers it as the
@@ -51,6 +54,17 @@ func SetupCommand(agents []string, qrPort int) string {
 		"__INSTALL_CODEX__", flag("codex"),
 		"__MERGE_SCRIPT__", gateway.MergeScriptPath,
 	).Replace(setupScript)
+	return runWithMergeScript(script)
+}
+
+// RemoveCommand takes out of the VM what SetupCommand put there, for either
+// agent: the saved state of an agent brings the registration back into a
+// new VM, so turning opeco off means removing it on every `up`.
+func RemoveCommand() string {
+	return runWithMergeScript(strings.ReplaceAll(removeScript, "__MERGE_SCRIPT__", gateway.MergeScriptPath))
+}
+
+func runWithMergeScript(script string) string {
 	run := fmt.Sprintf("printf %%s %s | base64 -d | bash", base64.StdEncoding.EncodeToString([]byte(script)))
 	return strings.Join(append(gateway.MergeScriptCommands(), run), " && ")
 }

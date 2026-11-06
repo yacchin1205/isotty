@@ -17,6 +17,7 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host/github"
 	"github.com/yazawa/isotty/internal/isotty/host/gitlab"
 	"github.com/yazawa/isotty/internal/isotty/host/google"
+	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
@@ -43,6 +44,7 @@ type Config struct {
 	DNS *dns.ProjectConfig
 	// Children is nil when the project may not create child VMs.
 	Children *child.ProjectConfig
+	Opeco    opeco.Settings
 }
 
 func LoadConfig(projectPath string) (Config, error) {
@@ -102,6 +104,11 @@ func LoadConfig(projectPath string) (Config, error) {
 		return Config{}, err
 	}
 
+	opecoSettings, err := opeco.LoadSettings(homeDir, projectPath)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		ProjectPath:  projectPath,
 		ProjectHash:  projectHash,
@@ -117,6 +124,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		GAS:          gasConfig,
 		DNS:          dnsConfig,
 		Children:     childConfig,
+		Opeco:        opecoSettings,
 	}, nil
 }
 
