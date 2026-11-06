@@ -13,7 +13,7 @@ import (
 
 func Run(projectPath, projectHash, homeDir string, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("host requires a subcommand: forward, epweave, github, gitlab, google, gas, dns, or children")
+		return errors.New("host requires a subcommand: forward, epweave, github, gitlab, google, gas, dns, children, or opeco")
 	}
 
 	switch args[0] {
@@ -33,6 +33,8 @@ func Run(projectPath, projectHash, homeDir string, args []string, stdout, stderr
 		return runDNS(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
 	case "children":
 		return runChildren(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
+	case "opeco":
+		return runOpeco(projectPath, homeDir, args[1:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown host subcommand %q", args[0])
 	}

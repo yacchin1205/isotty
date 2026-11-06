@@ -51,6 +51,8 @@ if [ "$install_claude" = 1 ]; then
   curl -fsSL -o "$tmp/claude-hooks.json" "$raw/examples/agent-hooks/claude.json"
   python3 "$merge" mcp-json "$HOME/.claude.json" opeco-link "$env" /usr/local/bin/opeco --qr-port "$qr_port" mcp
   python3 "$merge" hooks "$HOME/.claude/settings.json" "$tmp/claude-hooks.json" opeco-link
+  printf %s "__CLAUDE_PAIRING_HOOKS__" | base64 -d > "$tmp/claude-pairing-hooks.json"
+  python3 "$merge" hooks "$HOME/.claude/settings.json" "$tmp/claude-pairing-hooks.json" opeco-link
 fi
 
 if [ "$install_codex" = 1 ]; then
@@ -58,4 +60,6 @@ if [ "$install_codex" = 1 ]; then
   curl -fsSL -o "$tmp/codex-hooks.json" "$raw/examples/agent-hooks/codex.json"
   python3 "$merge" mcp-toml "$HOME/.codex/config.toml" opeco-link "$env" /usr/local/bin/opeco --qr-port "$qr_port" mcp
   python3 "$merge" hooks "$HOME/.codex/hooks.json" "$tmp/codex-hooks.json" opeco-link
+  printf %s "__CODEX_PAIRING_HOOKS__" | base64 -d > "$tmp/codex-pairing-hooks.json"
+  python3 "$merge" hooks "$HOME/.codex/hooks.json" "$tmp/codex-pairing-hooks.json" opeco-link
 fi

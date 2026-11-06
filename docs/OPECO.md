@@ -36,8 +36,51 @@ The QR forward appears as `opeco-qr` beside the project's own forwards and
 exists only while attached. `attach --no-host` skips it together with the
 other forwards and the gateway.
 
-There is nothing to configure: opeco is installed whenever
-`.isotty/agent.yaml` lists an agent.
+opeco needs no configuration: it is installed whenever
+`.isotty/agent.yaml` lists an agent, unless it is turned off.
+
+## Pairing without being asked
+
+An agent with opeco pairs when the person asks it to. In the VM that is too
+late a habit: the person hands over work and leaves, and pairing takes them
+scanning a code. So as each request arrives while the agent has no opeco
+session, a hook tells it to pair before it starts, unless the request is
+only a quick question, and not to ask again once the person has declined.
+Once a session runs, the hook says nothing of it.
+
+The hook is IsoTTY's, on the `UserPromptSubmit` event of each agent, and
+calls opeco's hook tool with the words as `without_session`: only the opeco
+process knows whether a session is running, while pushing to pair is a
+choice of this environment that opeco does not make for its other users.
+Codex asks the person to review a new hook with `/hooks` before it runs.
+
+The reminder comes and goes with opeco: there is no switch for it alone.
+
+## Turning it off
+
+For one project:
+
+```bash
+isotty host opeco disable
+isotty host opeco enable
+isotty host opeco show
+```
+
+`disable` writes `enabled: false` to `.isotty/opeco.yaml` and `enable`
+removes that file. For every project of a host user, the same line goes in
+`~/.isotty/opeco.yaml`, which is never synced.
+
+Either file turns opeco off, and neither turns it on over the other. The
+project's file is synced into the VM, where the agent can rewrite it; were
+it able to overrule the host user's, the VM could bring back the QR forward
+and the opener a human had refused. All the VM can do with its file is turn
+its own opeco off.
+
+The setting takes effect at the next `isotty up`. With opeco off, `up`
+removes it from the VM instead of installing it: the binary, the MCP server
+and the hooks in each agent's settings, and the skill. It does so on every
+`up`, since an agent's saved state carries the registration into the next
+VM. `attach` then adds no QR forward.
 
 ## The QR port
 
@@ -52,21 +95,22 @@ attach, because the forward cannot bind.
 
 ## What `up` installs
 
-On every `isotty up`:
+On every `isotty up`, unless opeco is turned off:
 
 * the latest opeco release from GitHub Releases, verified against its
   `checksums.txt`, as `/usr/local/bin/opeco`
 * `/usr/local/bin/isotty-open`, which posts a URL to the host gateway
 * for Claude: `opeco-link` in `~/.claude.json` as an MCP server running
   `opeco --qr-port <port> mcp` with `BROWSER=/usr/local/bin/isotty-open`,
-  opeco's agent hooks merged into `~/.claude/settings.json`, and opeco's
-  skill under `~/.claude/skills/`
+  opeco's agent hooks and the pairing reminder merged into
+  `~/.claude/settings.json`, and opeco's skill under `~/.claude/skills/`
 * for Codex: the same server and environment as the `[mcp_servers.opeco-link]`
-  table of `~/.codex/config.toml`, opeco's hooks merged into
-  `~/.codex/hooks.json`, and opeco's skill under `~/.codex/skills/`
+  table of `~/.codex/config.toml`, opeco's hooks and the pairing reminder
+  merged into `~/.codex/hooks.json`, and opeco's skill under
+  `~/.codex/skills/`
 
-The hooks and the skill are fetched from the opeco repository at the same
-release, so opeco stays the only place that defines them.
+opeco's hooks and the skill are fetched from the opeco repository at the
+same release, so opeco stays the only place that defines them.
 
 IsoTTY follows opeco's latest release rather than pinning one: opeco is a
 client of the opeco.link service and its apps, and the latest release is the
