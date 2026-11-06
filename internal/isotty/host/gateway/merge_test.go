@@ -146,3 +146,86 @@ func TestMCPServerTableIsReplacedWhole(t *testing.T) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}
 }
+
+func readJSON(t *testing.T, path string) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// Taking a server out takes its entry and its hooks and nothing else: what
+// the human or the agent put beside them stays, a file with nothing of the
+// server's is not rewritten, and a missing file is not created.
+func TestRemoveTakesOutOnlyTheServer(t *testing.T) {
+	needPython(t)
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	run := func(args ...string) {
+		t.Helper()
+		if out, err := merge(t, dir, args...); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+	}
+
+	claude := write("claude.json", `{"theme": "dark", "mcpServers": {"opeco-link": {"command": "/usr/local/bin/opeco"}, "mine": {"command": "mine"}}}`)
+	run("mcp-json-remove", claude, "opeco-link")
+	if got, want := readJSON(t, claude), map[string]any{"theme": "dark", "mcpServers": map[string]any{"mine": map[string]any{"command": "mine"}}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+
+	codex := write("config.toml", "model = \"o3\"\n\n[mcp_servers.opeco-link]\ncommand = \"/usr/local/bin/opeco\"\n\n[mcp_servers.mine]\ncommand = \"mine\"\n\n[hooks.state.\"/home/u/.codex/hooks.json:stop:0:0\"]\ntrusted_hash = \"sha256:abc\"\n")
+	run("mcp-toml-remove", codex, "opeco-link")
+	if got, want := readTOML(t, codex), map[string]any{
+		"model":       "o3",
+		"mcp_servers": map[string]any{"mine": map[string]any{"command": "mine"}},
+		"hooks":       map[string]any{"state": map[string]any{"/home/u/.codex/hooks.json:stop:0:0": map[string]any{"trusted_hash": "sha256:abc"}}},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+
+	// PostToolUse holds a hook of the human's beside opeco's; Stop holds
+	// opeco's alone.
+	hooks := write("settings.json", `{"theme": "dark", "hooks": {
+		"PostToolUse": [
+			{"matcher": "Edit", "hooks": [{"type": "command", "command": "mine"}]},
+			{"matcher": "*", "hooks": [{"type": "mcp_tool", "server": "opeco-link", "tool": "claude_hook_check"}]}
+		],
+		"Stop": [{"hooks": [{"type": "mcp_tool", "server": "opeco-link", "tool": "claude_hook_check"}]}]
+	}}`)
+	run("hooks-remove", hooks, "opeco-link")
+	if got, want := readJSON(t, hooks), map[string]any{"theme": "dark", "hooks": map[string]any{
+		"PostToolUse": []any{map[string]any{"matcher": "Edit", "hooks": []any{map[string]any{"type": "command", "command": "mine"}}}},
+	}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+
+	for _, untouched := range []struct{ mode, name, content string }{
+		{"mcp-json-remove", "other.json", `{"mcpServers":{"mine":{"command":"mine"}}}`},
+		{"mcp-toml-remove", "other.toml", "# mine\nmcp_servers.mine.command = \"mine\"\n"},
+		{"hooks-remove", "other-hooks.json", `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"mine"}]}]}}`},
+	} {
+		path := write(untouched.name, untouched.content)
+		run(untouched.mode, path, "opeco-link")
+		if got, _ := os.ReadFile(path); string(got) != untouched.content {
+			t.Fatalf("%s rewrote a file with nothing to take out:\n%s", untouched.mode, got)
+		}
+		missing := filepath.Join(dir, "missing-"+untouched.name)
+		run(untouched.mode, missing, "opeco-link")
+		if _, err := os.Stat(missing); !os.IsNotExist(err) {
+			t.Fatalf("%s created %s", untouched.mode, missing)
+		}
+	}
+}
