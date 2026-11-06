@@ -279,20 +279,29 @@ func newVMEvent(projectHash, eventType string) (VMEventRecord, error) {
 }
 
 func RecordVMEvent(target RemoteTarget, record VMEventRecord, debug bool) error {
+	command, err := VMEventCommand(record)
+	if err != nil {
+		return err
+	}
+	return target.Run(command, debug)
+}
+
+// VMEventCommand is what RecordVMEvent runs in the VM, for a caller that
+// has more to do there in the same round trip.
+func VMEventCommand(record VMEventRecord) (string, error) {
 	data, err := json.Marshal(record)
 	if err != nil {
-		return fmt.Errorf("marshal VM event: %w", err)
+		return "", fmt.Errorf("marshal VM event: %w", err)
 	}
 
 	script := `import datetime, json, os, sys; path = sys.argv[1]; entry = json.loads(sys.argv[2]); entry["time"] = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"); os.makedirs(os.path.dirname(path), exist_ok=True); handle = open(path, "a", encoding="utf-8"); handle.write(json.dumps(entry, separators=(",", ":")) + "\n"); handle.close()`
 
-	command := fmt.Sprintf(
+	return fmt.Sprintf(
 		"sudo python3 -c %s %s %s",
 		shellJoin([]string{script}),
 		shellJoin([]string{vmEventLogPath}),
 		shellJoin([]string{string(data)}),
-	)
-	return target.Run(command, debug)
+	), nil
 }
 
 func auditRules() string {
