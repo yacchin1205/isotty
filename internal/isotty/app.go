@@ -813,9 +813,22 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 	if err != nil {
 		return err
 	}
+	startCommand, err := runtimecfg.VMEventCommand(startEvent)
+	if err != nil {
+		return err
+	}
+	// The round trip that records the event also tells whether the VM port
+	// of the gateway is free, so an attach that finds it free pays nothing.
+	if reverse != nil {
+		startCommand += " && " + gateway.PortFreeCommand(0)
+	}
+	portHeld := false
 	if err := a.waitAtTidepool(func() error {
-		if err := runtimecfg.RecordVMEvent(target, startEvent, a.debug); err != nil {
-			return fmt.Errorf("record attach-start event: %w", err)
+		if err := target.Run(startCommand, a.debug); err != nil {
+			if reverse == nil || target.ExitCode(err) != gateway.PortHeld {
+				return fmt.Errorf("record attach-start event: %w", err)
+			}
+			portHeld = true
 		}
 		if err := vmcfg.RefreshGCPSSHConfig(conn, a.debug); err != nil {
 			return fmt.Errorf("refresh SSH config: %w", err)
@@ -825,7 +838,13 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		return err
 	}
 
-	attachErr := vmcfg.RunGCPInteractiveSSH(sshArgs...)
+	var attachErr error
+	if portHeld {
+		attachErr = a.waitForGatewayPort(target)
+	}
+	if attachErr == nil {
+		attachErr = vmcfg.RunGCPInteractiveSSH(sshArgs...)
+	}
 
 	result := "ok"
 	if attachErr != nil {
@@ -847,6 +866,21 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 	deferredMu.Lock()
 	defer deferredMu.Unlock()
 	return errors.Join(append([]error{attachErr}, deferredErrs...)...)
+}
+
+// waitForGatewayPort waits out a session whose host went away: it holds the
+// gateway's VM port until sshd notices, and ssh would fail on the forward
+// with a message that does not say so. A live attach holds the port the
+// same way and for good, so the wait is bounded and says how to join one.
+func (a *App) waitForGatewayPort(target runtimecfg.RemoteTarget) error {
+	a.phase("VM port %d is still taken; waiting up to %d seconds for a dropped session to let go of it (a second terminal beside a live attach is `isotty attach --no-host`)", gateway.VMPort, int(gateway.PortWait.Seconds()))
+	err := a.waitAtTidepool(func() error {
+		return target.Run(gateway.PortFreeCommand(gateway.PortWait), a.debug)
+	})
+	if err != nil && target.ExitCode(err) == gateway.PortHeld {
+		return fmt.Errorf("VM port %d is held by another attach; use `isotty attach --no-host` for a second terminal", gateway.VMPort)
+	}
+	return err
 }
 
 // gatewayHandler mounts the host services the session may use. --no-host

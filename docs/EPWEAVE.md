@@ -203,10 +203,15 @@ Three settings make that failure prompt instead of a hang:
   bind fails the attach instead of leaving a session whose forwards silently
   point nowhere; this applies to `-L` forwards as well
 
-A second `isotty attach` to the same VM therefore fails while the first is
-alive; use `isotty attach --no-host` for the second terminal. That flag
-skips the forwards and the gateway, and joins the first terminal's tmux
-session.
+An attach that follows a dropped session, as after the host changed
+networks, finds the VM port still held until sshd lets go of it. It checks
+the port in the VM before starting `ssh`, says that the port is taken and
+waits up to 90 seconds for it.
+
+A second `isotty attach` to the same VM waits the same way and then fails,
+since the first holds the port for as long as it is alive; use
+`isotty attach --no-host` for the second terminal. That flag skips the
+forwards and the gateway, and joins the first terminal's tmux session.
 
 ## Security Posture
 

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -165,8 +166,27 @@ func (h *harness) waitFor(what string, timeout time.Duration, ok func() bool) {
 type session struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
-	output bytes.Buffer
+	output terminalOutput
 	done   chan error
+}
+
+// terminalOutput is what the attach has written so far; a test reads it
+// while the attach still writes.
+type terminalOutput struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (o *terminalOutput) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.buf.Write(p)
+}
+
+func (o *terminalOutput) String() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.buf.String()
 }
 
 func (h *harness) attach(args ...string) *session {

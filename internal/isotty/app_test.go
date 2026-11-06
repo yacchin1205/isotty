@@ -1,6 +1,8 @@
 package isotty
 
 import (
+	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -8,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/yazawa/isotty/internal/isotty/host"
+	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
@@ -161,5 +164,30 @@ func TestAddOpecoForwardUsesTheProjectPort(t *testing.T) {
 	}
 	if err := addOpecoForward(forwardCfg, 61003); err == nil {
 		t.Fatal("a project forward named opeco-qr must be rejected")
+	}
+}
+
+// A live attach never lets go of the gateway's VM port, so the wait for it
+// ends by saying how to join that attach; a port that came free is no error.
+func TestWaitForGatewayPortSaysHowToJoinALiveAttach(t *testing.T) {
+	held := errors.New("exit status 75")
+	target := runtimecfg.RemoteTarget{
+		Run: func(string, bool) error { return held },
+		ExitCode: func(err error) int {
+			if err == held {
+				return gateway.PortHeld
+			}
+			return -1
+		},
+	}
+	app := &App{stdout: &bytes.Buffer{}}
+	err := app.waitForGatewayPort(target)
+	if err == nil || !strings.Contains(err.Error(), "isotty attach --no-host") {
+		t.Fatalf("error with the port still held = %v, want one naming `isotty attach --no-host`", err)
+	}
+
+	target.Run = func(string, bool) error { return nil }
+	if err := app.waitForGatewayPort(target); err != nil {
+		t.Fatalf("error once the port is free = %v", err)
 	}
 }
