@@ -12,6 +12,7 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host"
 	"github.com/yazawa/isotty/internal/isotty/host/child"
 	"github.com/yazawa/isotty/internal/isotty/host/dns"
+	"github.com/yazawa/isotty/internal/isotty/host/docker"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
 	"github.com/yazawa/isotty/internal/isotty/host/gas"
 	"github.com/yazawa/isotty/internal/isotty/host/github"
@@ -36,6 +37,8 @@ type Config struct {
 	GitHub *github.ProjectConfig
 	// GitLab is nil when the project has no pinned GitLab project.
 	GitLab *gitlab.ProjectConfig
+	// Docker is nil when the project has no pinned image repository.
+	Docker *docker.ProjectConfig
 	// Google is nil when the project has not enabled the Google token gateway.
 	Google *google.ProjectConfig
 	// GAS is nil when the project has not enabled the Apps Script relay.
@@ -87,6 +90,10 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	dockerConfig, err := docker.Kind.LoadPinned(projectPath, projectHash, homeDir)
+	if err != nil {
+		return Config{}, err
+	}
 	googleConfig, err := host.LoadGoogleProjectConfig(projectPath, projectHash, homeDir)
 	if err != nil {
 		return Config{}, err
@@ -120,6 +127,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		Epweave:      epweaveConfig,
 		GitHub:       githubConfig,
 		GitLab:       gitlabConfig,
+		Docker:       dockerConfig,
 		Google:       googleConfig,
 		GAS:          gasConfig,
 		DNS:          dnsConfig,

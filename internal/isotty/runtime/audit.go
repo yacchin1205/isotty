@@ -251,6 +251,18 @@ func NewChildVMEvent(projectHash, operation, name, instance, shape, expose, exte
 	return record, nil
 }
 
+// NewDockerVMEvent records an image the host's Docker pushed for the VM,
+// with the tag it went under and the digest the registry has it as.
+func NewDockerVMEvent(projectHash, repo, tag, digest string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, "docker-push")
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.Repo = repo
+	record.Target = tag + "@" + digest
+	return record, nil
+}
+
 // NewOpenVMEvent records a URL the VM asked the host to open in its browser.
 func NewOpenVMEvent(projectHash, url string) (VMEventRecord, error) {
 	record, err := newVMEvent(projectHash, "open-url")

@@ -22,7 +22,9 @@ func (s *specs) Set(v string) error { *s = append(*s, v); return nil }
 // where its credential lives.
 type repoPins struct {
 	kind forge.Kind
-	// resolveRemote turns a remote name of the project into a repository key.
+	// resolveRemote turns a remote name of the project into a repository
+	// key; nil where repositories are not behind git remotes, which leaves
+	// --remote out.
 	resolveRemote func(projectPath, remote string) (string, error)
 	// verify checks the repository with the host credential and returns its
 	// name as the forge spells it.
@@ -69,9 +71,19 @@ func (p repoPins) repoFlags(projectPath string, remotes, repos specs) ([]string,
 		found = append(found, repo)
 	}
 	if len(found) == 0 {
+		if p.resolveRemote == nil {
+			return nil, errors.New("name at least one repository with --repo <repository>")
+		}
 		return nil, errors.New("name at least one repository with --remote <name> or --repo <repository>")
 	}
 	return found, nil
+}
+
+// remoteFlag offers --remote where repositories are behind git remotes.
+func (p repoPins) remoteFlag(fs *flag.FlagSet, remotes *specs, usage string) {
+	if p.resolveRemote != nil {
+		fs.Var(remotes, "remote", usage)
+	}
 }
 
 func (p repoPins) parse(name string, args []string, stderr io.Writer, define func(*flag.FlagSet)) (bool, error) {
@@ -97,7 +109,7 @@ func (p repoPins) add(projectPath, projectHash, homeDir string, args []string, s
 	var remotes, repos specs
 	var allow string
 	ok, err := p.parse("add", args, stderr, func(fs *flag.FlagSet) {
-		fs.Var(&remotes, "remote", "remote of the project whose repository to pin (repeatable)")
+		p.remoteFlag(fs, &remotes, "remote of the project whose repository to pin (repeatable)")
 		fs.Var(&repos, "repo", "repository to pin (repeatable)")
 		fs.StringVar(&allow, "allow", string(forge.AccessRead), "what the VM may do there: read, comment, write or admin")
 	})
@@ -136,7 +148,7 @@ func (p repoPins) add(projectPath, projectHash, homeDir string, args []string, s
 func (p repoPins) remove(projectPath, projectHash, homeDir string, args []string, stdout, stderr io.Writer) error {
 	var remotes, repos specs
 	ok, err := p.parse("remove", args, stderr, func(fs *flag.FlagSet) {
-		fs.Var(&remotes, "remote", "remote of the project whose repository to remove (repeatable)")
+		p.remoteFlag(fs, &remotes, "remote of the project whose repository to remove (repeatable)")
 		fs.Var(&repos, "repo", "repository to remove (repeatable)")
 	})
 	if err != nil || !ok {

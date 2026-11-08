@@ -1,7 +1,8 @@
 // Package forge holds what the GitHub and GitLab relays share: the access
 // levels, the pinned repository list, its synced file and its host pin.
 // The relays themselves differ in URL shapes, APIs and credentials, and
-// live in their own packages.
+// live in their own packages. The pinned list also serves the image
+// repositories of package docker, which are pinned the same way.
 package forge
 
 import (
