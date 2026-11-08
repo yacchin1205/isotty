@@ -346,6 +346,12 @@ The agent can open a URL in your browser: `isotty-open <url>` in the VM shows it
 
 See [Browser design](docs/BROWSER.md).
 
+Private container images:
+
+`isotty host docker add --repo registry.example.org/team/base` lets the VM pull images of that repository with `isotty-docker pull registry.example.org/team/base:1.2`, and with `--allow write` push to it with `isotty-docker push`. The host's Docker talks to the registry, with its own login and from its own network, so the VM holds no registry credential and a registry behind a VPN is in reach; nothing stays in the host's Docker afterwards unless `~/.isotty/docker.yaml` says pushed images may, and every push is in the audit log.
+
+See [Docker design](docs/DOCKER.md).
+
 opeco notifications:
 
 When an agent is configured, `isotty up` also installs [opeco](https://github.com/yacchin1205/opeco-link) in the VM and registers it as the agent's `opeco-link` MCP server, so the agent can keep you informed on your phone while your machine sleeps.
@@ -469,6 +475,7 @@ IsoTTY stores local state under:
 * [DNS design](docs/DNS.md)
 * [Child VM design](docs/CHILD.md)
 * [Browser design](docs/BROWSER.md)
+* [Docker design](docs/DOCKER.md)
 * [opeco design](docs/OPECO.md)
 * [Audit design](docs/AUDIT.md)
 * [Agent design](docs/AGENT.md)

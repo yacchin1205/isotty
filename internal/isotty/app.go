@@ -2,6 +2,7 @@ package isotty
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"flag"
@@ -19,6 +20,7 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host/browser"
 	"github.com/yazawa/isotty/internal/isotty/host/child"
 	"github.com/yazawa/isotty/internal/isotty/host/dns"
+	"github.com/yazawa/isotty/internal/isotty/host/docker"
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
 	"github.com/yazawa/isotty/internal/isotty/host/forge"
 	"github.com/yazawa/isotty/internal/isotty/host/gas"
@@ -126,6 +128,10 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host gitlab remove [--remote <name>]... [--repo <host/group/project>]...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host gitlab clear")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host gitlab show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker add --repo <registry/path>... [--allow read|write]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker remove --repo <registry/path>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker clear")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host google enable [--key <service-account.json>] --scope <scope>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host google disable")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host google show")
@@ -494,6 +500,7 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 	var epweaveCfg *epweave.ProjectConfig
 	var githubCfg *github.ProjectConfig
 	var gitlabCfg *gitlab.ProjectConfig
+	var dockerCfg *docker.ProjectConfig
 	var googleCfg *google.ProjectConfig
 	var gasCfg *gas.ProjectConfig
 	var dnsCfg *dns.ProjectConfig
@@ -546,6 +553,19 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 				return err
 			}
 			gitlabCfg = &verified
+		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/docker.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			synced, err := docker.Kind.ParseProjectConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote docker config: %w", err)
+			}
+			verified, err := docker.Kind.VerifyPinned(homeDir, projectHash, synced)
+			if err != nil {
+				return err
+			}
+			dockerCfg = &verified
 		}
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/google.yaml"); err != nil {
 			return err
@@ -636,7 +656,7 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 		return err
 	}
 	// Without a project on the host there is no synced copy to open.
-	return a.attachWithConnection(conn, projectHash, workspacePath, shell, nil, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, shell, nil, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -661,6 +681,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	var epweaveCfg *epweave.ProjectConfig
 	var githubCfg *github.ProjectConfig
 	var gitlabCfg *gitlab.ProjectConfig
+	var dockerCfg *docker.ProjectConfig
 	var googleCfg *google.ProjectConfig
 	var gasCfg *gas.ProjectConfig
 	var dnsCfg *dns.ProjectConfig
@@ -680,6 +701,10 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 			return err
 		}
 		gitlabCfg, err = gitlab.Kind.LoadPinned(projectPath, state.ProjectHash, homeDir)
+		if err != nil {
+			return err
+		}
+		dockerCfg, err = docker.Kind.LoadPinned(projectPath, state.ProjectHash, homeDir)
 		if err != nil {
 			return err
 		}
@@ -733,7 +758,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 		}
 		defer files.Close()
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -758,7 +783,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, files *browser.Files, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, files *browser.Files, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -777,7 +802,7 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		deferredErrs = append(deferredErrs, err)
 		deferredMu.Unlock()
 	}
-	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, files, epweaveCfg, githubCfg, gitlabCfg, googleCfg, gasCfg, dnsCfg, childCfg, record, fail)
+	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, files, epweaveCfg, githubCfg, gitlabCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, record, fail)
 	if err != nil {
 		return err
 	}
@@ -843,7 +868,20 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		attachErr = a.waitForGatewayPort(target)
 	}
 	if attachErr == nil {
+		stopSweep := func() {}
+		if dockerCfg != nil && !shell.Secondary {
+			homeDir, err := isottyHome()
+			if err != nil {
+				return err
+			}
+			dockerHost, err := docker.LoadHostConfig(homeDir)
+			if err != nil {
+				return err
+			}
+			stopSweep = docker.CacheFor(projectHash).KeepSwept(docker.CLI{}, dockerHost.Keep, fail)
+		}
 		attachErr = vmcfg.RunGCPInteractiveSSH(sshArgs...)
+		stopSweep()
 	}
 
 	result := "ok"
@@ -886,7 +924,7 @@ func (a *App) waitForGatewayPort(target runtimecfg.RemoteTarget) error {
 // gatewayHandler mounts the host services the session may use. --no-host
 // mounts nothing, so no gateway starts and the VM gets no reverse forward,
 // which lets a second terminal attach beside the first.
-func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
+func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
 	mux := http.NewServeMux()
 	var services []string
 	if epweaveCfg != nil {
@@ -912,6 +950,14 @@ func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash 
 		}
 		mux.Handle("/gitlab/", http.StripPrefix("/gitlab", handler))
 		services = append(services, "GitLab")
+	}
+	if dockerCfg != nil {
+		handler, err := a.dockerHandler(*dockerCfg, projectHash, record, fail)
+		if err != nil {
+			return nil, nil, err
+		}
+		mux.Handle("/docker/", http.StripPrefix("/docker", handler))
+		services = append(services, "Docker")
 	}
 	if googleCfg != nil {
 		handler, err := a.googleHandler(*googleCfg, projectHash, record)
@@ -985,6 +1031,26 @@ func (a *App) dnsHandler(cfg dns.ProjectConfig, projectHash string, record func(
 		}
 		return record(vmEvent)
 	}), nil
+}
+
+// dockerHandler carries images between the host's Docker and the VM's for
+// the pinned repositories, recording every push in the VM event log.
+func (a *App) dockerHandler(cfg docker.ProjectConfig, projectHash string, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, error) {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return nil, err
+	}
+	host, err := docker.LoadHostConfig(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	return docker.Handler(cfg, host, docker.CLI{}, docker.CacheFor(projectHash), func(event docker.PushEvent) error {
+		vmEvent, err := runtimecfg.NewDockerVMEvent(projectHash, event.Repo, event.Tag, event.Digest)
+		if err != nil {
+			return err
+		}
+		return record(vmEvent)
+	}, fail), nil
 }
 
 // epweaveHandler connects to ep_weave with the host credentials and serves
@@ -1327,6 +1393,12 @@ func (a *App) runDown(args []string) error {
 	}
 
 	if err := a.runPhase("Removing local state", func() error {
+		// What passed between the VM and its registries is of no use
+		// without the VM. An image that could not be let go of is named
+		// here for the human, and the state goes all the same.
+		if err := docker.CacheFor(state.ProjectHash).Remove(context.Background(), docker.CLI{}); err != nil {
+			fmt.Fprintf(a.stderr, "warning: what the host kept of this project's Docker images was not all let go of: %v\n", err)
+		}
 		return DeleteState(state.ProjectHash)
 	}); err != nil {
 		return fmt.Errorf("remove state: %w", err)
@@ -1750,6 +1822,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
 			}, gitlab.SetupCommand(cfg.Runtime.Agents), a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	}
+	if cfg.Docker != nil {
+		if err := a.runPhase("Installing Docker client", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, docker.SetupCommand(cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}
