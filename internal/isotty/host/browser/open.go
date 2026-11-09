@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yazawa/isotty/internal/isotty/host/gateway"
@@ -51,6 +52,8 @@ type Files struct {
 
 	listener net.Listener
 	token    string
+	// mu serializes changes to the comments.
+	mu sync.Mutex
 }
 
 // Serve starts the loopback file server; Close stops it with the attach.
@@ -66,7 +69,13 @@ func (f *Files) Serve() error {
 	}
 	f.listener, f.token = listener, hex.EncodeToString(raw)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /"+f.token+"/{path...}", f.serve)
+	mux.HandleFunc("GET /"+f.token+"/raw/{path...}", f.serve)
+	mux.HandleFunc("GET /"+f.token+"/view/{path...}", f.view)
+	mux.HandleFunc("GET /"+f.token+"/viewer.css", f.asset("text/css; charset=utf-8", viewerStyle))
+	mux.HandleFunc("GET /"+f.token+"/viewer.js", f.asset("text/javascript; charset=utf-8", viewerScript))
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete} {
+		mux.HandleFunc(method+" /"+f.token+"/reviews/{path...}", f.reviews)
+	}
 	go func() { _ = http.Serve(listener, mux) }()
 	return nil
 }
@@ -78,24 +87,28 @@ func (f *Files) Close() error {
 	return f.listener.Close()
 }
 
-// url is where the browser finds the file at rel, a slash path under the
-// project. The token keeps the URL unguessable by pages in that browser.
+// url is where the browser finds the page for the file at rel, a slash
+// path under the project. The token keeps the URL unguessable by pages in
+// that browser.
 func (f *Files) url(rel string) string {
-	var escaped []string
-	for _, segment := range strings.Split(rel, "/") {
-		escaped = append(escaped, url.PathEscape(segment))
-	}
-	return fmt.Sprintf("http://%s/%s/%s", f.listener.Addr(), f.token, strings.Join(escaped, "/"))
+	return fmt.Sprintf("http://%s/%s/view/%s", f.listener.Addr(), f.token, escapePath(rel))
 }
 
-// serve answers the browser. The file is located again, so what is served
-// is under the project at that moment; it is served from the descriptor
-// that was checked to be a regular file, so nothing is resolved after the
-// check. The response headers keep a VM-made page inert: no script runs,
-// the document has no origin to read the server with, it loads nothing
-// but the images, styles, fonts and media this server holds, so the page
-// reaches no other site, and nothing is sniffed into HTML. The Host check
-// keeps a page that rebinds a name to the loopback from reaching it.
+// realProject is the project directory with its symlinks resolved, under
+// which every path is located.
+func (f *Files) realProject() (string, error) {
+	return filepath.EvalSymlinks(f.Project)
+}
+
+// serve answers the browser with the file itself. The file is located
+// again, so what is served is under the project at that moment; it is
+// served from the descriptor that was checked to be a regular file, so
+// nothing is resolved after the check. The response headers keep a VM-made
+// page inert: no script runs, the document has no origin to read the
+// server with, it loads nothing but the images, styles, fonts and media
+// this server holds, so the page reaches no other site, and nothing is
+// sniffed into HTML. The Host check keeps a page that rebinds a name to
+// the loopback from reaching it.
 func (f *Files) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Host != f.listener.Addr().String() {
 		http.NotFound(w, r)
@@ -119,10 +132,6 @@ func (f *Files) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if isMarkdown(rel) {
-		renderMarkdown(w, path.Base(rel), file)
-		return
-	}
 	http.ServeContent(w, r, path.Base(rel), info.ModTime(), file)
 }
 
@@ -193,7 +202,7 @@ var errOutside = errors.New("outside the project")
 // locate resolves rel, a slash path under the project, to the real file on
 // the host and its real path relative to the real project directory.
 func (f *Files) locate(rel string) (string, string, error) {
-	project, err := filepath.EvalSymlinks(f.Project)
+	project, err := f.realProject()
 	if err != nil {
 		return "", "", err
 	}
