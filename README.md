@@ -342,7 +342,7 @@ See [Child VM design](docs/CHILD.md).
 
 Browser:
 
-The agent can open a URL in your browser: `isotty-open <url>` in the VM shows it on the host while you are attached, and the attached session has `BROWSER` set to it, so a click in Codex or `gh` does the same. `http` and `https` only; every open is in the audit log. `isotty-open <path>` with a file under `/workspace` shows your synced copy of it in the browser, a Markdown report as a page with its figures, so what the agent wrote reaches you without a server and without leaving your machine.
+The agent can open a URL in your browser: `isotty-open <url>` in the VM shows it on the host while you are attached, and the attached session has `BROWSER` set to it, so a click in Codex or `gh` does the same. `http` and `https` only; every open is in the audit log. `isotty-open <path>` with a file under `/workspace` shows your synced copy of it in the browser, a Markdown report as a page with its figures, so what the agent wrote reaches you without a server and without leaving your machine. Click a line, a paragraph or a spot of an image there to leave a comment: it lands in `.isotty/reviews/` and the sync carries it to the agent, which reads it with `isotty-open reviews`.
 
 See [Browser design](docs/BROWSER.md).
 

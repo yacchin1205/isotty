@@ -39,6 +39,19 @@ func TestAttachKeepsTheSessionInTmux(t *testing.T) {
 	if out := h.mustVM("cat /workspace/browser"); strings.TrimSpace(out) != "/usr/local/bin/isotty-open" {
 		t.Fatalf("BROWSER in the session shell = %q", out)
 	}
+	// A comment the human leaves in the viewer on the host reaches the VM
+	// through the sync, where the agent reads it with the installed client.
+	review := filepath.Join(h.project, ".isotty", "reviews", "browser.jsonl")
+	if err := os.MkdirAll(filepath.Dir(review), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(review, []byte(`{"id":"r1","at":"2026-11-08T10:00:00Z","anchor":{"lines":[1,1],"quote":"/usr/local/bin/isotty-open"},"body":"Looks right.","file_sha256":"sha256:old","resolved":false}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.waitFor("the sync to carry the comment into the VM", 60*time.Second, func() bool {
+		out, err := h.vm("cd /workspace && isotty-open reviews")
+		return err == nil && strings.Contains(out, "browser\n  L1  2026-11-08T10:00:00Z  \"/usr/local/bin/isotty-open\"  [file changed since; quoted text now at L1]\n    Looks right.")
+	})
 	// A link an agent prints reaches the terminal: tmux relays OSC 8 to it.
 	if out := h.mustVM("tmux list-clients -t isotty -F '#{client_termfeatures}'"); !strings.Contains(out, "hyperlinks") {
 		t.Fatalf("features of the attached terminal = %q, want hyperlinks", strings.TrimSpace(out))
