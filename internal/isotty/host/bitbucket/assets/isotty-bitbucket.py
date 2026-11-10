@@ -354,8 +354,8 @@ def cmd_pipeline_log(args):
     for step in paged(pipeline_path(repo, uuid, '/steps'), {'pagelen': 100}):
         state = step.get('state') or {}
         print(f"===== step {step['uuid']} {step.get('name') or '(unnamed)'} ({outcome(state)})")
-        if state.get('name') != 'COMPLETED':
-            print('(log is available once the step completes)')
+        if not step.get('started_on'):
+            print('(the step has not started)')
             continue
         print_step_log(repo, uuid, step['uuid'])
 

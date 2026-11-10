@@ -51,8 +51,9 @@ creates a new one. The scopes a pin needs:
 | write | + `write:repository:bitbucket`, `write:pipeline:bitbucket` |
 | admin | + `admin:repository:bitbucket` |
 
-plus `read:user:bitbucket` and `read:workspace:bitbucket`, which `add`
-needs to read the token's own permission on a repository.
+plus `read:user:bitbucket`, with which `login` asks whose token it is.
+`add` reads the token's own permission on a repository with
+`read:repository:bitbucket`.
 
 The relay sends the token as a bearer token to the REST API, and to git
 over HTTPS as the password of the static user `x-bitbucket-api-token-auth`,
@@ -72,13 +73,13 @@ write and `admin` below admin.
 |---|---|---|
 | fetch | read | `GET info/refs`, `POST git-upload-pack` |
 | push | write | `GET info/refs`, `POST git-receive-pack` |
-| pr list / view / checks | read | `GET /pullrequests[/{id}]`, `/comments`, `/activity`, `/commits`, `/diff`, `/diffstat`, `/statuses`; `GET /commit/{sha}/statuses` |
+| pr list / view / checks | read | `GET /pullrequests[/{id}]`, `/comments`, `/diff`, `/statuses` |
 | pr create | comment | `POST /pullrequests` (title, description, draft, close_source_branch, source.branch.name, destination.branch.name) |
 | pr comment | comment | `POST /pullrequests/{id}/comments` (content.raw) |
 | pr edit | comment | `PUT /pullrequests/{id}` (title, description) |
-| pipeline list / view / log | read | `GET /pipelines[/{uuid}]`, `/steps[/{uuid}]`, `/steps/{uuid}/log` |
+| pipeline list / view / log | read | `GET /pipelines[/{uuid}]`, `/steps`, `/steps/{uuid}/log` |
 | pipeline stop | write | `POST /pipelines/{uuid}/stopPipeline` |
-| repo view | read | `GET /repositories/{w}/{r}`, `/branch-restrictions`, `/branching-model` |
+| repo view | read | `GET /repositories/{w}/{r}`, `/branch-restrictions[/{id}]` |
 | repo edit | admin | `PUT /repositories/{w}/{r}` (description, language, fork_policy, enforced_signed_commits) |
 | repo restriction create / edit / delete | admin | `POST /branch-restrictions`, `PUT`, `DELETE /branch-restrictions/{id}` |
 

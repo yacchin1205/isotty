@@ -2,6 +2,7 @@ package forge
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -149,15 +150,18 @@ func NewHandler(kind Kind, forge Forge, cfg ProjectConfig, onWrite func(WriteEve
 		gitClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}},
-		// A redirect to another host is a signed URL for a log or an
-		// artifact, which needs no token and must not see it; one on the
-		// forge's own host (Bitbucket answers a pull request's diff that
-		// way) is the call itself continued, and keeps the credential.
+		// A redirect that stays inside the pinned repository's API
+		// (Bitbucket answers a pull request's diff with one) is the call
+		// itself continued and keeps the credential. Any other, a signed
+		// URL for a log or an artifact on another host, or a renamed
+		// repository under its new name, is outside the pin: it needs no
+		// token and must not see it.
 		apiClient: &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return errors.New("stopped after 10 redirects")
 			}
-			if req.URL.Host != via[0].URL.Host {
+			within, _ := req.Context().Value(repositoryKey{}).(string)
+			if within == "" || !strings.HasPrefix(req.URL.String(), within+"/") {
 				req.Header.Del("Authorization")
 				req.Header.Del("PRIVATE-TOKEN")
 			}
@@ -317,6 +321,11 @@ func cleanAPIPath(p string) bool {
 	return true
 }
 
+// repositoryKey carries the pinned repository's upstream API prefix with
+// the request, for the redirect check to tell a redirect inside it from
+// one anywhere else.
+type repositoryKey struct{}
+
 func (r *relay) api(w http.ResponseWriter, req *http.Request) {
 	repo, upstreamPrefix, escapedRest, err := r.forge.APITarget(strings.TrimPrefix(req.URL.EscapedPath(), "/api"))
 	if err != nil {
@@ -373,7 +382,7 @@ func (r *relay) api(w http.ResponseWriter, req *http.Request) {
 	if body != nil {
 		reqBody = bytes.NewReader(body)
 	}
-	upstream, err := http.NewRequestWithContext(req.Context(), req.Method, targetURL, reqBody)
+	upstream, err := http.NewRequestWithContext(context.WithValue(req.Context(), repositoryKey{}, upstreamPrefix), req.Method, targetURL, reqBody)
 	if err != nil {
 		gateway.WriteError(w, http.StatusBadGateway, "upstream URL: "+err.Error())
 		return

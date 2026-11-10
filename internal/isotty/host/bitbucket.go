@@ -92,10 +92,8 @@ const bitbucketTokenGuide = `Create an API token with scopes on your Atlassian a
        write:repository:bitbucket, write:pipeline:bitbucket
                                                (pins of write and above)
        admin:repository:bitbucket              (pins of admin)
-       read:user:bitbucket, read:workspace:bitbucket
-                                               (this command and add check
-                                                the token and its permission
-                                                with them)
+       read:user:bitbucket                     (this command asks whose
+                                                token it is)
   4. Create the token and copy it. Run this command again when it expires.
 
   The token acts as you in every workspace you are in; the relay narrows

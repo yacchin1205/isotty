@@ -50,7 +50,7 @@ func TestClient(t *testing.T) {
 	api.answers["GET /2.0/repositories/my-team/app/pullrequests/1/statuses"] = jsonAnswer(`{"values":[{"key":"ci","name":"Pipeline #5","state":"FAILED","url":"https://bitbucket.org/my-team/app/pipelines/results/5"}]}`)
 	api.answers["GET /2.0/repositories/my-team/app/pipelines"] = jsonAnswer(`{"values":[{"uuid":"` + plainPipelineUUID + `","build_number":5,"state":{"name":"COMPLETED","result":{"name":"FAILED"}},"target":{"ref_type":"branch","ref_name":"feat"},"trigger":{"name":"PUSH"},"created_on":"2026-11-10T00:00:00Z"}]}`)
 	api.answers["GET /2.0/repositories/my-team/app/pipelines/"+plainPipelineUUID] = jsonAnswer(`{"uuid":"` + plainPipelineUUID + `","build_number":5,"state":{"name":"COMPLETED","result":{"name":"FAILED"}},"target":{"ref_type":"branch","ref_name":"feat"},"trigger":{"name":"PUSH"},"created_on":"2026-11-10T00:00:00Z","completed_on":"2026-11-10T00:01:00Z","build_seconds_used":60}`)
-	api.answers["GET /2.0/repositories/my-team/app/pipelines/"+plainPipelineUUID+"/steps"] = jsonAnswer(`{"values":[{"uuid":"` + plainStepUUID + `","name":"test","state":{"name":"COMPLETED","result":{"name":"FAILED"}}}]}`)
+	api.answers["GET /2.0/repositories/my-team/app/pipelines/"+plainPipelineUUID+"/steps"] = jsonAnswer(`{"values":[{"uuid":"` + plainStepUUID + `","name":"test","started_on":"2026-11-10T00:00:10Z","state":{"name":"COMPLETED","result":{"name":"FAILED"}}},{"uuid":"{eeeeeeee-1111-4222-8333-444444444444}","name":"deploy","state":{"name":"PENDING"}}]}`)
 	api.answers["GET /2.0/repositories/my-team/app/pipelines/"+plainPipelineUUID+"/steps/"+plainStepUUID+"/log"] = rawAnswer("application/octet-stream", "FAIL: TestX\n")
 	api.answers["POST /2.0/repositories/my-team/app/branch-restrictions"] = func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
@@ -110,11 +110,11 @@ func TestClient(t *testing.T) {
 	if out, code := run("", "pipeline", "view", "5"); code != 0 || !strings.Contains(out, "pipeline #5 "+plainPipelineUUID) || !strings.Contains(out, "step "+plainStepUUID+"\tCOMPLETED/FAILED\ttest") {
 		t.Fatalf("pipeline view by build number: %d\n%s", code, out)
 	}
-	if out, code := run("", "pipeline", "log", "1f4a2c3e-0000-4000-8000-0123456789ab"); code != 0 || !strings.Contains(out, "===== step "+plainStepUUID+" test (COMPLETED/FAILED)") || !strings.Contains(out, "FAIL: TestX") {
+	if out, code := run("", "pipeline", "log", "1f4a2c3e-0000-4000-8000-0123456789ab"); code != 0 || !strings.Contains(out, "===== step "+plainStepUUID+" test (COMPLETED/FAILED)") || !strings.Contains(out, "FAIL: TestX") || !strings.Contains(out, "deploy (PENDING)\n(the step has not started)") {
 		t.Fatalf("pipeline log by bare uuid: %d\n%s", code, out)
 	}
 	if c := api.last(); c.EscapedPath != "/2.0/repositories/my-team/app/pipelines/"+pipelineUUID+"/steps/"+stepUUID+"/log" {
-		t.Fatalf("step log upstream path = %q", c.EscapedPath)
+		t.Fatalf("step log upstream path = %q; the pending step has no log to ask for", c.EscapedPath)
 	}
 	if out, code := run("", "pr", "list", "--repo", "other/repo"); code == 0 || !strings.Contains(out, "not among the repositories pinned") {
 		t.Fatalf("unpinned repo: %d\n%s", code, out)

@@ -28,20 +28,14 @@ var routes = []forge.Route{
 	forge.Read("GET", "/pullrequests"),
 	forge.Read("GET", "/pullrequests/{n}"),
 	forge.Read("GET", "/pullrequests/{n}/comments"),
-	forge.Read("GET", "/pullrequests/{n}/activity"),
-	forge.Read("GET", "/pullrequests/{n}/commits"),
 	forge.Read("GET", "/pullrequests/{n}/diff"),
-	forge.Read("GET", "/pullrequests/{n}/diffstat"),
 	forge.Read("GET", "/pullrequests/{n}/statuses"),
-	forge.Read("GET", "/commit/{sha}/statuses"),
 	forge.Read("GET", "/pipelines"),
 	forge.Read("GET", "/pipelines/{uuid}"),
 	forge.Read("GET", "/pipelines/{uuid}/steps"),
-	forge.Read("GET", "/pipelines/{uuid}/steps/{step}"),
 	forge.Read("GET", "/pipelines/{uuid}/steps/{step}/log"),
 	forge.Read("GET", "/branch-restrictions"),
 	forge.Read("GET", "/branch-restrictions/{n}"),
-	forge.Read("GET", "/branching-model"),
 	// A pull request names its branches inside source and destination;
 	// the dotted paths keep a repository out of them, so a pull request
 	// cannot come from a fork, and reviewers out of the request.
@@ -115,7 +109,8 @@ func (b *bitbucket) Prepare(req *http.Request, _ string, git bool) {
 }
 
 // IsPublic reads the repository's is_private; a repository the token
-// cannot see answers 404 and is not public.
+// cannot see answers 403 when it is private and 404 when it is absent,
+// and is not public either way.
 func (b *bitbucket) IsPublic(client *http.Client, repo string) (bool, error) {
 	req, err := http.NewRequest(http.MethodGet, b.api+"/repositories/"+repo, nil)
 	if err != nil {
@@ -140,7 +135,7 @@ func (b *bitbucket) IsPublic(client *http.Client, repo string) (bool, error) {
 			return false, fmt.Errorf("repository answer does not say is_private: %s", strings.TrimSpace(string(body)))
 		}
 		return !*info.IsPrivate, nil
-	case http.StatusNotFound:
+	case http.StatusForbidden, http.StatusNotFound:
 		return false, nil
 	default:
 		return false, fmt.Errorf("api.bitbucket.org answered %d", resp.StatusCode)

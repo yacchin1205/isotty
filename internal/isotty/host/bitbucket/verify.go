@@ -13,8 +13,8 @@ import (
 const maxAnswer = 4 << 20
 
 // Verify asks api.bitbucket.org for the repository with the host token and
-// returns its name as Bitbucket spells it. A repository the token cannot
-// see answers 404, whether it is missing or private. The repository itself
+// returns its name as Bitbucket spells it. A private repository the token
+// cannot see answers 403 and a missing one 404. The repository itself
 // does not say what the token may do with it; the workspace's permission
 // list does, so a write pin is refused below the write permission and an
 // admin pin below admin.
@@ -29,9 +29,9 @@ func verify(token, repo string, access Access, upstream string) (string, error) 
 	}
 	switch status {
 	case http.StatusOK:
-	case http.StatusNotFound:
-		return "", fmt.Errorf("repository %s does not exist or is not visible to the token in ~/.isotty/bitbucket.yaml", repo)
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusForbidden, http.StatusNotFound:
+		return "", fmt.Errorf("repository %s does not exist or is not visible to the token in ~/.isotty/bitbucket.yaml (%d): %s", repo, status, strings.TrimSpace(string(body)))
+	case http.StatusUnauthorized:
 		return "", fmt.Errorf("api.bitbucket.org rejected the token in ~/.isotty/bitbucket.yaml (%d): %s", status, strings.TrimSpace(string(body)))
 	default:
 		return "", fmt.Errorf("repository %s: api.bitbucket.org answered %d: %s", repo, status, strings.TrimSpace(string(body)))
@@ -49,11 +49,15 @@ func verify(token, repo string, access Access, upstream string) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	held := permission + " permission"
+	if permission == "none" {
+		held = "no permission"
+	}
 	if permission != "write" && permission != "admin" {
-		return "", fmt.Errorf("the token has %s permission on %s, so it cannot push; pin it with --allow comment or read", permission, info.FullName)
+		return "", fmt.Errorf("the token has %s on %s, so it cannot push; pin it with --allow comment or read", held, info.FullName)
 	}
 	if access == AccessAdmin && permission != "admin" {
-		return "", fmt.Errorf("the token has %s permission on %s, so it cannot change its settings; pin it with --allow write or below", permission, info.FullName)
+		return "", fmt.Errorf("the token has %s on %s, so it cannot change its settings; pin it with --allow write or below", held, info.FullName)
 	}
 	return info.FullName, nil
 }

@@ -28,6 +28,9 @@ func TestVerify(t *testing.T) {
 		case "/user/workspaces/other-team/permissions/repositories":
 			query = r.URL.Query().Get("q")
 			w.Write([]byte(`{"values":[{"permission":"write","repository":{"full_name":"other-team/tool"}}]}`))
+		case "/repositories/corp/hidden":
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"type":"error","error":{"message":"Access denied. You must have write or admin access."}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"type":"error","error":{"message":"Repository not found"}}`))
@@ -50,7 +53,7 @@ func TestVerify(t *testing.T) {
 	if name, err := verify("tok", "other-team/lib", AccessComment, api.URL); err != nil || name != "Other-Team/lib" {
 		t.Fatalf("verify(comment) = %q, %v", name, err)
 	}
-	if _, err := verify("tok", "other-team/lib", AccessWrite, api.URL); err == nil || !strings.Contains(err.Error(), "has none permission") || !strings.Contains(err.Error(), "cannot push") {
+	if _, err := verify("tok", "other-team/lib", AccessWrite, api.URL); err == nil || !strings.Contains(err.Error(), "has no permission") || !strings.Contains(err.Error(), "cannot push") {
 		t.Fatalf("verify(write without permission) error = %v", err)
 	}
 	if name, err := verify("tok", "my-team/app", AccessAdmin, api.URL); err != nil || name != "my-team/app" {
@@ -64,6 +67,9 @@ func TestVerify(t *testing.T) {
 	}
 	if _, err := verify("tok", "nobody/missing", AccessRead, api.URL); err == nil || !strings.Contains(err.Error(), "not visible to the token") {
 		t.Fatalf("verify(missing) error = %v", err)
+	}
+	if _, err := verify("tok", "corp/hidden", AccessRead, api.URL); err == nil || !strings.Contains(err.Error(), "not visible to the token") || !strings.Contains(err.Error(), "Access denied") {
+		t.Fatalf("verify(hidden) error = %v", err)
 	}
 }
 

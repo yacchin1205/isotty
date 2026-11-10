@@ -31,8 +31,8 @@ func (f *fakeBitbucket) handler() http.Handler {
 			answer(w, r)
 			return
 		}
-		// A bare repository lookup is the relay's visibility check; an
-		// unknown repository is private or absent, as on Bitbucket.
+		// A bare repository lookup is the relay's visibility check; a
+		// repository the fake does not know is absent, as on Bitbucket.
 		if repoLookup.MatchString(r.URL.Path) {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -181,9 +181,10 @@ func TestRelayAPIReads(t *testing.T) {
 }
 
 // TestRelayFollowsTheDiffRedirectWithTheToken: Bitbucket answers a pull
-// request's diff with a redirect to the repository diff on the same host,
-// which needs the token as much as the first call did; a log's redirect
-// to a signed URL on another host must not see it.
+// request's diff with a redirect to the repository diff inside the same
+// repository, which needs the token as much as the first call did; a
+// redirect to another repository on the same host, or to a signed URL for
+// a log on another host, must not see it.
 func TestRelayFollowsTheDiffRedirectWithTheToken(t *testing.T) {
 	relay, _, api := newTestRelay(t, testPins, nil)
 	api.answers["GET /2.0/repositories/org/lib/pullrequests/7/diff"] = func(w http.ResponseWriter, r *http.Request) {
@@ -197,9 +198,22 @@ func TestRelayFollowsTheDiffRedirectWithTheToken(t *testing.T) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write([]byte("diff --git a/x b/x\n"))
 	}
+	api.answers["GET /2.0/repositories/org/lib/pullrequests/8/diff"] = func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/2.0/repositories/org/other/diff/abc..def", http.StatusFound)
+	}
+	api.answers["GET /2.0/repositories/org/other/diff/abc..def"] = func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("token followed a redirect out of the repository: %q", r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}
 	status, body := do(t, "GET", relay.URL+"/bitbucket/api/repositories/org/lib/pullrequests/7/diff", "")
 	if status != 200 || body != "diff --git a/x b/x\n" {
 		t.Fatalf("diff = %d %q", status, body)
+	}
+	status, _ = do(t, "GET", relay.URL+"/bitbucket/api/repositories/org/lib/pullrequests/8/diff", "")
+	if status != 403 {
+		t.Fatalf("diff redirected out of the repository = %d", status)
 	}
 
 	blob := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -374,6 +388,12 @@ func TestRelayReadsPublicRepositories(t *testing.T) {
 		w.Write([]byte(`{"full_name":"pub/lic","is_private":false}`))
 	}
 	api.answers["GET /2.0/repositories/corp/internal"] = jsonAnswer(`{"full_name":"corp/internal","is_private":true}`)
+	// Bitbucket answers 403, not 404, for a private repository the token
+	// cannot see.
+	api.answers["GET /2.0/repositories/corp/hidden"] = func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"type":"error","error":{"message":"Access denied. You must have write or admin access."}}`))
+	}
 
 	status, _ := do(t, "GET", relay.URL+"/bitbucket/api/repositories/pub/lic/pullrequests", "")
 	if status != 200 {
@@ -393,6 +413,10 @@ func TestRelayReadsPublicRepositories(t *testing.T) {
 	status, body = do(t, "GET", relay.URL+"/bitbucket/api/repositories/corp/internal/pullrequests", "")
 	if status != 403 || !strings.Contains(body, "not public") {
 		t.Fatalf("private unpinned read = %d %s", status, body)
+	}
+	status, body = do(t, "GET", relay.URL+"/bitbucket/api/repositories/corp/hidden/pullrequests", "")
+	if status != 403 || !strings.Contains(body, "not public") {
+		t.Fatalf("hidden unpinned read = %d %s", status, body)
 	}
 	status, body = do(t, "GET", relay.URL+"/bitbucket/api/repositories/sec/ret/pullrequests", "")
 	if status != 403 || !strings.Contains(body, "not public") {
