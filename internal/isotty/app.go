@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/yazawa/isotty/internal/isotty/host"
+	"github.com/yazawa/isotty/internal/isotty/host/bitbucket"
 	"github.com/yazawa/isotty/internal/isotty/host/browser"
 	"github.com/yazawa/isotty/internal/isotty/host/child"
 	"github.com/yazawa/isotty/internal/isotty/host/dns"
@@ -128,6 +129,11 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host gitlab remove [--remote <name>]... [--repo <host/group/project>]...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host gitlab clear")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host gitlab show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host bitbucket login")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host bitbucket add [--remote <name>]... [--repo <workspace/repo_slug>]... [--allow read|comment|write|admin]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host bitbucket remove [--remote <name>]... [--repo <workspace/repo_slug>]...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host bitbucket clear")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host bitbucket show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker add --repo <registry/path>... [--allow read|write]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker remove --repo <registry/path>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker clear")
@@ -500,6 +506,7 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 	var epweaveCfg *epweave.ProjectConfig
 	var githubCfg *github.ProjectConfig
 	var gitlabCfg *gitlab.ProjectConfig
+	var bitbucketCfg *bitbucket.ProjectConfig
 	var dockerCfg *docker.ProjectConfig
 	var googleCfg *google.ProjectConfig
 	var gasCfg *gas.ProjectConfig
@@ -553,6 +560,19 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 				return err
 			}
 			gitlabCfg = &verified
+		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/bitbucket.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			synced, err := bitbucket.Kind.ParseProjectConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote bitbucket config: %w", err)
+			}
+			verified, err := bitbucket.Kind.VerifyPinned(homeDir, projectHash, synced)
+			if err != nil {
+				return err
+			}
+			bitbucketCfg = &verified
 		}
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/docker.yaml"); err != nil {
 			return err
@@ -656,7 +676,7 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 		return err
 	}
 	// Without a project on the host there is no synced copy to open.
-	return a.attachWithConnection(conn, projectHash, workspacePath, shell, nil, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, shell, nil, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -681,6 +701,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	var epweaveCfg *epweave.ProjectConfig
 	var githubCfg *github.ProjectConfig
 	var gitlabCfg *gitlab.ProjectConfig
+	var bitbucketCfg *bitbucket.ProjectConfig
 	var dockerCfg *docker.ProjectConfig
 	var googleCfg *google.ProjectConfig
 	var gasCfg *gas.ProjectConfig
@@ -701,6 +722,10 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 			return err
 		}
 		gitlabCfg, err = gitlab.Kind.LoadPinned(projectPath, state.ProjectHash, homeDir)
+		if err != nil {
+			return err
+		}
+		bitbucketCfg, err = bitbucket.Kind.LoadPinned(projectPath, state.ProjectHash, homeDir)
 		if err != nil {
 			return err
 		}
@@ -758,7 +783,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 		}
 		defer files.Close()
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -783,7 +808,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, files *browser.Files, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, files *browser.Files, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -802,7 +827,7 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		deferredErrs = append(deferredErrs, err)
 		deferredMu.Unlock()
 	}
-	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, files, epweaveCfg, githubCfg, gitlabCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, record, fail)
+	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, files, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, record, fail)
 	if err != nil {
 		return err
 	}
@@ -924,7 +949,7 @@ func (a *App) waitForGatewayPort(target runtimecfg.RemoteTarget) error {
 // gatewayHandler mounts the host services the session may use. --no-host
 // mounts nothing, so no gateway starts and the VM gets no reverse forward,
 // which lets a second terminal attach beside the first.
-func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
+func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
 	mux := http.NewServeMux()
 	var services []string
 	if epweaveCfg != nil {
@@ -950,6 +975,14 @@ func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash 
 		}
 		mux.Handle("/gitlab/", http.StripPrefix("/gitlab", handler))
 		services = append(services, "GitLab")
+	}
+	if bitbucketCfg != nil {
+		handler, err := a.bitbucketHandler(*bitbucketCfg, projectHash, record)
+		if err != nil {
+			return nil, nil, err
+		}
+		mux.Handle("/bitbucket/", http.StripPrefix("/bitbucket", handler))
+		services = append(services, "Bitbucket")
 	}
 	if dockerCfg != nil {
 		handler, err := a.dockerHandler(*dockerCfg, projectHash, record, fail)
@@ -1109,6 +1142,20 @@ func (a *App) gitlabHandler(cfg gitlab.ProjectConfig, projectHash string, record
 		}
 	}
 	return gitlab.Handler(hostCfg, cfg, forgeRecorder(projectHash, "gitlab", record)), nil
+}
+
+// bitbucketHandler relays the pinned repositories with the host token,
+// recording every push and write in the VM event log.
+func (a *App) bitbucketHandler(cfg bitbucket.ProjectConfig, projectHash string, record func(runtimecfg.VMEventRecord) error) (http.Handler, error) {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return nil, err
+	}
+	hostCfg, err := bitbucket.LoadHostConfig(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	return bitbucket.Handler(hostCfg.Token, cfg, forgeRecorder(projectHash, "bitbucket", record)), nil
 }
 
 func forgeRecorder(projectHash, kind string, record func(runtimecfg.VMEventRecord) error) func(forge.WriteEvent) error {
@@ -1822,6 +1869,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
 			}, gitlab.SetupCommand(cfg.Runtime.Agents), a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	}
+	if cfg.Bitbucket != nil {
+		if err := a.runPhase("Installing Bitbucket client", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, bitbucket.SetupCommand(cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}

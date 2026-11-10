@@ -239,6 +239,31 @@ isotty-gitlab mr create --title 'Add relay' --target main < description.md
 
 See [GitLab design](docs/GITLAB.md).
 
+Bitbucket:
+
+The same relay exists for Bitbucket Cloud: push, fetch, pull requests, pipelines and repository settings of the repositories you name, with an Atlassian API token kept on the host.
+
+```bash
+isotty host bitbucket login                                 # prints which token to create, then asks for it
+isotty host bitbucket add --remote origin --allow write
+isotty up
+```
+
+`login` keeps the token in `~/.isotty/bitbucket.yaml`; it is an Atlassian API token with scopes, which acts as you across your workspaces, so there is one for the host. The project setting is stored in:
+
+```text
+./.isotty/bitbucket.yaml
+```
+
+Inside the VM:
+
+```bash
+isotty-bitbucket push -u origin HEAD
+isotty-bitbucket pr create --title 'Add relay' --destination main < description.md
+```
+
+See [Bitbucket design](docs/BITBUCKET.md).
+
 Google:
 
 The agent in the VM can use Google Docs, Sheets, Forms and other Google APIs as a service account you choose, for the files shared with that account and the scopes you pin.
@@ -470,6 +495,7 @@ IsoTTY stores local state under:
 * [ep_weave design](docs/EPWEAVE.md)
 * [GitHub design](docs/GITHUB.md)
 * [GitLab design](docs/GITLAB.md)
+* [Bitbucket design](docs/BITBUCKET.md)
 * [Google design](docs/GOOGLE.md)
 * [Apps Script design](docs/GAS.md)
 * [DNS design](docs/DNS.md)

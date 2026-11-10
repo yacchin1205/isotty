@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/yazawa/isotty/internal/isotty/host"
+	"github.com/yazawa/isotty/internal/isotty/host/bitbucket"
 	"github.com/yazawa/isotty/internal/isotty/host/child"
 	"github.com/yazawa/isotty/internal/isotty/host/dns"
 	"github.com/yazawa/isotty/internal/isotty/host/docker"
@@ -37,6 +38,8 @@ type Config struct {
 	GitHub *github.ProjectConfig
 	// GitLab is nil when the project has no pinned GitLab project.
 	GitLab *gitlab.ProjectConfig
+	// Bitbucket is nil when the project has no pinned Bitbucket repository.
+	Bitbucket *bitbucket.ProjectConfig
 	// Docker is nil when the project has no pinned image repository.
 	Docker *docker.ProjectConfig
 	// Google is nil when the project has not enabled the Google token gateway.
@@ -90,6 +93,10 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	bitbucketConfig, err := bitbucket.Kind.LoadPinned(projectPath, projectHash, homeDir)
+	if err != nil {
+		return Config{}, err
+	}
 	dockerConfig, err := docker.Kind.LoadPinned(projectPath, projectHash, homeDir)
 	if err != nil {
 		return Config{}, err
@@ -127,6 +134,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		Epweave:      epweaveConfig,
 		GitHub:       githubConfig,
 		GitLab:       gitlabConfig,
+		Bitbucket:    bitbucketConfig,
 		Docker:       dockerConfig,
 		Google:       googleConfig,
 		GAS:          gasConfig,

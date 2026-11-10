@@ -1,4 +1,4 @@
-// Package forge holds what the GitHub and GitLab relays share: the access
+// Package forge holds what the GitHub, GitLab and Bitbucket relays share: the access
 // levels, the pinned repository list, its synced file and its host pin.
 // The relays themselves differ in URL shapes, APIs and credentials, and
 // live in their own packages. The pinned list also serves the image
