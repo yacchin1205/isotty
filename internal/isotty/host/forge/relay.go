@@ -38,7 +38,10 @@ type WriteEvent struct {
 // Route is one allowed REST call, relative to the repository's API prefix.
 // The pattern binds target for calls on one item; writes also list the JSON
 // fields the VM may send, so an update cannot reach fields the operation
-// does not cover (state, for instance, which would close the item).
+// does not cover (state, for instance, which would close the item). A
+// field written as a dotted path, "source.branch.name", allows that path
+// through an object and nothing else in it, for the forges that nest what
+// names a branch beside what would name another repository.
 type Route struct {
 	Method    string
 	Pattern   *regexp.Regexp
@@ -69,17 +72,23 @@ func (r Route) changes() bool { return r.Access != AccessRead }
 // compileRoute turns a pattern into the expression matched against the
 // remainder as the VM escaped it: {n} is a numeric item, {b} one segment
 // naming a branch, environment or other item (a slash inside the name is
-// sent as %2F, as the forges want it), and {sha} a commit. Matching the
-// escaped form means a slash in the matched text is a path separator for
-// the upstream too, so a name cannot smuggle in a sub-resource.
+// sent as %2F, as the forges want it), {uuid} an item Bitbucket names by
+// a UUID in braces (sent as %7B...%7D), {step} a second such item that is
+// not the target, and {sha} a commit. Matching the escaped form means a
+// slash in the matched text is a path separator for the upstream too, so a
+// name cannot smuggle in a sub-resource.
 func compileRoute(path string) *regexp.Regexp {
 	expr := strings.NewReplacer(
 		"{n}", `(?P<target>[0-9]+)`,
 		"{sha}", `[0-9a-fA-F]+`,
 		"{b}", `(?P<target>[^/]+)`,
+		"{uuid}", `(?P<target>`+uuidPattern+`)`,
+		"{step}", uuidPattern,
 	).Replace(path)
 	return regexp.MustCompile("^" + expr + "$")
 }
+
+const uuidPattern = `%7[Bb][0-9a-fA-F-]{36}%7[Dd]`
 
 // Forge is what differs between the forges behind one relay: how the VM's
 // paths name a repository and where that repository lives upstream, which
@@ -140,14 +149,18 @@ func NewHandler(kind Kind, forge Forge, cfg ProjectConfig, onWrite func(WriteEve
 		gitClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}},
-		// The signed URL a redirect points at needs no token, and must not see
-		// it; Go only drops the header on its own when the domain changes.
+		// A redirect to another host is a signed URL for a log or an
+		// artifact, which needs no token and must not see it; one on the
+		// forge's own host (Bitbucket answers a pull request's diff that
+		// way) is the call itself continued, and keeps the credential.
 		apiClient: &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return errors.New("stopped after 10 redirects")
 			}
-			req.Header.Del("Authorization")
-			req.Header.Del("PRIVATE-TOKEN")
+			if req.URL.Host != via[0].URL.Host {
+				req.Header.Del("Authorization")
+				req.Header.Del("PRIVATE-TOKEN")
+			}
 			return nil
 		}},
 	}
@@ -414,16 +427,44 @@ func checkFields(body []byte, allowed []string) string {
 	if err := json.Unmarshal(body, &fields); err != nil {
 		return "invalid JSON body: " + err.Error()
 	}
-	for field := range fields {
+	return checkObject(fields, allowed, "")
+}
+
+// checkObject checks one object against the allowed paths at its level:
+// a name listed as is takes any value, a name with a dotted path below it
+// takes an object checked the same way, one level down.
+func checkObject(fields map[string]json.RawMessage, allowed []string, prefix string) string {
+	for field, value := range fields {
+		var below []string
 		found := false
 		for _, name := range allowed {
-			if field == name {
+			if name == field {
 				found = true
-				break
+			} else if rest, ok := strings.CutPrefix(name, field+"."); ok {
+				found = true
+				below = append(below, rest)
 			}
 		}
 		if !found {
-			return fmt.Sprintf("field %q is not accepted here; allowed: %s", field, strings.Join(allowed, ", "))
+			paths := make([]string, len(allowed))
+			for i, name := range allowed {
+				paths[i] = prefix + name
+			}
+			return fmt.Sprintf("field %q is not accepted here; allowed: %s", prefix+field, strings.Join(paths, ", "))
+		}
+		if below == nil {
+			continue
+		}
+		var inner map[string]json.RawMessage
+		if err := json.Unmarshal(value, &inner); err != nil {
+			paths := make([]string, len(below))
+			for i, name := range below {
+				paths[i] = prefix + field + "." + name
+			}
+			return fmt.Sprintf("field %q must be an object with: %s", prefix+field, strings.Join(paths, ", "))
+		}
+		if msg := checkObject(inner, below, prefix+field+"."); msg != "" {
+			return msg
 		}
 	}
 	return ""
