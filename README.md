@@ -16,6 +16,8 @@ The goal is to preserve a normal terminal workflow while moving execution across
 
 IsoTTY trusts the agent and distrusts mistakes: it is not a cage for a hostile agent, but a way to agree with the human on what the agent may reach, keep a mistake inside that agreement, and show afterwards what happened.
 
+<p align="center"><img src="docs/overview.svg" width="720" alt="The project is synced into a disposable VM, where the agent and tools run; the host keeps credentials and services and relays only what the human pinned"></p>
+
 ## Requirements
 
 * `gcloud`

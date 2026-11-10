@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="610" viewBox="0 0 880 610" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16">
+  <defs>
+    <marker id="sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1e88e5"/>
+    </marker>
+    <marker id="reach" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e53935"/>
+    </marker>
+    <symbol id="folder" viewBox="0 0 24 20">
+      <path d="M1,3 H9 L12,6 H23 V19 H1 Z" fill="#fff" stroke="#222" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M1,8 H23" fill="none" stroke="#222" stroke-width="1.5"/>
+    </symbol>
+    <symbol id="file" viewBox="0 0 18 22">
+      <path d="M1,1 H11 L17,7 V21 H1 Z" fill="#fff" stroke="#222" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M11,1 V7 H17" fill="none" stroke="#222" stroke-width="1.5" stroke-linejoin="round"/>
+    </symbol>
+  </defs>
+  <rect width="880" height="610" fill="#ffffff"/>
+
+  <!-- Isolated environments: one VM per project, as many as are brought up -->
+  <rect x="288" y="2" width="400" height="230" rx="10" fill="#f3f8fd" stroke="#222" stroke-width="2" opacity="0.45"/>
+  <rect x="274" y="16" width="400" height="230" rx="10" fill="#f3f8fd" stroke="#222" stroke-width="2" opacity="0.7"/>
+  <rect x="260" y="30" width="400" height="230" rx="10" fill="#f3f8fd" stroke="#222" stroke-width="2"/>
+  <text x="276" y="58" font-weight="600" fill="#222">Isolated environment</text>
+  <text x="276" y="80" fill="#555">a disposable VM on GCP, one per project</text>
+
+  <!-- the crab waving from its tide pool, as the logo has it: the VM is the pool.
+       The limbs start inside the body and the body is drawn last, filled, so
+       each joint ends at its outline; the pincers are filled too and drawn
+       after the legs, so a leg behind one is hidden. -->
+  <g transform="translate(586,52) scale(0.85,0.68)" fill="none" stroke="#222" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M34,50 L31,42 M50,50 L53,42"/>
+    <circle cx="30.5" cy="40" r="2.2" fill="#222"/>
+    <circle cx="53.5" cy="40" r="2.2" fill="#222"/>
+    <path d="M56,66 L74,72 L78,82 M54,70 L70,80 L70,90 M48,72 L60,84 L58,94"/>
+    <path d="M28,66 L12,72 L10,82 M30,70 L16,80 L18,90 M36,72 L24,84 L26,94"/>
+    <path d="M56,55 C68,46 72,36 71.5,25"/>
+    <path d="M68,28 L62,18 L68,20 L71,12 L75,22 Z" fill="#f3f8fd"/>
+    <path d="M28,58 C12,60 4,68 7,78"/>
+    <path d="M4,76 L-2,84 L4,82 L6,90 L10,80 Z" fill="#f3f8fd" transform="rotate(-45 7 78)"/>
+    <ellipse cx="42" cy="62" rx="20" ry="13" fill="#f3f8fd"/>
+  </g>
+  <!-- agent and tools in the VM -->
+  <rect x="300" y="110" width="180" height="120" rx="6" fill="#fff" stroke="#222" stroke-width="1.5"/>
+  <text x="390" y="138" text-anchor="middle" font-weight="600" fill="#222">agent and tools</text>
+  <text x="390" y="164" text-anchor="middle" fill="#555" font-size="13">builds, installs,</text>
+  <text x="390" y="182" text-anchor="middle" fill="#555" font-size="13">setup scripts, tests</text>
+  <text x="390" y="200" text-anchor="middle" fill="#555" font-size="13">run here</text>
+
+  <!-- /workspace tree in the VM -->
+  <g>
+    <use href="#folder" x="500" y="130" width="24" height="20"/>
+    <text x="530" y="145" fill="#222" font-size="13">/workspace</text>
+    <use href="#file" x="539" y="162" width="18" height="22"/>
+    <use href="#folder" x="536" y="196" width="24" height="20"/>
+    <use href="#file" x="575" y="228" width="18" height="22"/>
+    <path d="M512,152 V206 M512,173 H539 M512,206 H536 M548,216 V239 M548,239 H575" fill="none" stroke="#222" stroke-width="1.5"/>
+  </g>
+
+  <!-- isotty CLI: the band every path between the two crosses -->
+  <rect x="40" y="270" width="800" height="130" rx="10" fill="#1b3a5e"/>
+  <text x="56" y="320" font-weight="600" fill="#fff">isotty CLI</text>
+  <text x="56" y="342" fill="#c9d8ea" font-size="13">up, attach, down:</text>
+  <text x="56" y="360" fill="#c9d8ea" font-size="13">the VM's whole life</text>
+  <g stroke="#7fa3cc" stroke-width="1.5" fill="#2c527f">
+    <rect x="300" y="286" width="140" height="48" rx="6"/>
+    <rect x="600" y="286" width="140" height="48" rx="6"/>
+    <rect x="300" y="350" width="440" height="26" rx="6"/>
+  </g>
+  <text x="370" y="306" text-anchor="middle" font-weight="600" fill="#fff" font-size="14">gateway</text>
+  <text x="370" y="325" text-anchor="middle" fill="#dbe6f3" font-size="12">relays what is pinned</text>
+  <text x="670" y="306" text-anchor="middle" font-weight="600" fill="#fff" font-size="14">sync</text>
+  <text x="670" y="325" text-anchor="middle" fill="#dbe6f3" font-size="12">by Mutagen</text>
+  <text x="520" y="368" text-anchor="middle" fill="#fff" font-size="13"><tspan font-weight="600">ssh transport</tspan><tspan fill="#dbe6f3" font-size="12">: the terminal, the gateway and the sync ride on it</tspan></text>
+
+  <!-- Local environment -->
+  <rect x="40" y="410" width="800" height="180" rx="10" fill="#fbfbfb" stroke="#222" stroke-width="2"/>
+  <text x="56" y="438" font-weight="600" fill="#222">Local environment</text>
+  <text x="56" y="460" fill="#555">the developer's machine</text>
+
+  <!-- host -->
+  <rect x="300" y="426" width="180" height="120" rx="6" fill="#fff" stroke="#222" stroke-width="1.5"/>
+  <text x="390" y="454" text-anchor="middle" font-weight="600" fill="#222">host</text>
+  <text x="390" y="480" text-anchor="middle" fill="#555" font-size="13">credentials and services,</text>
+  <text x="390" y="498" text-anchor="middle" fill="#555" font-size="13">reached only as far as</text>
+  <text x="390" y="516" text-anchor="middle" fill="#555" font-size="13">the human pinned</text>
+
+  <!-- project tree on the machine -->
+  <g>
+    <use href="#folder" x="600" y="432" width="24" height="20"/>
+    <text x="630" y="447" fill="#222" font-size="13">project</text>
+    <use href="#file" x="639" y="464" width="18" height="22"/>
+    <use href="#folder" x="636" y="498" width="24" height="20"/>
+    <use href="#file" x="675" y="530" width="18" height="22"/>
+    <path d="M612,454 V508 M612,475 H639 M612,508 H636 M648,518 V541 M648,541 H675" fill="none" stroke="#222" stroke-width="1.5"/>
+  </g>
+
+  <!-- sync between the trees: an arc past the sync box, both ways -->
+  <path d="M640,256 C800,262 830,380 720,442" fill="none" stroke="#1e88e5" stroke-width="4" marker-start="url(#sync)" marker-end="url(#sync)"/>
+
+  <!-- the agent reaching the host: an arc past the gateway, one way -->
+  <path d="M332,232 C270,300 270,380 332,424" fill="none" stroke="#e53935" stroke-width="4" marker-end="url(#reach)"/>
+  <text x="250" y="252" text-anchor="end" fill="#e53935" font-weight="600" font-size="14">relayed access</text>
+</svg>
