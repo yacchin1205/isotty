@@ -11,6 +11,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/encoding/unicode"
 )
 
 // extractTimeout bounds turning one attachment into text, OCR included.
@@ -65,6 +70,48 @@ func extractText(content []byte, isPDF bool) (string, error) {
 		}
 	}
 	return strings.Join(pages, "\f"), nil
+}
+
+// decodeText turns a text attachment into UTF-8, so that the filter reads
+// what the VM would: UTF-8 as it is, UTF-16 by its byte order mark, and
+// otherwise Shift_JIS or EUC-JP when exactly one of them decodes it
+// without an error. A text both decode, or neither, is refused rather
+// than guessed: decoded the wrong way, its names would pass as mojibake.
+// So is one with NUL bytes, which UTF-16 without a byte order mark has
+// and UTF-8 lets through.
+func decodeText(content []byte) (string, error) {
+	if bytes.HasPrefix(content, []byte{0xFF, 0xFE}) || bytes.HasPrefix(content, []byte{0xFE, 0xFF}) {
+		return decodeStrict(unicode.UTF16(unicode.BigEndian, unicode.ExpectBOM), content)
+	}
+	if bytes.IndexByte(content, 0) >= 0 {
+		return "", errors.New("it holds NUL bytes, as UTF-16 without a byte order mark does")
+	}
+	if utf8.Valid(content) {
+		return string(content), nil
+	}
+	var found []string
+	for _, enc := range []encoding.Encoding{japanese.ShiftJIS, japanese.EUCJP} {
+		if text, err := decodeStrict(enc, content); err == nil {
+			found = append(found, text)
+		}
+	}
+	if len(found) != 1 {
+		return "", errors.New("its encoding is neither UTF-8 nor UTF-16 with a byte order mark, and Shift_JIS and EUC-JP do not tell it apart")
+	}
+	return found[0], nil
+}
+
+// decodeStrict fails where the decoder would put a replacement character:
+// the encodings here have no such character of their own.
+func decodeStrict(enc encoding.Encoding, content []byte) (string, error) {
+	out, err := enc.NewDecoder().Bytes(content)
+	if err != nil {
+		return "", err
+	}
+	if bytes.ContainsRune(out, utf8.RuneError) || !utf8.Valid(out) {
+		return "", errors.New("it does not decode")
+	}
+	return string(out), nil
 }
 
 func ocr(ctx context.Context, path string) (string, error) {

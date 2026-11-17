@@ -55,6 +55,7 @@ working around it.
 
 - Read the issues and wiki pages of the pinned projects, and attachments
   listed on them. An issue of another project is refused by number, and
-  `issue related` reports such issues instead of following them.
+  `issue related` reports such issues instead of following them. The
+  children of an issue are listed by number only; view each to read it.
 - Nothing is written to the Redmine through this command: no new issue,
   no note, no status change. Ask the human for those.

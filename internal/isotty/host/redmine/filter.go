@@ -32,9 +32,21 @@ var (
 )
 
 // personKeys are the JSON keys under which Redmine puts a person as
-// {id, name}: the author of anything, the assignee, the user of a journal
-// entry and the watchers.
-var personKeys = map[string]bool{"author": true, "assigned_to": true, "user": true, "watchers": true}
+// {id, name} in the answers the relay serves, and otherKeys those under
+// which an {id, name} is not a person (the relay's own status lists its
+// projects). An {id, name} under any other key fails the answer, so a
+// person in a field added by a later Redmine or a plugin is not let
+// through as text.
+var (
+	personKeys = map[string]bool{"author": true, "assigned_to": true, "user": true, "watchers": true, "updated_by": true, "default_assignee": true}
+	otherKeys  = map[string]bool{
+		"project": true, "projects": true, "parent": true, "tracker": true, "trackers": true,
+		"status": true, "allowed_statuses": true, "priority": true, "category": true,
+		"issue_categories": true, "fixed_version": true, "default_version": true,
+		"custom_fields": true, "issue_custom_fields": true, "time_entry_activities": true,
+		"enabled_modules": true,
+	}
+)
 
 // What the filter puts in place of what it hides.
 const (
@@ -105,6 +117,11 @@ func (f *Filter) JSON(data []byte) ([]byte, []Mark, error) {
 func (f *Filter) walk(value any, key, path string, marks *[]Mark) (any, error) {
 	switch v := value.(type) {
 	case map[string]any:
+		_, hasID := v["id"]
+		_, hasName := v["name"]
+		if hasID && hasName && !personKeys[key] && !otherKeys[key] {
+			return nil, fmt.Errorf("%s holds an {id, name} the filter does not know as a person or not; the answer is withheld until the filter knows it", path)
+		}
 		if _, named := v["name"].(string); personKeys[key] && named {
 			id, ok := v["id"].(float64)
 			if !ok || id != float64(int(id)) || id <= 0 {
@@ -112,7 +129,16 @@ func (f *Filter) walk(value any, key, path string, marks *[]Mark) (any, error) {
 			}
 			alias := f.pseudonym(int(id))
 			v["name"] = alias
+			delete(v, "id")
 			*marks = append(*marks, Mark{Field: path + ".name", Start: 0, End: utf8.RuneCountInString(alias), Kind: "person"})
+			return v, nil
+		}
+		if v["property"] == "attr" && userAttributes[v["name"]] {
+			for _, k := range []string{"old_value", "new_value"} {
+				if err := f.pseudonymValue(v, k, path+"."+k, marks); err != nil {
+					return nil, err
+				}
+			}
 			return v, nil
 		}
 		for k, child := range v {
@@ -148,6 +174,28 @@ func (f *Filter) walk(value any, key, path string, marks *[]Mark) (any, error) {
 	}
 }
 
+// userAttributes are the issue attributes a journal detail records as a
+// user id, before and after the change.
+var userAttributes = map[any]bool{"assigned_to_id": true, "author_id": true}
+
+// pseudonymValue puts the pseudonym of the user id at key in place of the
+// id; a change from or to nobody leaves the value empty or absent.
+func (f *Filter) pseudonymValue(detail map[string]any, key, path string, marks *[]Mark) error {
+	raw, present := detail[key]
+	if !present || raw == nil || raw == "" {
+		return nil
+	}
+	text, ok := raw.(string)
+	id, err := strconv.Atoi(text)
+	if !ok || err != nil || id <= 0 {
+		return fmt.Errorf("%s is not a user id", path)
+	}
+	alias := f.pseudonym(id)
+	detail[key] = alias
+	*marks = append(*marks, Mark{Field: path, Start: 0, End: utf8.RuneCountInString(alias), Kind: "person"})
+	return nil
+}
+
 // hit is a range of the text, in bytes, and what is there.
 type hit struct {
 	start, end int
@@ -161,10 +209,15 @@ func (f *Filter) Text(text string) (string, []Mark) {
 	text, done = replace(text, done, f.contacts(text))
 	text, done = replace(text, done, f.secretHits(text))
 	text, done = replace(text, done, f.names(text))
+	// done is in the text's order, so one walk counts the characters.
 	marks := make([]Mark, len(done))
+	pos, chars := 0, 0
 	for i, h := range done {
-		start := utf8.RuneCountInString(text[:h.start])
-		marks[i] = Mark{Start: start, End: start + utf8.RuneCountInString(text[h.start:h.end]), Kind: h.kind}
+		chars += utf8.RuneCountInString(text[pos:h.start])
+		start := chars
+		chars += utf8.RuneCountInString(text[h.start:h.end])
+		pos = h.end
+		marks[i] = Mark{Start: start, End: chars, Kind: h.kind}
 	}
 	return text, marks
 }
@@ -190,10 +243,16 @@ func digitAfter(text string, i int) bool {
 	return i < len(text) && text[i] >= '0' && text[i] <= '9'
 }
 
-// secretHits finds every place of each secret gitleaks reports.
+// secretHits finds every place of each secret gitleaks reports; a secret
+// reported more than once is looked for once.
 func (f *Filter) secretHits(text string) []hit {
 	var found []hit
+	seen := map[string]bool{}
 	for _, finding := range f.secrets.DetectString(text) {
+		if seen[finding.Secret] {
+			continue
+		}
+		seen[finding.Secret] = true
 		for from := 0; ; {
 			i := strings.Index(text[from:], finding.Secret)
 			if finding.Secret == "" || i < 0 {
@@ -222,14 +281,18 @@ var markOf = map[string]string{"email": emailMark, "phone": phoneMark, "secret":
 
 // replace puts each kind's mark in place of the new hits that touch
 // neither an earlier replacement nor each other, and returns the text with
-// every replacement so far, at its place in that text.
+// every replacement so far, at its place in that text. done is in the
+// text's order and found is sorted into it, so both are walked once.
 func replace(text string, done, found []hit) (string, []hit) {
 	sort.Slice(found, func(i, j int) bool { return found[i].start < found[j].start })
 	var out strings.Builder
 	var all []hit
-	last, d := 0, 0
+	last, d, next := 0, 0, 0
 	for _, h := range found {
-		if h.start < last || overlapsAny(done, h) {
+		for next < len(done) && done[next].end <= h.start {
+			next++
+		}
+		if h.start < last || next < len(done) && done[next].start < h.end {
 			continue
 		}
 		for ; d < len(done) && done[d].start < h.start; d++ {
@@ -250,13 +313,4 @@ func replace(text string, done, found []hit) (string, []hit) {
 
 func moved(h hit, start int) hit {
 	return hit{start, start + h.end - h.start, h.kind}
-}
-
-func overlapsAny(done []hit, h hit) bool {
-	for _, d := range done {
-		if h.start < d.end && d.start < h.end {
-			return true
-		}
-	}
-	return false
 }

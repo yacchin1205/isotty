@@ -72,9 +72,14 @@ sees what the human sees, which is why the pin narrows it to projects.
 * Subprojects are left out of the list: `project_id` alone would include
   their issues, and they are projects of their own, pinned or not.
 * An issue is answered only when its `project.id` is one of the pinned
-  projects, whose ids the relay reads when `attach` starts. Children and
-  relations are followed by the client issue by issue, so a related issue
-  in another project is refused at that step, not leaked with its parent.
+  projects, whose ids the relay reads when `attach` starts. Its children
+  come by number and tracker only, their subjects dropped, since a child
+  may sit in another project or a subproject. Children and relations are
+  followed by the client issue by issue, so a related issue in another
+  project is refused at that step, not leaked with its parent.
+* A redirect from the Redmine fails the read. Go would carry the key
+  header to wherever it points, another host included, and what came back
+  would not be the Redmine's answer.
 * An attachment is reached as `/issues/{id}/attachments/{aid}/download`
   or the wiki counterpart: the relay reads the issue or page, checks the
   pin and that the attachment is listed there, and only then downloads
@@ -86,7 +91,11 @@ sees what the human sees, which is why the pin narrows it to projects.
 The filter runs on the host, on every string of every answer and on the
 text of every attachment, in this order:
 
-1. **Text.** A text attachment is taken as it is. A PDF or an image is
+1. **Text.** A text attachment is taken as UTF-8, or decoded from UTF-16
+   with a byte order mark, or from Shift_JIS or EUC-JP when exactly one
+   of the two decodes it cleanly; one with NUL bytes, or one the two do not
+   tell apart, is refused rather than guessed, since a wrong guess would
+   pass its names as mojibake. A PDF or an image is
    turned into text on the host: `pdftotext` reads the text layer of each
    PDF page, and a page without one is rendered by `pdftoppm` and read by
    `tesseract`, as an image is. Any other type is refused, since the
@@ -100,12 +109,18 @@ text of every attachment, in this order:
    eleven digits without separators, and `+81`. Secrets, by the default
    rules of [gitleaks](https://github.com/gitleaks/gitleaks) built in,
    become `[secret]`.
-3. **People.** A person field, any `author`, `assigned_to`, `user` or
-   watcher object (`{id, name}`), has its `name` replaced by
-   `Person-` and six hex digits of an HMAC-SHA256 of the Redmine user id,
-   keyed with the project's salt, so the same user is the same pseudonym
-   across answers and attaches. A person field without an id fails the
-   answer. In text, every word the morphological analyser
+3. **People.** A person field, any `author`, `assigned_to`, `user`,
+   watcher, `updated_by` or `default_assignee` object (`{id, name}`), has
+   its `name` replaced by `Person-` and six hex digits of an HMAC-SHA256 of
+   the Redmine user id, keyed with the project's salt, so the same user is
+   the same pseudonym across answers and attaches, and its `id` removed. A
+   person field without an id fails the answer. A journal detail that
+   records a change of `assigned_to_id` or `author_id` has the user ids
+   before and after replaced by the same pseudonyms. Every other key under which these answers carry
+   an `{id, name}` (project, tracker, status, priority, category, version,
+   custom field and the like) is listed as not a person; an `{id, name}`
+   under a key on neither list fails the answer, so a person in a field a
+   later Redmine or a plugin adds is not let through as text. In text, every word the morphological analyser
    ([kagome](https://github.com/ikawaha/kagome) with the IPA dictionary)
    tags as a person's name becomes `[name]`.
 
@@ -131,7 +146,9 @@ change (in 「山田 太郎 が」 the given name is tagged as a place). On
 Nemotron-PII-Japan, a synthetic set of Japanese documents, about half of
 the annotated names were not tagged as names. Secrets that none of the
 gitleaks rules describe get through as well, a plain `password = ...`
-among them.
+among them. So do the values of a user-type custom field, which are user
+ids: the answer does not say which custom fields hold users, and reading
+their definitions needs an administrator's key.
 
 Errors name an attachment by its id, not its file name, since the file
 name has not been through the filter.

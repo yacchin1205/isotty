@@ -22,7 +22,14 @@ type api struct {
 }
 
 func newAPI(cfg HostConfig) *api {
-	return &api{url: cfg.URL, key: cfg.APIKey, client: &http.Client{Timeout: 60 * time.Second}}
+	return &api{url: cfg.URL, key: cfg.APIKey, client: &http.Client{Timeout: 60 * time.Second, CheckRedirect: refuseRedirect}}
+}
+
+// refuseRedirect stops at a redirect: Go would carry the key header to
+// wherever it points, another host included, and the answer from there
+// would not be the Redmine's.
+func refuseRedirect(req *http.Request, _ []*http.Request) error {
+	return errors.New("the Redmine answered with a redirect, which the relay does not follow")
 }
 
 // get fetches a JSON path such as /projects/infra.json with query params.
@@ -39,7 +46,7 @@ func (a *api) get(path string, params url.Values) ([]byte, int, error) {
 	req.Header.Set("X-Redmine-API-Key", a.key)
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, withoutURL(err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer))
@@ -121,7 +128,7 @@ func (a *api) download(contentURL string, limit int64) ([]byte, error) {
 		return nil, withoutURL(err)
 	}
 	req.Header.Set("X-Redmine-API-Key", a.key)
-	resp, err := (&http.Client{Timeout: 10 * time.Minute}).Do(req)
+	resp, err := (&http.Client{Timeout: 10 * time.Minute, CheckRedirect: refuseRedirect}).Do(req)
 	if err != nil {
 		return nil, withoutURL(err)
 	}

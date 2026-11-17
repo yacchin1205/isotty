@@ -7,9 +7,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/encoding/unicode"
 )
 
 const token = "ghp_1234567890abcdefghijABCDEFGHIJ123456"
@@ -21,10 +26,20 @@ type fakeRedmine struct {
 	server *httptest.Server
 	calls  []string
 	keys   []string
+	// elsewhere is another host the Redmine redirects to; it records the
+	// key headers it is sent.
+	elsewhere string
+	stolen    []string
 }
 
 func newFakeRedmine(t *testing.T) *fakeRedmine {
 	f := &fakeRedmine{}
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.stolen = append(f.stolen, r.Header.Get("X-Redmine-API-Key"))
+		w.Write([]byte(`{"wiki_page":{"title":"Elsewhere","text":"not the Redmine's"}}`))
+	}))
+	t.Cleanup(other.Close)
+	f.elsewhere = other.URL
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.calls = append(f.calls, r.URL.Path+"?"+r.URL.RawQuery)
 		f.keys = append(f.keys, r.Header.Get("X-Redmine-API-Key"))
@@ -37,15 +52,17 @@ func newFakeRedmine(t *testing.T) *fakeRedmine {
 		case "/users/current.json":
 			answer(`{"user":{"id":1,"login":"someone","firstname":"Some","lastname":"One"}}`)
 		case "/projects/infra.json":
-			answer(`{"project":{"id":7,"identifier":"infra","name":"Infrastructure","description":"山田さんが運用している"}}`)
+			answer(`{"project":{"id":7,"identifier":"infra","name":"Infrastructure","description":"山田さんが運用している","default_assignee":{"id":15,"name":"Hanako Mori"},"trackers":[{"id":1,"name":"Bug"}]}}`)
 		case "/projects/secret.json":
 			w.WriteHeader(http.StatusForbidden)
 		case "/issues.json":
 			answer(`{"issues":[{"id":101,"project":{"id":7,"name":"Infrastructure"},"subject":"山田さんがログインできない","author":{"id":12,"name":"Taro Yamada"},"assigned_to":{"id":15,"name":"Hanako Mori"},"status":{"id":1,"name":"New"}}],"total_count":1,"offset":0,"limit":25}`)
 		case "/issues/101.json":
-			answer(`{"issue":{"id":101,"project":{"id":7,"name":"Infrastructure"},"subject":"山田さんがログインできない","description":"taro@example.org に連絡するか 03-1234-5678 に電話。森さんが対応する。トークンは ` + token + `","author":{"id":12,"name":"Taro Yamada"},"assigned_to":{"id":15,"name":"Hanako Mori"},"journals":[{"id":9,"user":{"id":20,"name":"Jiro Suzuki"},"notes":"山田さんの件は確認済み。","created_on":"2026-11-10T00:00:00Z"}],"watchers":[{"id":15,"name":"Hanako Mori"}],"attachments":[{"id":5,"filename":"log.txt","content_type":"text/plain","content_url":"` + base + `/attachments/download/5/log.txt"},{"id":6,"filename":"spec.pdf","content_type":"application/pdf","content_url":"` + base + `/attachments/download/6/spec.pdf"},{"id":8,"filename":"photo.png","content_type":"image/png","content_url":"` + base + `/attachments/download/8/photo.png"},{"id":10,"filename":"山田さんのバックアップ.zip","content_type":"application/zip","content_url":"` + base + `/attachments/download/10/backup.zip"}]}}`)
+			answer(`{"issue":{"id":101,"project":{"id":7,"name":"Infrastructure"},"subject":"山田さんがログインできない","description":"taro@example.org に連絡するか 03-1234-5678 に電話。森さんが対応する。トークンは ` + token + `","author":{"id":12,"name":"Taro Yamada"},"assigned_to":{"id":15,"name":"Hanako Mori"},"journals":[{"id":9,"user":{"id":20,"name":"Jiro Suzuki"},"updated_by":{"id":21,"name":"Ichiro Suzuki"},"notes":"山田さんの件は確認済み。","created_on":"2026-11-10T00:00:00Z","details":[{"property":"attr","name":"status_id","old_value":"1","new_value":"2"},{"property":"attr","name":"assigned_to_id","old_value":"15","new_value":"20"},{"property":"attr","name":"assigned_to_id","old_value":null,"new_value":"12"}]}],"watchers":[{"id":15,"name":"Hanako Mori"}],"attachments":[{"id":5,"filename":"log.txt","content_type":"text/plain","content_url":"` + base + `/attachments/download/5/log.txt"},{"id":6,"filename":"spec.pdf","content_type":"application/pdf","content_url":"` + base + `/attachments/download/6/spec.pdf"},{"id":8,"filename":"photo.png","content_type":"image/png","content_url":"` + base + `/attachments/download/8/photo.png"},{"id":10,"filename":"山田さんのバックアップ.zip","content_type":"application/zip","content_url":"` + base + `/attachments/download/10/backup.zip"},{"id":11,"filename":"sjis.txt","content_type":"text/plain","content_url":"` + base + `/attachments/download/11/sjis.txt"},{"id":12,"filename":"utf16.txt","content_type":"text/plain","content_url":"` + base + `/attachments/download/12/utf16.txt"},{"id":13,"filename":"nobom.txt","content_type":"text/plain","content_url":"` + base + `/attachments/download/13/nobom.txt"},{"id":14,"filename":"eucjp.txt","content_type":"text/plain","content_url":"` + base + `/attachments/download/14/eucjp.txt"},{"id":15,"filename":"moved.txt","content_type":"text/plain","content_url":"` + base + `/attachments/download/15/moved.txt"}],"children":[{"id":102,"tracker":{"id":1,"name":"Bug"},"subject":"Child elsewhere","children":[{"id":103,"subject":"Grandchild elsewhere"}]}]}}`)
 		case "/issues/202.json":
 			answer(`{"issue":{"id":202,"project":{"id":9,"name":"Other"},"subject":"Elsewhere","author":{"id":12,"name":"Taro Yamada"}}}`)
+		case "/issues/304.json":
+			answer(`{"issue":{"id":304,"project":{"id":7,"name":"Infrastructure"},"subject":"Unknown field","reviewer":{"id":3,"name":"Saburo Sato"}}}`)
 		case "/issues/303.json":
 			answer(`{"issue":{"id":303,"project":{"id":7,"name":"Infrastructure"},"subject":"No id","author":{"name":"Taro Yamada"}}}`)
 		case "/projects/infra/wiki/index.json":
@@ -55,6 +72,17 @@ func newFakeRedmine(t *testing.T) *fakeRedmine {
 		case "/attachments/download/5/log.txt":
 			w.Header().Set("Content-Type", "text/plain")
 			w.Write([]byte("山田さん <taro@example.org> が再起動した\n"))
+		case "/attachments/download/11/sjis.txt":
+			w.Write(encode(t, japanese.ShiftJIS, "山田さんが担当\n"))
+		case "/attachments/download/12/utf16.txt":
+			w.Write(encode(t, unicode.UTF16(unicode.LittleEndian, unicode.UseBOM), "連絡先 taro@example.org\n"))
+		case "/attachments/download/13/nobom.txt":
+			w.Write(encode(t, unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM), "taro@example.org\n"))
+		case "/attachments/download/14/eucjp.txt":
+			// Bytes that both Shift_JIS and EUC-JP decode.
+			w.Write(encode(t, japanese.EUCJP, "ｱ山"))
+		case "/attachments/download/15/moved.txt", "/projects/infra/wiki/Moved.json":
+			http.Redirect(w, r, f.elsewhere+"/stolen", http.StatusFound)
 		case "/attachments/download/6/spec.pdf":
 			w.Header().Set("Content-Type", "application/pdf")
 			w.Write([]byte("%PDF-fake"))
@@ -89,6 +117,14 @@ printf '%s: 森さん 090-1234-5678\n' "$(cat "$1")"`,
 		}
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func encode(t *testing.T, enc encoding.Encoding, text string) []byte {
+	out, err := enc.NewEncoder().Bytes([]byte(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 var testSalt = []byte("0123456789abcdef0123456789abcdef")
@@ -170,7 +206,7 @@ func TestRelayStatusAndProject(t *testing.T) {
 		t.Fatalf("status record = %+v", record)
 	}
 	status, body, _ = get(t, tr.server.URL+"/redmine/projects/infra")
-	if status != 200 || !strings.Contains(body, `"description":"[name]さんが運用している"`) {
+	if status != 200 || !strings.Contains(body, `"description":"[name]さんが運用している"`) || !strings.Contains(body, `"default_assignee":{"name":"`+person(15)+`"}`) || !strings.Contains(body, `"trackers":[{"id":1,"name":"Bug"}]`) {
 		t.Fatalf("project = %d %s", status, body)
 	}
 	status, body, _ = get(t, tr.server.URL+"/redmine/projects/other")
@@ -191,7 +227,7 @@ func TestRelayListsIssuesOfTheProjectOnly(t *testing.T) {
 			t.Fatalf("upstream call %q lacks %q", last, want)
 		}
 	}
-	if !strings.Contains(body, `"subject":"[name]さんがログインできない"`) || !strings.Contains(body, `"assigned_to":{"id":15,"name":"`+person(15)+`"}`) {
+	if !strings.Contains(body, `"subject":"[name]さんがログインできない"`) || !strings.Contains(body, `"assigned_to":{"name":"`+person(15)+`"}`) {
 		t.Fatalf("issues not filtered: %s", body)
 	}
 	status, body, _ = get(t, tr.server.URL+"/redmine/projects/infra/issues?project_id=secret")
@@ -207,9 +243,10 @@ func TestRelayFiltersAnIssue(t *testing.T) {
 		t.Fatalf("issue = %d %s", status, body)
 	}
 	for _, want := range []string{
-		`"author":{"id":12,"name":"` + person(12) + `"}`,
-		`"user":{"id":20,"name":"` + person(20) + `"}`,
-		`"watchers":[{"id":15,"name":"` + person(15) + `"}]`,
+		`"author":{"name":"` + person(12) + `"}`,
+		`"user":{"name":"` + person(20) + `"}`,
+		`"updated_by":{"name":"` + person(21) + `"}`,
+		`"watchers":[{"name":"` + person(15) + `"}]`,
 		`"subject":"[name]さんがログインできない"`,
 		`"description":"[email] に連絡するか [phone] に電話。[name]さんが対応する。トークンは [secret]"`,
 		`"notes":"[name]さんの件は確認済み。"`,
@@ -218,7 +255,24 @@ func TestRelayFiltersAnIssue(t *testing.T) {
 			t.Fatalf("issue lacks %s:\n%s", want, body)
 		}
 	}
-	for _, leaked := range []string{"Yamada", "Mori", "Suzuki", "山田", "森", "taro@", "03-1234", token} {
+	for _, want := range []string{
+		`{"name":"assigned_to_id","new_value":"` + person(20) + `","old_value":"` + person(15) + `","property":"attr"}`,
+		`{"name":"assigned_to_id","new_value":"` + person(12) + `","old_value":null,"property":"attr"}`,
+		`{"name":"status_id","new_value":"2","old_value":"1","property":"attr"}`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("journal details lack %s:\n%s", want, body)
+		}
+	}
+	for _, person := range []string{`"author":{"id"`, `"assigned_to":{"id"`, `"user":{"id"`, `"updated_by":{"id"`, `"watchers":[{"id"`} {
+		if strings.Contains(body, person) {
+			t.Fatalf("a person keeps the user id (%s):\n%s", person, body)
+		}
+	}
+	if !strings.Contains(body, `"children":[{"children":[{"id":103}],"id":102,"tracker":{"id":1,"name":"Bug"}}]`) {
+		t.Fatalf("children not kept by number alone:\n%s", body)
+	}
+	for _, leaked := range []string{"Yamada", "Mori", "Suzuki", "山田", "森", "taro@", "03-1234", token, "elsewhere"} {
 		if strings.Contains(body, leaked) {
 			t.Fatalf("issue leaks %s:\n%s", leaked, body)
 		}
@@ -243,6 +297,10 @@ func TestRelayFiltersAnIssue(t *testing.T) {
 	status, body, _ = get(t, tr.server.URL+"/redmine/issues/202")
 	if status != 403 || !strings.Contains(body, "issue #202 belongs to a project that is not pinned") || strings.Contains(body, "Yamada") {
 		t.Fatalf("issue of another project = %d %s", status, body)
+	}
+	status, body, _ = get(t, tr.server.URL+"/redmine/issues/304")
+	if status != 502 || !strings.Contains(body, "issue.reviewer holds an {id, name} the filter does not know") || strings.Contains(body, "Saburo") {
+		t.Fatalf("unknown {id, name} = %d %s", status, body)
 	}
 	status, body, _ = get(t, tr.server.URL+"/redmine/issues/303")
 	if status != 502 || !strings.Contains(body, "issue.author names a person without a user id") || strings.Contains(body, "Yamada") {
@@ -290,7 +348,7 @@ func TestRelayWiki(t *testing.T) {
 		t.Fatalf("wiki index = %d %s", status, body)
 	}
 	status, body, _ = get(t, tr.server.URL+"/redmine/projects/infra/wiki/Setup")
-	if status != 200 || !strings.Contains(body, `"text":"[name]さん（[email]）に聞く。"`) || !strings.Contains(body, `"author":{"id":12,"name":"`+person(12)+`"}`) {
+	if status != 200 || !strings.Contains(body, `"text":"[name]さん（[email]）に聞く。"`) || !strings.Contains(body, `"author":{"name":"`+person(12)+`"}`) {
 		t.Fatalf("wiki page = %d %s", status, body)
 	}
 	status, _, _ = get(t, tr.server.URL+"/redmine/projects/other/wiki/Setup")
@@ -333,6 +391,40 @@ func TestRelayAttachments(t *testing.T) {
 	status, body, _ = get(t, tr.server.URL+"/redmine/projects/infra/wiki/Setup/attachments/5/download")
 	if status != 200 || !strings.HasPrefix(body, "[name]さん <[email]>") {
 		t.Fatalf("wiki attachment = %d %q", status, body)
+	}
+}
+
+func TestRelayDecodesTextAttachments(t *testing.T) {
+	tr := newTestRelay(t, infraPins)
+	for _, c := range []struct {
+		id, status int
+		want       string
+	}{
+		{11, 200, "[name]さんが担当\n"},
+		{12, 200, "連絡先 [email]\n"},
+		{13, 415, "NUL bytes"},
+		{14, 415, "do not tell it apart"},
+	} {
+		status, body, _ := get(t, tr.server.URL+"/redmine/issues/101/attachments/"+strconv.Itoa(c.id)+"/download")
+		if status != c.status || !strings.Contains(body, c.want) {
+			t.Errorf("attachment %d = %d %q", c.id, status, body)
+		}
+		if strings.Contains(body, "taro@") || strings.Contains(body, "山田") {
+			t.Errorf("attachment %d leaks: %q", c.id, body)
+		}
+	}
+}
+
+func TestRelayRefusesRedirects(t *testing.T) {
+	tr := newTestRelay(t, infraPins)
+	for _, path := range []string{"/redmine/issues/101/attachments/15/download", "/redmine/projects/infra/wiki/Moved"} {
+		status, body, _ := get(t, tr.server.URL+path)
+		if status != 502 || !strings.Contains(body, "redirect, which the relay does not follow") || strings.Contains(body, "Redmine's") || strings.Contains(body, tr.redmine.elsewhere) {
+			t.Errorf("%s = %d %s", path, status, body)
+		}
+	}
+	if len(tr.redmine.stolen) != 0 {
+		t.Fatalf("the redirect target got %v", tr.redmine.stolen)
 	}
 }
 

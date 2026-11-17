@@ -2,6 +2,7 @@ package redmine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -99,8 +100,8 @@ func (r *relay) identifiers() string {
 }
 
 // fetch reads a JSON path from the Redmine and answers the VM with it,
-// filtered. check sees the raw answer first and may refuse it.
-func (r *relay) fetch(w http.ResponseWriter, req *http.Request, path string, params url.Values, check func([]byte) error) {
+// filtered. prepare sees the raw answer first and may refuse or trim it.
+func (r *relay) fetch(w http.ResponseWriter, req *http.Request, path string, params url.Values, prepare func([]byte) ([]byte, error)) {
 	body, status, err := r.api.get(path, params)
 	if err != nil {
 		gateway.WriteError(w, http.StatusBadGateway, "the Redmine could not be reached: "+err.Error())
@@ -110,8 +111,8 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, path string, par
 		gateway.WriteError(w, status, fmt.Sprintf("the Redmine answered %d", status))
 		return
 	}
-	if check != nil {
-		if err := check(body); err != nil {
+	if prepare != nil {
+		if body, err = prepare(body); err != nil {
 			gateway.WriteError(w, http.StatusForbidden, err.Error())
 			return
 		}
@@ -186,7 +187,36 @@ func (r *relay) issue(w http.ResponseWriter, req *http.Request) {
 		gateway.WriteError(w, http.StatusBadRequest, "the issue id is a number")
 		return
 	}
-	r.fetch(w, req, "/issues/"+strconv.Itoa(id)+".json", url.Values{"include": {"children,relations,journals,attachments,watchers"}}, r.issueProject)
+	r.fetch(w, req, "/issues/"+strconv.Itoa(id)+".json", url.Values{"include": {"children,relations,journals,attachments,watchers"}}, r.pinnedIssue)
+}
+
+// pinnedIssue refuses an issue outside the pin and drops the subjects of
+// its children: a child may be in another project, a subproject included,
+// and is read on its own, where the pin is checked, by its number.
+func (r *relay) pinnedIssue(body []byte) ([]byte, error) {
+	if err := r.issueProject(body); err != nil {
+		return nil, err
+	}
+	var answer map[string]any
+	if err := json.Unmarshal(body, &answer); err != nil {
+		return nil, fmt.Errorf("the Redmine answered something that is not an issue: %w", err)
+	}
+	issue, ok := answer["issue"].(map[string]any)
+	if !ok {
+		return nil, errors.New("the Redmine answered something that is not an issue")
+	}
+	dropChildSubjects(issue)
+	return json.Marshal(answer)
+}
+
+func dropChildSubjects(issue map[string]any) {
+	children, _ := issue["children"].([]any)
+	for _, child := range children {
+		if c, ok := child.(map[string]any); ok {
+			delete(c, "subject")
+			dropChildSubjects(c)
+		}
+	}
 }
 
 func (r *relay) wikiIndex(w http.ResponseWriter, req *http.Request) {
@@ -301,12 +331,15 @@ func (r *relay) serveAttachment(w http.ResponseWriter, req *http.Request, listed
 		gateway.WriteError(w, http.StatusBadGateway, fmt.Sprintf("download attachment %s: %s", aid, err))
 		return
 	}
-	text := string(content)
-	if !isText {
-		if text, err = extractText(content, isPDF); err != nil {
-			gateway.WriteError(w, http.StatusBadGateway, fmt.Sprintf("read the text of attachment %s: %s", aid, err))
+	var text string
+	if isText {
+		if text, err = decodeText(content); err != nil {
+			gateway.WriteError(w, http.StatusUnsupportedMediaType, fmt.Sprintf("attachment %s: %s", aid, err))
 			return
 		}
+	} else if text, err = extractText(content, isPDF); err != nil {
+		gateway.WriteError(w, http.StatusBadGateway, fmt.Sprintf("read the text of attachment %s: %s", aid, err))
+		return
 	}
 	filtered, marks := r.filter.Text(text)
 	r.deliver(w, req, "text/plain; charset=utf-8", filtered, marks)
