@@ -56,3 +56,4 @@ table.text tr.focus td { background: #ffe08a; }
 .canvas .mark.resolved { opacity: .4; }
 
 .other { color: #444; }
+#media { display: block; max-width: 100%; }

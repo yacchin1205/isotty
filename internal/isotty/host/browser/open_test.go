@@ -417,6 +417,31 @@ func TestViewerShowsTextByTheLineAndTheRestAsAWhole(t *testing.T) {
 	}
 }
 
+// A video or a sound is shown as a player, with the file itself a link
+// away for one the browser cannot play, and a comment on it is at a moment.
+func TestViewerPlaysVideoAndSound(t *testing.T) {
+	project := t.TempDir()
+	for _, name := range []string{"demo.mp4", "talk.MP3"} {
+		if err := os.WriteFile(filepath.Join(project, name), []byte("\x00\x00\x00\x18ftypmp42"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := newFiles(t, project, func() error { return nil })
+	for rel, element := range map[string]string{"demo.mp4": "video", "talk.MP3": "audio"} {
+		resp := get(t, files.url(rel), "")
+		body, _ := io.ReadAll(resp.Body)
+		raw := "/" + files.token + "/raw/" + rel
+		for _, want := range []string{`data-kind="media"`, `<` + element + ` id="media" controls preload="metadata" src="` + raw + `">`, `href="` + raw + `"`} {
+			if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), want) {
+				t.Fatalf("%s lacks %s: %d\n%s", rel, want, resp.StatusCode, body)
+			}
+		}
+	}
+	if status, answer := review(t, files, http.MethodPost, "demo.mp4", `{"anchor":{"time":83.4},"body":"The menu flickers here."}`); status != http.StatusOK || !strings.Contains(answer, `"time":83.4`) {
+		t.Fatalf("comment at a moment = %d %s", status, answer)
+	}
+}
+
 func review(t *testing.T, files *Files, method, rel, body string) (int, string) {
 	t.Helper()
 	var payload io.Reader
@@ -495,6 +520,8 @@ func TestReviewsAreKeptBesideTheProjectForTheVM(t *testing.T) {
 		`{"anchor":{"point":[1.5,0]},"body":"x"}`:                 http.StatusBadRequest,
 		`{"anchor":{"point":[0.5,0.5],"lines":[1,1]},"body":"x"}`: http.StatusBadRequest,
 		`{"anchor":{"spot":1},"body":"x"}`:                        http.StatusBadRequest,
+		`{"anchor":{"time":-1},"body":"x"}`:                       http.StatusBadRequest,
+		`{"anchor":{"time":3,"lines":[1,1]},"body":"x"}`:          http.StatusBadRequest,
 		`{"anchor":{},"body":""}`:                                 http.StatusBadRequest,
 		`{"body":"x"}`:                                            http.StatusBadRequest,
 		`{"id":"nope","resolved":true}`:                           http.StatusBadRequest,
