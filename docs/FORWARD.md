@@ -60,6 +60,7 @@ The default posture is:
 host-side services to the VM on port 61001: [ep_weave](EPWEAVE.md) under
 `/epweave`, the [GitHub](GITHUB.md), [GitLab](GITLAB.md) and
 [Bitbucket](BITBUCKET.md) relays under `/github`, `/gitlab` and
-`/bitbucket`, the [Google token issuer](GOOGLE.md) under `/google` and the browser-open
+`/bitbucket`, the [Redmine](REDMINE.md) relay under `/redmine`, the
+[Google token issuer](GOOGLE.md) under `/google` and the browser-open
 request of [opeco](OPECO.md) at `/open`. It exists only while the project
 uses at least one of them.

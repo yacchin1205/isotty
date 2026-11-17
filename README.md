@@ -266,6 +266,31 @@ isotty-bitbucket pr create --title 'Add relay' --destination main < description.
 
 See [Bitbucket design](docs/BITBUCKET.md).
 
+Redmine:
+
+The agent can read the issues, wiki pages and attachments of the Redmine projects you name, filtered on the host before they reach the VM: contact details and secrets are hidden by pattern, the people Redmine names get pseudonyms of their user ids, and the names a morphological analyser finds in the text are hidden. The filter misses some names, and every answer is recorded in the VM event log so you can look for them. The key stays on the host; PDF and image attachments reach the VM as their text, read on the host with poppler and tesseract.
+
+```bash
+isotty host redmine login https://redmine.example.org      # asks for your API key
+isotty host redmine add --project infra
+isotty up
+```
+
+`login` keeps the URL and the key in `~/.isotty/redmine.yaml`. The project setting is stored in:
+
+```text
+./.isotty/redmine.yaml
+```
+
+Inside the VM:
+
+```bash
+isotty-redmine issue list --status open
+isotty-redmine issue view 101
+```
+
+See [Redmine design](docs/REDMINE.md).
+
 Google:
 
 The agent in the VM can use Google Docs, Sheets, Forms and other Google APIs as a service account you choose, for the files shared with that account and the scopes you pin.
@@ -498,6 +523,7 @@ IsoTTY stores local state under:
 * [GitHub design](docs/GITHUB.md)
 * [GitLab design](docs/GITLAB.md)
 * [Bitbucket design](docs/BITBUCKET.md)
+* [Redmine design](docs/REDMINE.md)
 * [Google design](docs/GOOGLE.md)
 * [Apps Script design](docs/GAS.md)
 * [DNS design](docs/DNS.md)

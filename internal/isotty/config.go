@@ -19,6 +19,7 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host/github"
 	"github.com/yazawa/isotty/internal/isotty/host/gitlab"
 	"github.com/yazawa/isotty/internal/isotty/host/google"
+	"github.com/yazawa/isotty/internal/isotty/host/redmine"
 	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
@@ -40,6 +41,8 @@ type Config struct {
 	GitLab *gitlab.ProjectConfig
 	// Bitbucket is nil when the project has no pinned Bitbucket repository.
 	Bitbucket *bitbucket.ProjectConfig
+	// Redmine is nil when the project has no pinned Redmine project.
+	Redmine *redmine.ProjectConfig
 	// Docker is nil when the project has no pinned image repository.
 	Docker *docker.ProjectConfig
 	// Google is nil when the project has not enabled the Google token gateway.
@@ -97,6 +100,10 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	redmineConfig, err := redmine.LoadPinned(projectPath, projectHash, homeDir)
+	if err != nil {
+		return Config{}, err
+	}
 	dockerConfig, err := docker.Kind.LoadPinned(projectPath, projectHash, homeDir)
 	if err != nil {
 		return Config{}, err
@@ -135,6 +142,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		GitHub:       githubConfig,
 		GitLab:       gitlabConfig,
 		Bitbucket:    bitbucketConfig,
+		Redmine:      redmineConfig,
 		Docker:       dockerConfig,
 		Google:       googleConfig,
 		GAS:          gasConfig,

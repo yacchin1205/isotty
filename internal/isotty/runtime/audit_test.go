@@ -1,6 +1,11 @@
 package runtimecfg
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -261,5 +266,41 @@ func TestQueryAuditLogsRefusesWhenRulesMissing(t *testing.T) {
 	}
 	if _, err := QueryAuditLogs(target, "today"); err == nil || !strings.Contains(err.Error(), "isotty-connect") {
 		t.Fatalf("QueryAuditLogs() error = %v, want missing-rule error", err)
+	}
+}
+
+// TestVMEventFromInput runs the script VMEventInputCommand runs in the VM,
+// without sudo, on a record larger than one command-line argument may be.
+func TestVMEventFromInput(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+	if !strings.Contains(VMEventInputCommand(), vmEventLogPath) {
+		t.Fatalf("command does not write the event log: %s", VMEventInputCommand())
+	}
+	record, err := NewRedmineVMEvent("hash", "/issues/101", strings.Repeat("x", 200<<10), json.RawMessage(`[{"field":"issue.subject","start":0,"end":6,"kind":"name"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "log", "events.jsonl")
+	cmd := exec.Command("python3", "-c", vmEventScript("json.load(sys.stdin)"), path)
+	cmd.Stdin = bytes.NewReader(data)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got VMEventRecord
+	if err := json.Unmarshal(written, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != "redmine-read" || got.Target != "/issues/101" || len(got.Content) != 200<<10 || got.Time == "" || string(got.Replaced) != `[{"field":"issue.subject","start":0,"end":6,"kind":"name"}]` {
+		t.Fatalf("written record = %+v", got)
 	}
 }
