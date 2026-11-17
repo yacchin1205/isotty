@@ -13,7 +13,7 @@ import (
 
 func Run(projectPath, projectHash, homeDir string, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("host requires a subcommand: forward, epweave, github, gitlab, bitbucket, docker, google, gas, dns, children, or opeco")
+		return errors.New("host requires a subcommand: forward, epweave, github, gitlab, bitbucket, redmine, docker, google, gas, dns, children, or opeco")
 	}
 
 	switch args[0] {
@@ -27,6 +27,8 @@ func Run(projectPath, projectHash, homeDir string, args []string, stdout, stderr
 		return runGitLab(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
 	case "bitbucket":
 		return runBitbucket(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
+	case "redmine":
+		return runRedmine(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
 	case "docker":
 		return runDocker(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
 	case "google":

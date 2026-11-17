@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -29,6 +30,7 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host/github"
 	"github.com/yazawa/isotty/internal/isotty/host/gitlab"
 	"github.com/yazawa/isotty/internal/isotty/host/google"
+	"github.com/yazawa/isotty/internal/isotty/host/redmine"
 	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
@@ -134,6 +136,11 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host bitbucket remove [--remote <name>]... [--repo <workspace/repo_slug>]...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host bitbucket clear")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host bitbucket show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host redmine login <url>")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host redmine add --project <identifier>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host redmine remove --project <identifier>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host redmine clear")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host redmine show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker add --repo <registry/path>... [--allow read|write]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker remove --repo <registry/path>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker clear")
@@ -507,6 +514,7 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 	var githubCfg *github.ProjectConfig
 	var gitlabCfg *gitlab.ProjectConfig
 	var bitbucketCfg *bitbucket.ProjectConfig
+	var redmineCfg *redmine.ProjectConfig
 	var dockerCfg *docker.ProjectConfig
 	var googleCfg *google.ProjectConfig
 	var gasCfg *gas.ProjectConfig
@@ -573,6 +581,19 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 				return err
 			}
 			bitbucketCfg = &verified
+		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/redmine.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			synced, err := redmine.ParseProjectConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote redmine config: %w", err)
+			}
+			verified, err := redmine.VerifyPinned(homeDir, projectHash, synced)
+			if err != nil {
+				return err
+			}
+			redmineCfg = &verified
 		}
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/docker.yaml"); err != nil {
 			return err
@@ -676,7 +697,7 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 		return err
 	}
 	// Without a project on the host there is no synced copy to open.
-	return a.attachWithConnection(conn, projectHash, workspacePath, shell, nil, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, shell, nil, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -702,6 +723,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	var githubCfg *github.ProjectConfig
 	var gitlabCfg *gitlab.ProjectConfig
 	var bitbucketCfg *bitbucket.ProjectConfig
+	var redmineCfg *redmine.ProjectConfig
 	var dockerCfg *docker.ProjectConfig
 	var googleCfg *google.ProjectConfig
 	var gasCfg *gas.ProjectConfig
@@ -726,6 +748,10 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 			return err
 		}
 		bitbucketCfg, err = bitbucket.Kind.LoadPinned(projectPath, state.ProjectHash, homeDir)
+		if err != nil {
+			return err
+		}
+		redmineCfg, err = redmine.LoadPinned(projectPath, state.ProjectHash, homeDir)
 		if err != nil {
 			return err
 		}
@@ -783,7 +809,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 		}
 		defer files.Close()
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -808,7 +834,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, files *browser.Files, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, files *browser.Files, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -827,7 +853,7 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		deferredErrs = append(deferredErrs, err)
 		deferredMu.Unlock()
 	}
-	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, files, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, record, fail)
+	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, files, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, record, fail)
 	if err != nil {
 		return err
 	}
@@ -949,7 +975,7 @@ func (a *App) waitForGatewayPort(target runtimecfg.RemoteTarget) error {
 // gatewayHandler mounts the host services the session may use. --no-host
 // mounts nothing, so no gateway starts and the VM gets no reverse forward,
 // which lets a second terminal attach beside the first.
-func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
+func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
 	mux := http.NewServeMux()
 	var services []string
 	if epweaveCfg != nil {
@@ -983,6 +1009,14 @@ func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash 
 		}
 		mux.Handle("/bitbucket/", http.StripPrefix("/bitbucket", handler))
 		services = append(services, "Bitbucket")
+	}
+	if redmineCfg != nil {
+		handler, err := a.redmineHandler(*redmineCfg, conn, projectHash)
+		if err != nil {
+			return nil, nil, err
+		}
+		mux.Handle("/redmine/", http.StripPrefix("/redmine", handler))
+		services = append(services, "Redmine")
 	}
 	if dockerCfg != nil {
 		handler, err := a.dockerHandler(*dockerCfg, projectHash, record, fail)
@@ -1156,6 +1190,45 @@ func (a *App) bitbucketHandler(cfg bitbucket.ProjectConfig, projectHash string, 
 		return nil, err
 	}
 	return bitbucket.Handler(hostCfg.Token, cfg, forgeRecorder(projectHash, "bitbucket", record)), nil
+}
+
+// redmineHandler relays reads of the pinned Redmine projects with the
+// host key, every answer filtered with the project's salt and recorded in
+// the VM event log before the VM gets it. The record carries the answer,
+// which can outgrow a command-line argument, so it goes over stdin.
+func (a *App) redmineHandler(cfg redmine.ProjectConfig, conn vmcfg.GCPConnection, projectHash string) (http.Handler, error) {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return nil, err
+	}
+	hostCfg, err := redmine.LoadHostConfig(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	salt, err := redmine.LoadSalt(redmine.SaltPath(homeDir, projectHash))
+	if err != nil {
+		return nil, err
+	}
+	record := func(delivery redmine.Delivery) error {
+		marks, err := json.Marshal(delivery.Marks)
+		if err != nil {
+			return err
+		}
+		event, err := runtimecfg.NewRedmineVMEvent(projectHash, delivery.Target, delivery.Content, marks)
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+		return vmcfg.RunGCPRemoteCommandWithInput(conn, runtimecfg.VMEventInputCommand(), bytes.NewReader(data))
+	}
+	handler, err := redmine.Handler(hostCfg, cfg, salt, record)
+	if err != nil {
+		return nil, fmt.Errorf("redmine: %w", err)
+	}
+	return handler, nil
 }
 
 func forgeRecorder(projectHash, kind string, record func(runtimecfg.VMEventRecord) error) func(forge.WriteEvent) error {
@@ -1880,6 +1953,17 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 				Zone:         state.Zone,
 				InstanceName: state.InstanceName,
 			}, bitbucket.SetupCommand(cfg.Runtime.Agents), a.debug)
+		}); err != nil {
+			return State{}, err
+		}
+	}
+	if cfg.Redmine != nil {
+		if err := a.runPhase("Installing Redmine client", func() error {
+			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
+				ProjectID:    state.GCPProjectID,
+				Zone:         state.Zone,
+				InstanceName: state.InstanceName,
+			}, redmine.SetupCommand(cfg.Runtime.Agents), a.debug)
 		}); err != nil {
 			return State{}, err
 		}

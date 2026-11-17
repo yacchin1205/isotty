@@ -91,6 +91,10 @@ type VMEventRecord struct {
 	Shape          string `json:"shape,omitempty"`
 	Expose         string `json:"expose,omitempty"`
 	ExternalIP     string `json:"external_ip,omitempty"`
+	// Content and Replaced are what a Redmine read handed the VM and where
+	// the filter replaced something in it.
+	Content  string          `json:"content,omitempty"`
+	Replaced json.RawMessage `json:"replaced,omitempty"`
 }
 
 type RemoteTarget struct {
@@ -190,6 +194,20 @@ func NewForgeVMEvent(projectHash, forge, operation, repo, target string) (VMEven
 	}
 	record.Repo = repo
 	record.Target = target
+	return record, nil
+}
+
+// NewRedmineVMEvent records what the Redmine relay handed the VM for the
+// read at target, after the filter, and where the filter replaced
+// something in it.
+func NewRedmineVMEvent(projectHash, target, content string, replaced json.RawMessage) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, "redmine-read")
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.Target = target
+	record.Content = content
+	record.Replaced = replaced
 	return record, nil
 }
 
@@ -306,15 +324,24 @@ func VMEventCommand(record VMEventRecord) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("marshal VM event: %w", err)
 	}
-
-	script := `import datetime, json, os, sys; path = sys.argv[1]; entry = json.loads(sys.argv[2]); entry["time"] = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"); os.makedirs(os.path.dirname(path), exist_ok=True); handle = open(path, "a", encoding="utf-8"); handle.write(json.dumps(entry, separators=(",", ":")) + "\n"); handle.close()`
-
 	return fmt.Sprintf(
 		"sudo python3 -c %s %s %s",
-		shellJoin([]string{script}),
+		shellJoin([]string{vmEventScript("json.loads(sys.argv[2])")}),
 		shellJoin([]string{vmEventLogPath}),
 		shellJoin([]string{string(data)}),
 	), nil
+}
+
+// VMEventInputCommand records the event its stdin carries as JSON, for an
+// event larger than one command-line argument may be.
+func VMEventInputCommand() string {
+	return fmt.Sprintf("sudo python3 -c %s %s",
+		shellJoin([]string{vmEventScript("json.load(sys.stdin)")}),
+		shellJoin([]string{vmEventLogPath}))
+}
+
+func vmEventScript(load string) string {
+	return `import datetime, json, os, sys; path = sys.argv[1]; entry = ` + load + `; entry["time"] = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"); os.makedirs(os.path.dirname(path), exist_ok=True); handle = open(path, "a", encoding="utf-8"); handle.write(json.dumps(entry, separators=(",", ":")) + "\n"); handle.close()`
 }
 
 func auditRules() string {
