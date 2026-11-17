@@ -10,7 +10,8 @@ mcp-toml-url PATH NAME URL [EXTRA_JSON]           the same for a streamable HTTP
                                                   keys added to its table
 mcp-toml-remove PATH NAME                         take the table out of such a file
 hooks PATH HOOKS_JSON SERVER                      merge the "hooks" object of HOOKS_JSON, replacing
-                                                  groups that already call SERVER
+                                                  groups that already call SERVER (an MCP server,
+                                                  or the command of a command hook)
 hooks-remove PATH SERVER                          take out the groups that call SERVER
 json-default PATH KEY VALUE_JSON                  set a top-level key of a JSON file unless it is set
 toml-default PATH TABLE KEY VALUE_JSON            set a key of a [TABLE] in a TOML file unless it is set
@@ -106,8 +107,10 @@ def hooks_remove(path, server):
     save_json(path, data)
 
 
-def without(groups, server):
-    return [g for g in groups if not any(h.get('server') == server for h in g['hooks'])]
+def without(groups, owner):
+    """The hook groups that are not owner's: an MCP tool hook is the
+    server's, a command hook the command's."""
+    return [g for g in groups if not any(owner in (h.get('server'), h.get('command')) for h in g['hooks'])]
 
 
 def json_default(path, key, value_json):

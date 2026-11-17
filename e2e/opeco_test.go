@@ -33,26 +33,37 @@ var opecoTraces = []string{
 
 // hookSays asks the opeco in the VM what the agent's settings have its
 // runtime ask as a request arrives, and returns what the agent is told. No
-// session is running: nothing in the test pairs.
+// session is running: nothing in the test pairs. Other hooks may run as a
+// request arrives too; opeco's is one.
 func (h *harness) hookSays(settings string) string {
 	h.t.Helper()
+	type entry struct {
+		Server string          `json:"server"`
+		Tool   string          `json:"tool"`
+		Input  json.RawMessage `json:"input"`
+	}
 	var parsed struct {
 		Hooks struct {
 			UserPromptSubmit []struct {
-				Hooks []struct {
-					Tool  string          `json:"tool"`
-					Input json.RawMessage `json:"input"`
-				} `json:"hooks"`
+				Hooks []entry `json:"hooks"`
 			}
 		} `json:"hooks"`
 	}
 	if err := json.Unmarshal([]byte(h.mustVM("cat "+settings)), &parsed); err != nil {
 		h.t.Fatal(err)
 	}
-	if len(parsed.Hooks.UserPromptSubmit) != 1 || len(parsed.Hooks.UserPromptSubmit[0].Hooks) != 1 {
-		h.t.Fatalf("%s: hooks as a request arrives = %+v, want one", settings, parsed.Hooks.UserPromptSubmit)
+	var opeco []entry
+	for _, group := range parsed.Hooks.UserPromptSubmit {
+		for _, candidate := range group.Hooks {
+			if candidate.Server == "opeco-link" {
+				opeco = append(opeco, candidate)
+			}
+		}
 	}
-	hook := parsed.Hooks.UserPromptSubmit[0].Hooks[0]
+	if len(opeco) != 1 {
+		h.t.Fatalf("%s: opeco hooks as a request arrives = %+v, want one", settings, parsed.Hooks.UserPromptSubmit)
+	}
+	hook := opeco[0]
 	calls := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"e2e","version":"0"}}}
 {"jsonrpc":"2.0","method":"notifications/initialized"}
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"` + hook.Tool + `","arguments":` + string(hook.Input) + `}}

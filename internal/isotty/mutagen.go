@@ -37,10 +37,7 @@ func recreateMutagenSession(state State, debug bool) error {
 		return err
 	}
 
-	if err := runMutagenCommand(state.MutagenEnv(), debug, buildMutagenCreateArgs(state)...); err != nil {
-		return err
-	}
-	return flushMutagenSession(state)
+	return runMutagenCommand(state.MutagenEnv(), debug, buildMutagenCreateArgs(state)...)
 }
 
 func terminateMutagenSession(state State) error {
