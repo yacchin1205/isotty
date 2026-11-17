@@ -229,3 +229,37 @@ func TestRemoveTakesOutOnlyTheServer(t *testing.T) {
 		}
 	}
 }
+
+// A command hook is its command's own: merging it again replaces it, and the
+// groups of an MCP server and of other commands stay.
+func TestHooksMergeCommandHooksByCommand(t *testing.T) {
+	needPython(t)
+	dir := t.TempDir()
+	settings := filepath.Join(dir, "settings.json")
+	existing := `{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"mcp_tool","server":"opeco-link","tool":"claude_hook_check"}]},{"hooks":[{"type":"command","command":"mine"}]},{"hooks":[{"type":"command","command":"/usr/local/bin/isotty-sync hook","timeout":1}]}]}}`
+	if err := os.WriteFile(settings, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hooks := filepath.Join(dir, "hooks.json")
+	if err := os.WriteFile(hooks, []byte(`{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/usr/local/bin/isotty-sync hook","timeout":5}]}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := merge(t, dir, "hooks", settings, hooks, "/usr/local/bin/isotty-sync hook"); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	data, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	var want map[string]any
+	if err := json.Unmarshal([]byte(`{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"mcp_tool","server":"opeco-link","tool":"claude_hook_check"}]},{"hooks":[{"type":"command","command":"mine"}]},{"hooks":[{"type":"command","command":"/usr/local/bin/isotty-sync hook","timeout":5}]}]}}`), &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("merged hooks:\n%s", data)
+	}
+}

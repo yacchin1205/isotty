@@ -809,7 +809,17 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 		}
 		defer files.Close()
 	}
-	return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	if noHost {
+		return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	}
+	// The attach that holds the gateway tells the VM how the sync stands
+	// while it runs; a second terminal leaves that to it.
+	stop := make(chan struct{})
+	reported := make(chan error, 1)
+	go func() { reported <- reportSync(state, conn, stop) }()
+	err = a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	close(stop)
+	return errors.Join(err, <-reported)
 }
 
 const opecoForwardName = "opeco-qr"
@@ -931,7 +941,8 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 			}
 			stopSweep = docker.CacheFor(projectHash).KeepSwept(docker.CLI{}, dockerHost.Keep, fail)
 		}
-		attachErr = vmcfg.RunGCPInteractiveSSH(sshArgs...)
+		a.bell()
+		attachErr = a.runSession(sshArgs, target, reverse != nil)
 		stopSweep()
 	}
 
@@ -970,6 +981,62 @@ func (a *App) waitForGatewayPort(target runtimecfg.RemoteTarget) error {
 		return fmt.Errorf("VM port %d is held by another attach; use `isotty attach --no-host` for a second terminal", gateway.VMPort)
 	}
 	return err
+}
+
+// A session that drops after reconnectAfter is tried once more, after
+// reconnectDelay. One that ends sooner is not: ssh ends with 255 for its own
+// errors too, an authentication or a forward that cannot bind among them,
+// and those end it right at the start.
+const (
+	reconnectAfter = 3 * time.Minute
+	reconnectDelay = 5 * time.Second
+)
+
+// runSession runs the interactive ssh, and once more when the connection
+// dropped after the session had run for a while. The bell rings when the
+// second one fails too.
+func (a *App) runSession(sshArgs []string, target runtimecfg.RemoteTarget, gatewayForwarded bool) error {
+	started := time.Now()
+	err := vmcfg.RunGCPInteractiveSSH(sshArgs...)
+	if !droppedAfter(err, time.Since(started), reconnectAfter) {
+		return err
+	}
+	a.phase("The connection dropped; attaching again in %d seconds", int(reconnectDelay.Seconds()))
+	time.Sleep(reconnectDelay)
+	if err := a.reattach(sshArgs, target, gatewayForwarded); err != nil {
+		a.bell()
+		return fmt.Errorf("the connection dropped and attaching again failed: %w", err)
+	}
+	return nil
+}
+
+func (a *App) reattach(sshArgs []string, target runtimecfg.RemoteTarget, gatewayForwarded bool) error {
+	if gatewayForwarded {
+		if err := target.Run(gateway.PortFreeCommand(0), a.debug); err != nil {
+			if target.ExitCode(err) != gateway.PortHeld {
+				return err
+			}
+			if err := a.waitForGatewayPort(target); err != nil {
+				return err
+			}
+		}
+	}
+	return vmcfg.RunGCPInteractiveSSH(sshArgs...)
+}
+
+// droppedAfter tells a session ssh ended with 255, its exit status for a
+// lost connection, after running at least that long.
+func droppedAfter(err error, ran, least time.Duration) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 255 && ran >= least
+}
+
+// bell rings the terminal the human attached from, where it shows as the
+// tab's badge, a bounce or a sound.
+func (a *App) bell() {
+	if a.isTTY() {
+		fmt.Fprint(a.stdout, "\a")
+	}
 }
 
 // gatewayHandler mounts the host services the session may use. --no-host
@@ -2073,8 +2140,22 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 			return State{}, err
 		}
 	}
+	syncConn := vmcfg.GCPConnection{
+		ProjectID:    state.GCPProjectID,
+		Zone:         state.Zone,
+		InstanceName: state.InstanceName,
+	}
+	if err := a.runPhase("Installing sync status client", func() error {
+		return vmcfg.RunGCPRemoteCommand(syncConn, runtimecfg.SyncClientCommand(cfg.Runtime.Agents), a.debug)
+	}); err != nil {
+		return State{}, err
+	}
+	// up does not wait for the sync: the attach tells the VM how it stands.
 	if err := a.runPhase("Starting sync session", func() error {
-		return recreateMutagenSession(state, a.debug)
+		if err := recreateMutagenSession(state, a.debug); err != nil {
+			return err
+		}
+		return writeSyncReport(syncConn, syncReport{Status: "starting"})
 	}); err != nil {
 		return State{}, err
 	}
@@ -2084,6 +2165,11 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 			return State{}, err
 		}
 		if hasPostInstall {
+			if err := a.runPhase("Waiting for the first sync, which the post-install script reads", func() error {
+				return flushMutagenSession(state)
+			}); err != nil {
+				return State{}, err
+			}
 			if err := a.runPhase("Running post-install script", func() error {
 				return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
 					ProjectID:    state.GCPProjectID,
