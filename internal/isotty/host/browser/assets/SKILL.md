@@ -20,7 +20,8 @@ A path under `/workspace` opens in that browser too: the workspace is
 synced to the host, so the file is already on their machine. The host
 waits for the sync to carry it over and shows its copy in a viewer, a PNG
 as an image, a Markdown report as a page with the images it refers to by
-relative path, any other text line by line. Nothing is uploaded anywhere,
+relative path, a video or a sound as a player, any other text line by
+line. Nothing is uploaded anywhere,
 and no server is needed. Only paths under `/workspace`, and only what the
 sync shares: secrets, keys and the like stay out of it on both sides. What
 you wrote is shown inert; a script in an HTML file does not run, and HTML
@@ -30,7 +31,7 @@ is shown as text.
 
 In the viewer the human can comment on a line or a range of a text, on a
 paragraph, heading or list item of a Markdown page, on a spot or an area
-of an image, or on the file as a whole. The comments reach this VM through
+of an image, on a moment of a video or a sound, or on the file as a whole. The comments reach this VM through
 the sync, as `/workspace/.isotty/reviews/<path>.jsonl`. After you showed
 a file, and before you report, read them:
 

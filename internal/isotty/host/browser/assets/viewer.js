@@ -1,6 +1,6 @@
 // The viewer lets the human comment on what the agent showed them: a line
 // or a range of a text, a block of a Markdown page, a spot or an area of
-// an image, or the file as a whole. The comments go to the server beside
+// an image, a moment of a video or a sound, or the file as a whole. The comments go to the server beside
 // the project, where the sync carries them into the VM.
 (function () {
   'use strict';
@@ -53,7 +53,16 @@
     if (anchor.rect) {
       return 'area at (' + pct(anchor.rect[0]) + ', ' + pct(anchor.rect[1]) + ') ' + pct(anchor.rect[2]) + ' × ' + pct(anchor.rect[3]);
     }
+    if (anchor.time !== undefined) {
+      return 'at ' + clock(anchor.time);
+    }
     return 'the whole file';
+  }
+
+  function clock(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = (seconds - m * 60).toFixed(1);
+    return m + ':' + (s < 10 ? '0' : '') + s;
   }
 
   function pct(v) {
@@ -132,6 +141,18 @@
       render();
       compose();
     });
+  }
+
+  // A comment on a video or a sound is at the moment where it is paused.
+  if (kind === 'media') {
+    const media = document.getElementById('media');
+    const pick = () => {
+      if (!media.paused) return;
+      selection = { time: Math.round(media.currentTime * 10) / 10 };
+      compose();
+    };
+    media.addEventListener('pause', pick);
+    media.addEventListener('seeked', pick);
   }
 
   if (kind === 'other') {
@@ -236,7 +257,7 @@
     if (!comments.length) {
       const hint = document.createElement('p');
       hint.className = 'hint';
-      hint.textContent = { text: 'Click a line number to comment on it; shift-click to extend the range.', markdown: 'Click a paragraph, heading or list item to comment on it.', image: 'Click a spot, or drag over an area, to comment on it.', other: 'Comment on the file as a whole.' }[kind];
+      hint.textContent = { text: 'Click a line number to comment on it; shift-click to extend the range.', markdown: 'Click a paragraph, heading or list item to comment on it.', image: 'Click a spot, or drag over an area, to comment on it.', media: 'Pause where you want to comment; the comment is at that moment.', other: 'Comment on the file as a whole.' }[kind];
       list.append(hint);
     }
   }
@@ -288,6 +309,10 @@
       target = document.getElementById('L' + anchor.lines[0]) || blocksOver(anchor.lines)[0] || null;
     } else if (anchor.point || anchor.rect) {
       target = content.querySelector('.canvas');
+    } else if (anchor.time !== undefined) {
+      target = document.getElementById('media');
+      target.pause();
+      target.currentTime = anchor.time;
     }
     if (target) {
       target.classList.add('focus');

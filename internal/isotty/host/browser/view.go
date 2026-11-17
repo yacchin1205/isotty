@@ -30,13 +30,14 @@ const textLimit = 8 << 20
 
 // kind is how the viewer shows a file, which decides what a comment can
 // point at: lines of a text, a block of a Markdown page, a spot on an
-// image, or the file as a whole.
+// image, a moment of a video or a sound, or the file as a whole.
 type kind string
 
 const (
 	kindMarkdown kind = "markdown"
 	kindText     kind = "text"
 	kindImage    kind = "image"
+	kindMedia    kind = "media"
 	kindOther    kind = "other"
 )
 
@@ -48,6 +49,19 @@ func isImage(rel string) bool {
 	return false
 }
 
+// mediaElement is the HTML element that plays the file, by its name; ""
+// for a file that is not a video or a sound. Whether the browser plays it
+// depends on its codec, which the name does not tell.
+func mediaElement(rel string) string {
+	switch strings.ToLower(path.Ext(rel)) {
+	case ".mp4", ".m4v", ".webm", ".mov":
+		return "video"
+	case ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".flac":
+		return "audio"
+	}
+	return ""
+}
+
 // classify decides how the file is shown. A text is what is valid UTF-8
 // without NUL bytes, judged on its first kilobytes; a text or a Markdown
 // file too large to put on a page is shown as a whole.
@@ -55,6 +69,8 @@ func classify(rel string, file io.ReadSeeker, size int64) (kind, error) {
 	switch {
 	case isImage(rel):
 		return kindImage, nil
+	case mediaElement(rel) != "":
+		return kindMedia, nil
 	case size > textLimit:
 		return kindOther, nil
 	case isMarkdown(rel):
@@ -132,6 +148,9 @@ func (f *Files) view(w http.ResponseWriter, r *http.Request) {
 		content = renderText(source)
 	case kindImage:
 		content = []byte(`<div class="canvas"><img id="image" src="` + prefix + "raw/" + escapePath(rel) + `" alt=""></div>`)
+	case kindMedia:
+		element, raw := mediaElement(rel), prefix+"raw/"+escapePath(rel)
+		content = []byte(`<` + element + ` id="media" controls preload="metadata" src="` + raw + `"></` + element + `><p class="other">If it does not play here, <a href="` + raw + `" target="_blank" rel="noopener">open the file itself</a>.</p>`)
 	default:
 		content = []byte(`<p class="other">This file is not shown here. <a href="` + prefix + "raw/" + escapePath(rel) + `" target="_blank" rel="noopener">Open the file itself</a>, and comment on it as a whole.</p>`)
 	}

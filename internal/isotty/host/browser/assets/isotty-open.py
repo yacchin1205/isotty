@@ -74,6 +74,9 @@ def where(anchor):
     if 'rect' in anchor:
         x, y, w, h = anchor['rect']
         return f'area ({x:.0%}, {y:.0%}) {w:.0%}x{h:.0%}'
+    if 'time' in anchor:
+        minutes, seconds = divmod(anchor['time'], 60)
+        return f'at {int(minutes)}:{seconds:04.1f}'
     return 'whole file'
 
 

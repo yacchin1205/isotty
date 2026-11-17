@@ -41,23 +41,25 @@ type Comment struct {
 
 // Anchor is where in the file a comment sits: lines of a text or of a
 // Markdown page's source, with the text at the first of them quoted; a
-// point or a rectangle on an image, in fractions of its size; or nothing,
-// for the file as a whole.
+// point or a rectangle on an image, in fractions of its size; a moment of
+// a video or a sound, in seconds; or nothing, for the file as a whole.
 type Anchor struct {
 	Lines []int     `json:"lines,omitempty"`
 	Quote string    `json:"quote,omitempty"`
 	Point []float64 `json:"point,omitempty"`
 	Rect  []float64 `json:"rect,omitempty"`
+	Time  *float64  `json:"time,omitempty"`
 }
 
 func (a Anchor) valid() error {
 	switch {
-	case len(a.Lines) == 2 && a.Lines[0] >= 1 && a.Lines[1] >= a.Lines[0] && a.Point == nil && a.Rect == nil:
-	case len(a.Point) == 2 && a.Lines == nil && a.Quote == "" && a.Rect == nil && unit(a.Point):
-	case len(a.Rect) == 4 && a.Lines == nil && a.Quote == "" && a.Point == nil && unit(a.Rect):
-	case a.Lines == nil && a.Quote == "" && a.Point == nil && a.Rect == nil:
+	case len(a.Lines) == 2 && a.Lines[0] >= 1 && a.Lines[1] >= a.Lines[0] && a.Point == nil && a.Rect == nil && a.Time == nil:
+	case len(a.Point) == 2 && a.Lines == nil && a.Quote == "" && a.Rect == nil && a.Time == nil && unit(a.Point):
+	case len(a.Rect) == 4 && a.Lines == nil && a.Quote == "" && a.Point == nil && a.Time == nil && unit(a.Rect):
+	case a.Time != nil && *a.Time >= 0 && a.Lines == nil && a.Quote == "" && a.Point == nil && a.Rect == nil:
+	case a.Lines == nil && a.Quote == "" && a.Point == nil && a.Rect == nil && a.Time == nil:
 	default:
-		return errors.New("an anchor is two lines with the first quoted, a point or a rectangle in fractions of the image, or nothing")
+		return errors.New("an anchor is two lines with the first quoted, a point or a rectangle in fractions of the image, a moment in seconds, or nothing")
 	}
 	return nil
 }
