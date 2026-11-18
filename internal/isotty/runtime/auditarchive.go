@@ -235,3 +235,17 @@ func RestoreAuditArchiveCommand(agents []string) string {
 	// heredocs could not take one after their terminator anyway.
 	return strings.Join(lines, "\n")
 }
+
+// AuditArchivesCheck holds when every archive is unpacked in the VM and
+// the agents are told where.
+func AuditArchivesCheck(archives []string, agents []string) string {
+	checks := []string{"true"}
+	for _, archive := range archives {
+		stamp := strings.TrimSuffix(filepath.Base(archive), auditArchiveSuffix)
+		checks = append(checks, fmt.Sprintf("[ -d %s/%s ]", vmAuditArchiveDir, stamp))
+	}
+	for _, dir := range AgentSkillDirs(agents) {
+		checks = append(checks, fmt.Sprintf("[ -f ~/%s/isotty-audit/SKILL.md ]", dir))
+	}
+	return strings.Join(checks, " && ")
+}

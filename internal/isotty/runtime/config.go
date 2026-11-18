@@ -2,7 +2,6 @@ package runtimecfg
 
 import (
 	"regexp"
-	"strings"
 )
 
 type RuntimeConfig struct {
@@ -66,40 +65,4 @@ func AptInstallPackages(cfg RuntimeConfig) []string {
 		packages = append(packages, pkg)
 	}
 	return packages
-}
-
-func BootstrapCommand(cfg RuntimeConfig, workspacePath string) (string, error) {
-	parts := WorkspaceBootstrapPrefix(workspacePath)
-	aptPackages := AptInstallPackages(cfg)
-	if len(aptPackages) > 0 || NeedsNodeRuntime(cfg) {
-		parts = append(parts, "sudo apt-get update")
-	}
-	parts = append(parts, AptBootstrapCommands(aptPackages)...)
-	if NeedsNodeRuntime(cfg) {
-		parts = append(parts, NodeBootstrapCommand(cfg))
-	}
-	if len(cfg.Agents) > 0 {
-		command, err := AgentBootstrapCommand(cfg)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, command)
-	}
-	if len(cfg.Tools) > 0 {
-		command, err := ToolBootstrapCommand(cfg)
-		if err != nil {
-			return "", err
-		}
-		if command != "" {
-			parts = append(parts, command)
-		}
-	}
-	if len(cfg.Services) > 0 {
-		command, err := ServiceBootstrapCommand(cfg)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, command)
-	}
-	return strings.Join(parts, " && "), nil
 }

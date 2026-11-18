@@ -100,11 +100,15 @@ func RemoveAptPackages(projectPath string, packages []string) error {
 	return saveTextList(AptPackagesPath(projectPath), "apt config", next)
 }
 
-func AptBootstrapCommands(packages []string) []string {
-	if len(packages) == 0 {
-		return nil
-	}
-	return []string{fmt.Sprintf("sudo apt-get install -y %s", shellJoin(packages))}
+// AptCheck holds when every package is installed.
+func AptCheck(packages []string) string {
+	return fmt.Sprintf(`installed() { for p in "$@"; do dpkg-query -W -f='${db:Status-Abbrev}\n' "$p" | grep -q '^ii' || return 1; done; }; installed %s`, shellJoin(packages))
+}
+
+// AptCommand installs the packages; one already installed is left at its
+// version.
+func AptCommand(packages []string) string {
+	return fmt.Sprintf("set -euo pipefail && sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-upgrade %s", shellJoin(packages))
 }
 
 func RunApt(projectPath string, args []string, stdout, stderr io.Writer) error {

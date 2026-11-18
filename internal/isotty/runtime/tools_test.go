@@ -66,25 +66,25 @@ func TestAptInstallPackagesMergesToolPackages(t *testing.T) {
 	}
 }
 
-func TestBootstrapCommandWithTools(t *testing.T) {
+func TestToolCommandsWithTools(t *testing.T) {
 	cfg := RuntimeConfig{Tools: []string{"doc-tools"}}
 
-	command, err := BootstrapCommand(cfg, "/workspace")
+	if !strings.Contains(AptCommand(AptInstallPackages(cfg)), "poppler-utils") {
+		t.Fatalf("expected doc-tools apt packages in %q", AptCommand(AptInstallPackages(cfg)))
+	}
+	command, err := ToolBootstrapCommand(cfg)
 	if err != nil {
-		t.Fatalf("BootstrapCommand() error = %v", err)
+		t.Fatal(err)
 	}
-
-	if !strings.Contains(command, "sudo apt-get update") {
-		t.Fatalf("expected apt-get update, got %q", command)
+	if !strings.Contains(command, "pip3 install --break-system-packages") || !strings.Contains(command, "python-docx") {
+		t.Fatalf("expected system pip install of doc tools, got %q", command)
 	}
-	if !strings.Contains(command, "poppler-utils") {
-		t.Fatalf("expected doc-tools apt packages, got %q", command)
+	check, err := ToolCheck(cfg)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(command, "pip3 install --break-system-packages") {
-		t.Fatalf("expected system pip install, got %q", command)
-	}
-	if !strings.Contains(command, "python-docx") {
-		t.Fatalf("expected pip install of doc tools, got %q", command)
+	if !strings.Contains(check, "import pypdf") {
+		t.Fatalf("expected a check of the pip packages, got %q", check)
 	}
 }
 

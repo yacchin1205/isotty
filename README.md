@@ -79,7 +79,7 @@ Stop the VM for the night and keep everything else:
 isotty stop
 ```
 
-The VM stays on its disk with the workspace, the installed tools and the agents' sessions, but it no longer costs compute time. Running processes, a tmux session say, end as on a reboot. The next `isotty up` starts it again, skipping the bootstrap.
+The VM stays on its disk with the workspace, the installed tools and the agents' sessions, but it no longer costs compute time. Running processes, a tmux session say, end as on a reboot. The next `isotty up` starts it again.
 
 Destroy the environment:
 
@@ -113,6 +113,8 @@ isotty attach --target <isotty-id>
 ```
 
 ## Project Config
+
+`isotty up` brings the VM to what these files say on every run, a VM it creates and a VM that exists alike: what is missing is installed, and what is installed keeps its version. What is removed from them stays in the VM until `down`. An `up` that stopped part way leaves nothing the next `up` does not finish; it first waits for what the stopped one left running in the VM, up to 10 minutes, and `isotty up --ignore-running` goes on without waiting. See [VM design](docs/VM.md#up).
 
 Optional apt packages:
 
@@ -434,8 +436,8 @@ Optional post-install script:
 ./.isotty/post-install.sh
 ```
 
-If present, it runs in the VM after sync is ready.
-It runs with `sudo`.
+If present, it runs in the VM on every `up`, after sync is ready.
+It runs with `sudo`. A script that must do something only once checks for itself that it has done it.
 
 ```bash
 isotty runtime post-install path
@@ -488,9 +490,9 @@ isotty vm gcp set --machine-type e2-standard-8 --boot-disk-size 200GB
 
 ## Files for the VM Home
 
-Files placed under `~/.isotty/home` on the host are copied into the home directory of every VM this host creates, with the same relative paths. This is how personal instructions reach the agents, for example `~/.isotty/home/CODE_POLICY.md` and a `~/.isotty/home/.claude/CLAUDE.md` that tells Claude to read it.
+Files placed under `~/.isotty/home` on the host are copied into the home directory of the VM on every `isotty up`, with the same relative paths, so every VM has the host's copies. This is how personal instructions reach the agents, for example `~/.isotty/home/CODE_POLICY.md` and a `~/.isotty/home/.claude/CLAUDE.md` that tells Claude to read it.
 
-The directory must hold copies: `isotty up` stops if it finds a symbolic link, naming the link. Files are copied when the VM is created, so changes reach a VM only through `down` and `up`.
+The directory must hold copies: `isotty up` stops if it finds a symbolic link, naming the link. They are copied after the agents' saved state is restored, and over it.
 
 ## Sync Modes
 

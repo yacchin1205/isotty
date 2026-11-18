@@ -99,9 +99,9 @@ func TestCaptureAgentAuthCommand(t *testing.T) {
 	}
 }
 
-func TestUnpackAgentAuthCommandRestoresOnlyAgentPaths(t *testing.T) {
-	command := UnpackAgentAuthCommand("claude")
-	for _, want := range []string{`tar -xzf - -C "$tmp"`, `for p in '.claude' '.claude.json'`, `mv "$tmp/$p" ~/`, `rm -rf "$tmp"`} {
+func TestRestoreAgentHomeCommandRestoresOnlyAbsentAgentPaths(t *testing.T) {
+	command := RestoreAgentHomeCommand("claude")
+	for _, want := range []string{`mktemp -d -p ~`, `tar -xzf - -C "$tmp"`, `for p in '.claude' '.claude.json'`, `[ ! -e ~/"$p" ]`, `mv "$tmp/$p" ~/`, `rm -rf "$tmp"`} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("command missing %q: %s", want, command)
 		}

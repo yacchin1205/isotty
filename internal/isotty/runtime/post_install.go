@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 func PostInstallScriptPath(projectPath string) string {
@@ -28,23 +27,6 @@ func HasPostInstallScript(projectPath string) (bool, error) {
 
 func PostInstallCommand(workspacePath string) string {
 	return fmt.Sprintf("cd %s && sudo bash ./.isotty/post-install.sh", workspacePath)
-}
-
-func BootstrapLabel(cfg RuntimeConfig) string {
-	parts := []string{"Bootstrapping workspace"}
-	if len(AptInstallPackages(cfg)) > 0 {
-		parts = append(parts, "installing packages")
-	}
-	if NeedsNodeRuntime(cfg) {
-		parts = append(parts, "installing Node.js")
-	}
-	if len(cfg.Agents) > 0 {
-		parts = append(parts, "installing agents")
-	}
-	if len(cfg.Tools) > 0 {
-		parts = append(parts, "installing tools")
-	}
-	return strings.Join(parts, " and ")
 }
 
 func RunPostInstall(projectPath string, args []string, stdout, stderr io.Writer) error {

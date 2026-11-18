@@ -27,6 +27,21 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+  spec:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Check the specification of up
+        working-directory: spec
+        run: lake build
+
   e2e:
     runs-on: ubuntu-latest
     steps:

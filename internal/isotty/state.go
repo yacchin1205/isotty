@@ -16,7 +16,6 @@ type State struct {
 	Zone                string `json:"zone"`
 	InstanceName        string `json:"instance_name"`
 	SyncMode            string `json:"sync_mode"`
-	BootstrapCompleted  bool   `json:"bootstrap_completed,omitempty"`
 	RemoteWorkspacePath string `json:"remote_workspace_path"`
 	// OpecoQRPort is the port opeco serves its QR page on in this VM, chosen
 	// at `up` so that no two projects on this host share it; 0 when the

@@ -16,6 +16,9 @@ var agentHomePaths = map[string][]string{
 	"codex":  {".codex"},
 }
 
+// SavedAgents are the agents whose home state is saved and restored.
+func SavedAgents() []string { return []string{"claude", "codex"} }
+
 // agentHomeExcludes leave out what the agent downloads again on its own:
 // caches, and for Codex the app-server binaries it keeps under packages.
 var agentHomeExcludes = map[string][]string{
