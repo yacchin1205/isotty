@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 )
@@ -21,11 +23,14 @@ var issueListParams = map[string]bool{"status_id": true, "tracker_id": true, "so
 
 // relay serves the pinned projects, every answer filtered and recorded.
 type relay struct {
-	api      *api
-	cfg      HostConfig
-	projects []Project
-	filter   *Filter
-	record   func(Delivery) error
+	api    *api
+	cfg    HostConfig
+	pins   []string
+	filter *Filter
+	record func(Delivery) error
+
+	mu       sync.Mutex
+	resolved []Project
 }
 
 // Delivery is what the relay hands the VM for one read: the read as the
@@ -37,23 +42,15 @@ type Delivery struct {
 	Marks   []Mark
 }
 
-// Handler reads the pinned projects with the host key and serves the
-// reads; the host gateway mounts it under /redmine. It fails when a pinned
-// project cannot be read, so attach says so. Every answer is passed to
-// record before the VM gets it, and withheld when that fails.
+// Handler serves reads of the pinned projects with the host key; the host
+// gateway mounts it under /redmine. Every answer is passed to record
+// before the VM gets it, and withheld when that fails.
 func Handler(cfg HostConfig, pins ProjectConfig, salt []byte, record func(Delivery) error) (http.Handler, error) {
 	filter, err := NewFilter(salt)
 	if err != nil {
 		return nil, err
 	}
-	r := &relay{api: newAPI(cfg), cfg: cfg, filter: filter, record: record}
-	for _, identifier := range pins.Projects {
-		project, err := r.api.project(identifier)
-		if err != nil {
-			return nil, err
-		}
-		r.projects = append(r.projects, project)
-	}
+	r := &relay{api: newAPI(cfg), cfg: cfg, pins: pins.Projects, filter: filter, record: record}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", r.status)
 	mux.HandleFunc("GET /projects/{identifier}", r.project)
@@ -66,8 +63,33 @@ func Handler(cfg HostConfig, pins ProjectConfig, salt []byte, record func(Delive
 	return mux, nil
 }
 
+// projects reads the pinned projects from the Redmine on first use, so
+// that an attach does not depend on the Redmine being reachable, and
+// answers 502 while they cannot be read.
+func (r *relay) projects(w http.ResponseWriter) ([]Project, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.resolved == nil {
+		var projects []Project
+		for _, identifier := range r.pins {
+			project, err := r.api.project(identifier)
+			if err != nil {
+				gateway.WriteError(w, http.StatusBadGateway, err.Error())
+				return nil, false
+			}
+			projects = append(projects, project)
+		}
+		r.resolved = projects
+	}
+	return r.resolved, true
+}
+
 func (r *relay) status(w http.ResponseWriter, req *http.Request) {
-	body, err := json.Marshal(map[string]any{"url": r.cfg.URL, "projects": r.projects})
+	projects, ok := r.projects(w)
+	if !ok {
+		return
+	}
+	body, err := json.Marshal(map[string]any{"url": r.cfg.URL, "projects": projects})
 	if err != nil {
 		gateway.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -81,22 +103,16 @@ func (r *relay) status(w http.ResponseWriter, req *http.Request) {
 }
 
 // pinned returns the pinned project named in the path, or answers 403.
-func (r *relay) pinned(w http.ResponseWriter, identifier string) (Project, bool) {
-	for _, project := range r.projects {
-		if project.Identifier == identifier {
-			return project, true
-		}
+func (r *relay) pinned(w http.ResponseWriter, identifier string) (string, bool) {
+	if slices.Contains(r.pins, identifier) {
+		return identifier, true
 	}
 	gateway.WriteError(w, http.StatusForbidden, fmt.Sprintf("project %s is not among the projects pinned for this VM (%s); ask the human to run `isotty host redmine add --project %s` on the host", identifier, r.identifiers(), identifier))
-	return Project{}, false
+	return "", false
 }
 
 func (r *relay) identifiers() string {
-	names := make([]string, len(r.projects))
-	for i, project := range r.projects {
-		names[i] = project.Identifier
-	}
-	return strings.Join(names, ", ")
+	return strings.Join(r.pins, ", ")
 }
 
 // fetch reads a JSON path from the Redmine and answers the VM with it,
@@ -140,7 +156,7 @@ func (r *relay) project(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	r.fetch(w, req, "/projects/"+url.PathEscape(project.Identifier)+".json", nil, nil)
+	r.fetch(w, req, "/projects/"+url.PathEscape(project)+".json", nil, nil)
 }
 
 func (r *relay) issues(w http.ResponseWriter, req *http.Request) {
@@ -148,7 +164,7 @@ func (r *relay) issues(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	params := url.Values{"project_id": {project.Identifier}, "subproject_id": {"!*"}}
+	params := url.Values{"project_id": {project}, "subproject_id": {"!*"}}
 	for key, values := range req.URL.Query() {
 		if !issueListParams[key] {
 			gateway.WriteError(w, http.StatusBadRequest, fmt.Sprintf("query parameter %s is not accepted; the list takes status_id, tracker_id, sort, limit and offset", key))
@@ -161,7 +177,7 @@ func (r *relay) issues(w http.ResponseWriter, req *http.Request) {
 
 // issueProject reads which project an issue belongs to and refuses one
 // outside the pin; the issue is numbered across the whole Redmine.
-func (r *relay) issueProject(body []byte) error {
+func (r *relay) issueProject(projects []Project, body []byte) error {
 	var answer struct {
 		Issue struct {
 			ID      int `json:"id"`
@@ -173,7 +189,7 @@ func (r *relay) issueProject(body []byte) error {
 	if err := json.Unmarshal(body, &answer); err != nil {
 		return fmt.Errorf("the Redmine answered something that is not an issue: %w", err)
 	}
-	for _, project := range r.projects {
+	for _, project := range projects {
 		if project.ID == answer.Issue.Project.ID {
 			return nil
 		}
@@ -187,14 +203,20 @@ func (r *relay) issue(w http.ResponseWriter, req *http.Request) {
 		gateway.WriteError(w, http.StatusBadRequest, "the issue id is a number")
 		return
 	}
-	r.fetch(w, req, "/issues/"+strconv.Itoa(id)+".json", url.Values{"include": {"children,relations,journals,attachments,watchers"}}, r.pinnedIssue)
+	projects, ok := r.projects(w)
+	if !ok {
+		return
+	}
+	r.fetch(w, req, "/issues/"+strconv.Itoa(id)+".json", url.Values{"include": {"children,relations,journals,attachments,watchers"}}, func(body []byte) ([]byte, error) {
+		return r.pinnedIssue(projects, body)
+	})
 }
 
 // pinnedIssue refuses an issue outside the pin and drops the subjects of
 // its children: a child may be in another project, a subproject included,
 // and is read on its own, where the pin is checked, by its number.
-func (r *relay) pinnedIssue(body []byte) ([]byte, error) {
-	if err := r.issueProject(body); err != nil {
+func (r *relay) pinnedIssue(projects []Project, body []byte) ([]byte, error) {
+	if err := r.issueProject(projects, body); err != nil {
 		return nil, err
 	}
 	var answer map[string]any
@@ -224,7 +246,7 @@ func (r *relay) wikiIndex(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	r.fetch(w, req, "/projects/"+url.PathEscape(project.Identifier)+"/wiki/index.json", nil, nil)
+	r.fetch(w, req, "/projects/"+url.PathEscape(project)+"/wiki/index.json", nil, nil)
 }
 
 func (r *relay) wikiPage(w http.ResponseWriter, req *http.Request) {
@@ -232,7 +254,7 @@ func (r *relay) wikiPage(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	r.fetch(w, req, "/projects/"+url.PathEscape(project.Identifier)+"/wiki/"+url.PathEscape(req.PathValue("title"))+".json", url.Values{"include": {"attachments"}}, nil)
+	r.fetch(w, req, "/projects/"+url.PathEscape(project)+"/wiki/"+url.PathEscape(req.PathValue("title"))+".json", url.Values{"include": {"attachments"}}, nil)
 }
 
 // attachment is what the relay needs of an attachment listed on an issue
@@ -250,11 +272,15 @@ func (r *relay) issueAttachment(w http.ResponseWriter, req *http.Request) {
 		gateway.WriteError(w, http.StatusBadRequest, "the issue id is a number")
 		return
 	}
+	projects, ok := r.projects(w)
+	if !ok {
+		return
+	}
 	body, status, err := r.api.get("/issues/"+strconv.Itoa(id)+".json", url.Values{"include": {"attachments"}})
 	if !r.fetched(w, status, err) {
 		return
 	}
-	if err := r.issueProject(body); err != nil {
+	if err := r.issueProject(projects, body); err != nil {
 		gateway.WriteError(w, http.StatusForbidden, err.Error())
 		return
 	}
@@ -275,7 +301,7 @@ func (r *relay) wikiAttachment(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	body, status, err := r.api.get("/projects/"+url.PathEscape(project.Identifier)+"/wiki/"+url.PathEscape(req.PathValue("title"))+".json", url.Values{"include": {"attachments"}})
+	body, status, err := r.api.get("/projects/"+url.PathEscape(project)+"/wiki/"+url.PathEscape(req.PathValue("title"))+".json", url.Values{"include": {"attachments"}})
 	if !r.fetched(w, status, err) {
 		return
 	}

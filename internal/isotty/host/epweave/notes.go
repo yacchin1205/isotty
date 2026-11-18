@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"strings"
+	"sync"
 )
 
 var (
@@ -28,10 +29,12 @@ func (e PrefixError) Error() string {
 // write only under the project prefix, never delete or replace wholesale.
 type Notes struct {
 	client       *Client
-	authorID     string
 	authorMapper string
 	authorName   string
 	prefix       string
+
+	mu       sync.Mutex
+	authorID string
 }
 
 type ReadResult struct {
@@ -58,23 +61,35 @@ type ChangesResult struct {
 	HTML       string            `json:"html,omitempty"`
 }
 
-// Connect obtains a token and the Etherpad author the VM's writes are attributed to.
-func Connect(host HostConfig, project ProjectConfig, authorMapper, authorName string) (*Notes, error) {
-	client, err := NewClient(host)
-	if err != nil {
-		return nil, err
-	}
-	authorID, err := client.CreateAuthorIfNotExistsFor(authorMapper, authorName)
-	if err != nil {
-		return nil, err
-	}
+// NewNotes reaches ep_weave only when the VM asks for something, so that an
+// attach does not depend on it being reachable.
+func NewNotes(host HostConfig, project ProjectConfig, authorMapper, authorName string) *Notes {
 	return &Notes{
-		client:       client,
-		authorID:     authorID,
+		client:       NewClient(host),
 		authorMapper: authorMapper,
 		authorName:   authorName,
 		prefix:       project.TitlePrefix(),
-	}, nil
+	}
+}
+
+// author is the Etherpad author the VM's writes are attributed to.
+func (n *Notes) author() (string, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.authorID == "" {
+		id, err := n.client.CreateAuthorIfNotExistsFor(n.authorMapper, n.authorName)
+		if err != nil {
+			return "", err
+		}
+		n.authorID = id
+	}
+	return n.authorID, nil
+}
+
+// Reach obtains a new token, so that a status says whether ep_weave
+// answers now.
+func (n *Notes) Reach() error {
+	return n.client.renewToken()
 }
 
 func (n *Notes) URL() string {
@@ -127,11 +142,15 @@ func (n *Notes) Create(title, markdown, tags string) (WriteResult, error) {
 	if tags != "" {
 		fragment += "<p>" + html.EscapeString(tags) + "</p>"
 	}
-	padID := newPadID()
-	if err := n.client.CreatePad(padID, n.authorID); err != nil {
+	author, err := n.author()
+	if err != nil {
 		return WriteResult{}, err
 	}
-	if err := n.client.SetHTML(padID, htmlDocument(fragment), n.authorID); err != nil {
+	padID := newPadID()
+	if err := n.client.CreatePad(padID, author); err != nil {
+		return WriteResult{}, err
+	}
+	if err := n.client.SetHTML(padID, htmlDocument(fragment), author); err != nil {
 		return WriteResult{}, err
 	}
 	return n.writeResult(padID)

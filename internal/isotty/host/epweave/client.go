@@ -41,22 +41,18 @@ type SearchDoc struct {
 	Title string `json:"title"`
 }
 
-func NewClient(cfg HostConfig) (*Client, error) {
-	client := &Client{
+func NewClient(cfg HostConfig) *Client {
+	return &Client{
 		URL:  strings.TrimRight(cfg.URL, "/"),
 		cfg:  cfg,
 		http: &http.Client{Timeout: 30 * time.Second},
 	}
-	if err := client.renewToken(); err != nil {
-		return nil, fmt.Errorf("obtain ep_weave token from %s: %w", client.URL, err)
-	}
-	return client, nil
 }
 
 func (c *Client) renewToken() error {
 	token, err := c.fetchToken()
 	if err != nil {
-		return err
+		return fmt.Errorf("obtain ep_weave token from %s: %w", c.URL, err)
 	}
 	c.mu.Lock()
 	c.token = token
@@ -64,10 +60,21 @@ func (c *Client) renewToken() error {
 	return nil
 }
 
-func (c *Client) currentToken() string {
+// bearer is the current token, obtained on first use so that an attach
+// does not depend on ep_weave being reachable.
+func (c *Client) bearer() (string, error) {
+	c.mu.Lock()
+	token := c.token
+	c.mu.Unlock()
+	if token != "" {
+		return token, nil
+	}
+	if err := c.renewToken(); err != nil {
+		return "", err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.token
+	return c.token, nil
 }
 
 func (c *Client) fetchToken() (string, error) {
@@ -165,7 +172,11 @@ func (c *Client) post(method string, params url.Values) (*http.Response, []byte,
 	if err != nil {
 		return nil, nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.currentToken())
+	token, err := c.bearer()
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return c.send(req)
 }
@@ -175,7 +186,11 @@ func (c *Client) get(path string) (*http.Response, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.currentToken())
+	token, err := c.bearer()
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	return c.send(req)
 }
 
@@ -186,7 +201,7 @@ func (c *Client) retryUnauthorized(send func() (*http.Response, []byte, error)) 
 	resp, body, err := send()
 	if err == nil && resp.StatusCode == http.StatusUnauthorized {
 		if err := c.renewToken(); err != nil {
-			return nil, nil, fmt.Errorf("renew ep_weave token: %w", err)
+			return nil, nil, err
 		}
 		resp, body, err = send()
 	}
