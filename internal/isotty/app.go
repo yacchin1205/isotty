@@ -1187,7 +1187,7 @@ func (a *App) dockerHandler(cfg docker.ProjectConfig, projectHash string, record
 	}, fail), nil
 }
 
-// epweaveHandler connects to ep_weave with the host credentials and serves
+// epweaveHandler reaches ep_weave with the host credentials and serves
 // the project's Notes, recording every pad write in the VM event log.
 func (a *App) epweaveHandler(cfg epweave.ProjectConfig, projectHash string, record func(runtimecfg.VMEventRecord) error) (http.Handler, error) {
 	homeDir, err := isottyHome()
@@ -1198,11 +1198,7 @@ func (a *App) epweaveHandler(cfg epweave.ProjectConfig, projectHash string, reco
 	if err != nil {
 		return nil, err
 	}
-	notes, err := epweave.Connect(hostCfg, cfg, "isotty-"+projectHash, "isotty:"+cfg.Prefix)
-	if err != nil {
-		return nil, fmt.Errorf("connect to ep_weave: %w", err)
-	}
-	return epweave.Handler(notes, func(event epweave.WriteEvent) error {
+	return epweave.Handler(epweave.NewNotes(hostCfg, cfg, "isotty-"+projectHash, "isotty:"+cfg.Prefix), func(event epweave.WriteEvent) error {
 		vmEvent, err := runtimecfg.NewEpweaveVMEvent(projectHash, event.Operation, event.Title, event.PadID)
 		if err != nil {
 			return err

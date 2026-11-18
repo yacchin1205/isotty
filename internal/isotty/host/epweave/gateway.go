@@ -31,6 +31,10 @@ func Handler(notes *Notes, onWrite func(WriteEvent) error) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
+		if err := notes.Reach(); err != nil {
+			writeNotesError(w, err)
+			return
+		}
 		gateway.WriteJSON(w, http.StatusOK, map[string]string{"url": notes.URL(), "prefix": notes.Prefix()})
 	})
 

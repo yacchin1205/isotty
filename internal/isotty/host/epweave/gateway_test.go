@@ -283,14 +283,11 @@ func newTestGateway(t *testing.T) (*httptest.Server, *fakeEtherpad, []WriteEvent
 	upstream := httptest.NewServer(etherpad.handler(t))
 	t.Cleanup(upstream.Close)
 
-	notes, err := Connect(
+	notes := NewNotes(
 		HostConfig{URL: upstream.URL, ClientID: "id", ClientSecret: "secret"},
 		ProjectConfig{Prefix: "isotty"},
 		"isotty-abc", "isotty:isotty",
 	)
-	if err != nil {
-		t.Fatalf("Connect() error = %v", err)
-	}
 	var events []WriteEvent
 	gateway := httptest.NewServer(Handler(notes, func(event WriteEvent) error {
 		if failRecording {
@@ -457,10 +454,7 @@ func TestGatewayReportsAuditFailureAfterWrite(t *testing.T) {
 	etherpad := &fakeEtherpad{pads: map[string]*fakePad{}}
 	upstream := httptest.NewServer(etherpad.handler(t))
 	defer upstream.Close()
-	notes, err := Connect(HostConfig{URL: upstream.URL, ClientID: "id", ClientSecret: "secret"}, ProjectConfig{Prefix: "isotty"}, "m", "n")
-	if err != nil {
-		t.Fatal(err)
-	}
+	notes := NewNotes(HostConfig{URL: upstream.URL, ClientID: "id", ClientSecret: "secret"}, ProjectConfig{Prefix: "isotty"}, "m", "n")
 	gateway := httptest.NewServer(Handler(notes, func(WriteEvent) error { return fmt.Errorf("ssh failed") }))
 	defer gateway.Close()
 
@@ -470,5 +464,17 @@ func TestGatewayReportsAuditFailureAfterWrite(t *testing.T) {
 	}
 	if len(etherpad.pads) != 1 {
 		t.Fatalf("pads = %v", etherpad.pads)
+	}
+}
+
+func TestNotesReachEpweaveWhenAsked(t *testing.T) {
+	notes := NewNotes(HostConfig{URL: "http://127.0.0.1:1", ClientID: "id", ClientSecret: "secret"}, ProjectConfig{Prefix: "isotty"}, "m", "n")
+	if _, err := notes.Search("x", 1); err == nil || !strings.Contains(err.Error(), "obtain ep_weave token from http://127.0.0.1:1") {
+		t.Fatalf("Search() on an unreachable ep_weave: %v", err)
+	}
+	gateway := httptest.NewServer(Handler(notes, func(WriteEvent) error { return nil }))
+	defer gateway.Close()
+	if status, payload := doJSON(t, http.MethodGet, gateway.URL+"/status", nil); status != http.StatusBadGateway || !strings.Contains(payload["error"].(string), "obtain ep_weave token") {
+		t.Fatalf("status of an unreachable ep_weave = %d, %v", status, payload)
 	}
 }

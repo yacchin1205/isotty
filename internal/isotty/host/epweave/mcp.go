@@ -327,7 +327,11 @@ func (m *mcpRelay) send(r *http.Request, body []byte) (int, http.Header, []byte)
 				req.Header.Set(name, value)
 			}
 		}
-		req.Header.Set("Authorization", "Bearer "+c.currentToken())
+		token, err := c.bearer()
+		if err != nil {
+			return nil, nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 		return c.send(req)
 	})
 	if err != nil {

@@ -179,17 +179,23 @@ func get(t *testing.T, url string) (int, string, string) {
 
 var infraPins = ProjectConfig{Projects: []string{"infra"}}
 
-func TestHandlerReadsThePinnedProjectsFirst(t *testing.T) {
-	redmine := newFakeRedmine(t)
-	cfg := HostConfig{URL: redmine.server.URL, APIKey: "key"}
+func TestHandlerReadsThePinnedProjectsWhenAsked(t *testing.T) {
 	none := func(Delivery) error { return nil }
-	if _, err := Handler(cfg, ProjectConfig{Projects: []string{"secret"}}, testSalt, none); err == nil || !strings.Contains(err.Error(), "secret does not exist or is not visible") {
-		t.Fatalf("handler with an unreadable project: %v", err)
+	unreachable, err := Handler(HostConfig{URL: "http://127.0.0.1:1", APIKey: "key"}, infraPins, testSalt, none)
+	if err != nil {
+		t.Fatalf("handler for an unreachable Redmine: %v", err)
 	}
-	if _, err := Handler(cfg, infraPins, testSalt, none); err != nil {
-		t.Fatal(err)
+	server := httptest.NewServer(http.StripPrefix("/redmine", unreachable))
+	defer server.Close()
+	if status, body, _ := get(t, server.URL+"/redmine/status"); status != 502 || !strings.Contains(body, "project infra") {
+		t.Fatalf("status of an unreachable Redmine = %d %s", status, body)
 	}
-	for _, key := range redmine.keys {
+
+	tr := newTestRelay(t, ProjectConfig{Projects: []string{"secret"}})
+	if status, body, _ := get(t, tr.server.URL+"/redmine/issues/101"); status != 502 || !strings.Contains(body, "secret does not exist or is not visible") {
+		t.Fatalf("issue with an unreadable project = %d %s", status, body)
+	}
+	for _, key := range tr.redmine.keys {
 		if key != "key" {
 			t.Fatalf("a call carried key %q", key)
 		}
