@@ -36,16 +36,16 @@ table.text tr.focus td { background: #ffe08a; }
 
 /* markdown */
 #content.markdown { max-width: 60em; }
-#content.markdown img { max-width: 100%; }
-#content.markdown pre { overflow: auto; padding: .75em; background: #f4f4f4; }
-#content.markdown code { font-family: ui-monospace, monospace; font-size: .95em; }
-#content.markdown table { border-collapse: collapse; }
-#content.markdown th, #content.markdown td { border: 1px solid #ccc; padding: .25em .6em; }
-#content.markdown blockquote { margin: 0; padding-left: 1em; border-left: 3px solid #ccc; color: #555; }
-#content.markdown [data-lines] { position: relative; cursor: pointer; border-left: 3px solid transparent; margin-left: -.75em; padding-left: .75em; }
-#content.markdown [data-lines]:hover { border-left-color: #c9d6f5; }
-#content.markdown [data-lines].has { border-left-color: #e6a800; }
-#content.markdown [data-lines].sel { background: #fff3c4; border-left-color: #e6a800; }
+:is(#content.markdown, .md) img { max-width: 100%; }
+:is(#content.markdown, .md) pre { overflow: auto; padding: .75em; background: #f4f4f4; }
+:is(#content.markdown, .md) code { font-family: ui-monospace, monospace; font-size: .95em; }
+:is(#content.markdown, .md) table { border-collapse: collapse; }
+:is(#content.markdown, .md) th, :is(#content.markdown, .md) td { border: 1px solid #ccc; padding: .25em .6em; }
+:is(#content.markdown, .md) blockquote { margin: 0; padding-left: 1em; border-left: 3px solid #ccc; color: #555; }
+:is(#content.markdown, .md) [data-lines] { position: relative; cursor: pointer; border-left: 3px solid transparent; margin-left: -.75em; padding-left: .75em; }
+:is(#content.markdown, .md) [data-lines]:hover { border-left-color: #c9d6f5; }
+:is(#content.markdown, .md) [data-lines].has { border-left-color: #e6a800; }
+:is(#content.markdown, .md) [data-lines].sel { background: #fff3c4; border-left-color: #e6a800; }
 
 /* image */
 .canvas { position: relative; display: inline-block; max-width: 100%; cursor: crosshair; user-select: none; }
@@ -57,3 +57,21 @@ table.text tr.focus td { background: #ffe08a; }
 
 .other { color: #444; }
 #media { display: block; max-width: 100%; }
+
+/* notebook */
+#content.notebook { max-width: 72em; }
+.cell { margin: 0 0 1.2em; }
+.cell > .label, .output > .label { font-family: ui-monospace, monospace; font-size: .8em; color: #888; cursor: pointer; user-select: none; }
+.cell > .label:hover, .output > .label:hover { color: #000; }
+.label.has { color: #b26a00; font-weight: bold; }
+.label.sel { background: #fff3c4; color: #000; }
+.cell.focus, .output.focus { background: #fffbe6; }
+.cell.code > table.text, .cell.raw > table.text { background: #f7f7f7; }
+.output { margin-top: .3em; padding-left: .6em; border-left: 2px solid #eee; }
+.output pre { margin: .2em 0; white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, monospace; font-size: .9em; }
+.output pre.stderr, .output pre.error { background: #fff0f0; }
+.output pre.error { color: #a00; }
+.output img { display: block; max-width: 100%; }
+.output iframe.html { display: block; width: 100%; height: 4em; border: 0; }
+.output [data-lines] { cursor: auto; }
+.output [data-lines]:hover { border-left-color: transparent; }

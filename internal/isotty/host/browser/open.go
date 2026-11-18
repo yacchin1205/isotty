@@ -71,6 +71,7 @@ func (f *Files) Serve() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /"+f.token+"/raw/{path...}", f.serve)
 	mux.HandleFunc("GET /"+f.token+"/view/{path...}", f.view)
+	mux.HandleFunc("GET /"+f.token+"/out/{path...}", f.output)
 	mux.HandleFunc("GET /"+f.token+"/viewer.css", f.asset("text/css; charset=utf-8", viewerStyle))
 	mux.HandleFunc("GET /"+f.token+"/viewer.js", f.asset("text/javascript; charset=utf-8", viewerScript))
 	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete} {

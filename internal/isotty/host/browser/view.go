@@ -21,16 +21,18 @@ var viewerScript []byte
 
 // viewerPolicy is sent with the viewer page. The page is the server's own
 // code, so its script runs and it talks back to the server; what the VM
-// wrote is in it only as text, as an image or as rendered Markdown, and
-// the page loads nothing from anywhere else.
-const viewerPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; font-src 'self'; media-src 'self'"
+// wrote is in it only as text, as an image, as rendered Markdown or as a
+// notebook's output in a frame that runs no script, and the page loads
+// nothing from anywhere else.
+const viewerPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; font-src 'self'; media-src 'self'; frame-src 'self'"
 
 // textLimit is the largest file put on a page as text or as a Markdown page.
 const textLimit = 8 << 20
 
 // kind is how the viewer shows a file, which decides what a comment can
 // point at: lines of a text, a block of a Markdown page, a spot on an
-// image, a moment of a video or a sound, or the file as a whole.
+// image, a moment of a video or a sound, a cell of a notebook, its lines
+// or one of its outputs, or the file as a whole.
 type kind string
 
 const (
@@ -38,6 +40,7 @@ const (
 	kindText     kind = "text"
 	kindImage    kind = "image"
 	kindMedia    kind = "media"
+	kindNotebook kind = "notebook"
 	kindOther    kind = "other"
 )
 
@@ -71,6 +74,8 @@ func classify(rel string, file io.ReadSeeker, size int64) (kind, error) {
 		return kindImage, nil
 	case mediaElement(rel) != "":
 		return kindMedia, nil
+	case isNotebook(rel) && size <= notebookLimit:
+		return kindNotebook, nil
 	case size > textLimit:
 		return kindOther, nil
 	case isMarkdown(rel):
@@ -139,6 +144,15 @@ func (f *Files) view(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "rendering the file failed", http.StatusInternalServerError)
 			return
 		}
+	case kindNotebook:
+		nb, err := readNotebook(file)
+		if err == nil {
+			content, err = renderNotebook(nb, prefix, rel)
+		}
+		if err != nil {
+			http.Error(w, "rendering the notebook failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	case kindText:
 		source, err := io.ReadAll(file)
 		if err != nil {
@@ -172,11 +186,22 @@ func (f *Files) view(w http.ResponseWriter, r *http.Request) {
 // renderText puts the file on the page line by line, each line numbered so
 // that it can be pointed at.
 func renderText(source []byte) []byte {
+	return renderLines(string(source), "L")
+}
+
+// renderLines puts a text on the page line by line; each row's id is
+// idPrefix and the line's number, or no id when idPrefix is empty, for a
+// page that holds several texts.
+func renderLines(source, idPrefix string) []byte {
 	var out bytes.Buffer
 	out.WriteString(`<table class="text">`)
-	lines := strings.Split(strings.TrimSuffix(string(source), "\n"), "\n")
+	lines := strings.Split(strings.TrimSuffix(source, "\n"), "\n")
 	for i, line := range lines {
-		fmt.Fprintf(&out, `<tr id="L%d"><td class="n" data-line="%d">%d</td><td class="c">%s</td></tr>`, i+1, i+1, i+1, html.EscapeString(line))
+		id := ""
+		if idPrefix != "" {
+			id = fmt.Sprintf(` id="%s%d"`, idPrefix, i+1)
+		}
+		fmt.Fprintf(&out, `<tr%s><td class="n" data-line="%d">%d</td><td class="c">%s</td></tr>`, id, i+1, i+1, html.EscapeString(line))
 		out.WriteByte('\n')
 	}
 	out.WriteString("</table>")

@@ -4,7 +4,8 @@ and read the comments the human left on files shown that way.
 
 http and https URLs open in the human's browser. A path under the workspace
 opens the host's synced copy of that file in a viewer where the human can
-comment on a line, a block, a spot of an image or the file as a whole. The
+comment on a line, a block, a spot of an image, a notebook's cell or
+output, or the file as a whole. The
 gateway exists while the host is attached. Exit status and stderr carry the
 reason when nothing opened.
 
@@ -65,10 +66,23 @@ def file_sha256(path):
     return 'sha256:' + digest.hexdigest()
 
 
+def lines_of(anchor):
+    a, b = anchor['lines']
+    return f'L{a}' if a == b else f'L{a}-{b}'
+
+
 def where(anchor):
+    if 'cell' in anchor:
+        place = f"cell {anchor['cell']}"
+        if anchor.get('cell_id'):
+            place += f" (id {anchor['cell_id']})"
+        if 'output' in anchor:
+            return place + f" output {anchor['output']}"
+        if 'lines' in anchor:
+            return place + ' ' + lines_of(anchor)
+        return place
     if 'lines' in anchor:
-        a, b = anchor['lines']
-        return f'L{a}' if a == b else f'L{a}-{b}'
+        return lines_of(anchor)
     if 'point' in anchor:
         return '({:.0%}, {:.0%})'.format(*anchor['point'])
     if 'rect' in anchor:
@@ -78,6 +92,46 @@ def where(anchor):
         minutes, seconds = divmod(anchor['time'], 60)
         return f'at {int(minutes)}:{seconds:04.1f}'
     return 'whole file'
+
+
+def notebook_cells(path):
+    """The cells of a notebook as (id, lines of its source), or None when
+    it is not one that can be read."""
+    try:
+        with open(path, encoding='utf-8') as f:
+            cells = json.load(f)['cells']
+        return [(c.get('id', ''), ''.join(c['source']) if isinstance(c['source'], list) else c['source']) for c in cells]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def moved(anchor, path, cache):
+    """Where the place a comment names is now, in a file changed since."""
+    notes = []
+    if 'cell' in anchor:
+        if 'cells' not in cache:
+            cache['cells'] = notebook_cells(path)
+        cells = cache['cells']
+        if cells is None:
+            return ['not readable as a notebook now']
+        if anchor.get('cell_id'):
+            now = [i + 1 for i, (cell_id, _) in enumerate(cells) if cell_id == anchor['cell_id']]
+            notes.append(f"that cell is now cell {now[0]}" if now else 'that cell is gone')
+        if 'lines' in anchor and anchor.get('quote'):
+            hits = [f'cell {i + 1} L{n + 1}' for i, (_, source) in enumerate(cells)
+                    for n, line in enumerate(source.split('\n')) if anchor['quote'] in line]
+            if hits:
+                notes.append('quoted text now at ' + ', '.join(hits))
+        return notes
+    # The quoted text finds the place again when the lines moved.
+    if 'lines' in anchor and anchor.get('quote'):
+        if 'lines' not in cache:
+            with open(path, encoding='utf-8', errors='replace') as f:
+                cache['lines'] = f.read().split('\n')
+        hits = [i + 1 for i, line in enumerate(cache['lines']) if anchor['quote'] in line]
+        if hits:
+            notes.append('quoted text now at L' + ', L'.join(str(h) for h in hits))
+    return notes
 
 
 def cmd_reviews(args):
@@ -101,7 +155,7 @@ def cmd_reviews(args):
         except FileNotFoundError:
             continue
         current = file_sha256(os.path.join(workspace, rel))
-        lines = None
+        cache = {}
         printed_file = False
         for comment in comments:
             if comment.get('resolved') and not show_all:
@@ -119,14 +173,7 @@ def cmd_reviews(args):
                 notes.append('file is gone')
             elif comment.get('file_sha256') != current:
                 notes.append('file changed since')
-                # The quoted text finds the place again when the lines moved.
-                if 'lines' in anchor and anchor.get('quote'):
-                    if lines is None:
-                        with open(os.path.join(workspace, rel), encoding='utf-8', errors='replace') as f:
-                            lines = f.read().split('\n')
-                    hits = [i + 1 for i, line in enumerate(lines) if anchor['quote'] in line]
-                    if hits:
-                        notes.append('quoted text now at L' + ', L'.join(str(h) for h in hits))
+                notes.extend(moved(anchor, os.path.join(workspace, rel), cache))
             head = f"  {where(anchor)}  {comment.get('at', '')}"
             if anchor.get('quote'):
                 head += '  "' + anchor['quote'] + '"'
