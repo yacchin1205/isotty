@@ -80,21 +80,25 @@ isotty vm gcp show
 isotty vm gcp set --machine-type e2-standard-8 --boot-disk-size 200GB
 ```
 
-## Bootstrap
+## Up
 
-After VM creation, IsoTTY waits for SSH and bootstraps over SSH.
+Every `up` brings the VM to the configuration, whether it created the VM or
+not, so a VM whose first `up` failed, or one made before a package was added
+to the configuration, still gets it. What is installed keeps its version:
+checking costs far less than reinstalling on every `up`.
 
-Bootstrap sets up:
+`~/.isotty/home` is copied over the VM home on every `up`, so personal files
+such as `~/.claude/CLAUDE.md` are the same on every VM.
 
-* `/workspace`
-* correct ownership for the login user
-* project-defined packages from `./.isotty/apt.txt`
-* optional Node.js runtime from `./.isotty/node.txt` via NodeSource apt packages
-* optional agent CLIs from `./.isotty/agent.yaml`
-* optional services from `./.isotty/service.yaml`
-* optional post-install script from `/workspace/.isotty/post-install.sh`, executed with `sudo`
-* the host's `~/.isotty/home` and then saved agent login state, unpacked into the VM home
-* audit support required by IsoTTY
+The post-install script runs on every `up`. Running it exactly once cannot be
+promised when an `up` may stop anywhere; a script that must do something once
+checks that for itself.
+
+`up` first waits, up to 10 minutes, for what a stopped `up` left running in
+the VM, since a step that finishes late can undo the new `up`'s work.
+`isotty up --ignore-running` goes on without waiting.
+
+That the steps reach the configuration is proved in [spec/](../spec/README.md).
 
 ## Local State
 

@@ -112,6 +112,21 @@ func validateService(service string) error {
 	}
 }
 
+// ServiceCheck holds when every enabled service is installed, enabled and
+// usable by the login user.
+func ServiceCheck(cfg RuntimeConfig) (string, error) {
+	checks := []string{"true"}
+	for _, service := range cfg.Services {
+		switch service {
+		case "docker":
+			checks = append(checks, `command -v docker > /dev/null && systemctl is-enabled --quiet docker && id -nG "$USER" | grep -qw docker`)
+		default:
+			return "", fmt.Errorf("unsupported service %q", service)
+		}
+	}
+	return strings.Join(checks, " && "), nil
+}
+
 func ServiceBootstrapCommand(cfg RuntimeConfig) (string, error) {
 	commands := make([]string, 0, len(cfg.Services))
 	for _, service := range cfg.Services {

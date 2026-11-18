@@ -123,20 +123,32 @@ func validateAgent(agent string) error {
 	}
 }
 
-func AgentBootstrapCommand(cfg RuntimeConfig) (string, error) {
-	if len(cfg.Agents) == 0 {
-		return "", nil
+// AgentCheck holds when every configured agent's package is installed.
+func AgentCheck(cfg RuntimeConfig) (string, error) {
+	packages, err := agentPackageNames(cfg)
+	if err != nil {
+		return "", err
 	}
+	return fmt.Sprintf("env PATH=/usr/local/bin:$PATH npm ls -g --depth=0 %s > /dev/null", shellJoin(packages)), nil
+}
 
+func agentPackageNames(cfg RuntimeConfig) ([]string, error) {
 	packages := make([]string, 0, len(cfg.Agents))
 	for _, agent := range cfg.Agents {
 		pkg, ok := agentPackages[agent]
 		if !ok {
-			return "", fmt.Errorf("unsupported agent %q", agent)
+			return nil, fmt.Errorf("unsupported agent %q", agent)
 		}
 		packages = append(packages, pkg)
 	}
+	return packages, nil
+}
 
+func AgentBootstrapCommand(cfg RuntimeConfig) (string, error) {
+	packages, err := agentPackageNames(cfg)
+	if err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("sudo env PATH=/usr/local/bin:$PATH npm install -g %s", shellJoin(packages)), nil
 }
 

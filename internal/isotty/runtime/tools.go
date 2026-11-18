@@ -22,6 +22,8 @@ type toolBundle struct {
 	Summary     string
 	AptPackages []string
 	Commands    []string
+	// Check holds when what Commands install is in place.
+	Check string
 }
 
 // builtinTools holds the selectable tool bundles. New typical environments are
@@ -42,6 +44,7 @@ var builtinTools = map[string]toolBundle{
 		Commands: []string{
 			"sudo pip3 install --break-system-packages -U pypdf pdfplumber pymupdf python-docx",
 		},
+		Check: "python3 -c 'import pypdf, pdfplumber, fitz, docx'",
 	},
 }
 
@@ -151,6 +154,22 @@ func ToolAptPackages(cfg RuntimeConfig) []string {
 		packages = append(packages, bundle.AptPackages...)
 	}
 	return packages
+}
+
+// ToolCheck holds when the follow-up commands of every enabled bundle have
+// done their work.
+func ToolCheck(cfg RuntimeConfig) (string, error) {
+	checks := []string{"true"}
+	for _, tool := range cfg.Tools {
+		bundle, ok := builtinTools[tool]
+		if !ok {
+			return "", fmt.Errorf("unsupported tool %q", tool)
+		}
+		if len(bundle.Commands) > 0 {
+			checks = append(checks, bundle.Check)
+		}
+	}
+	return strings.Join(checks, " && "), nil
 }
 
 // ToolBootstrapCommand returns the follow-up commands (run after apt install)

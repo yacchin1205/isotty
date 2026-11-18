@@ -71,13 +71,21 @@ IsoTTY never copies credentials from the host into the VM. Authentication
 happens inside the isolated environment, once per project.
 
 A login made in the VM would die with the VM, so `isotty down` saves each
-configured agent's home state and `isotty up` puts it back when it creates
-a new VM:
+configured agent's home state and `isotty up` puts back each saved path the
+VM does not have:
 
 | agent | saved paths |
 |---|---|
 | `claude` | `~/.claude`, `~/.claude.json` |
 | `codex` | `~/.codex` |
+
+A path the VM has is the VM's own and is left as it is. A path is put
+together beside the home, on its file system, and moved into place in one
+rename, so it is there whole or not at all, and an `up` that stopped during
+the restore restores it on the next one. Every saved agent's state is
+restored, whether the project configures the agent now or not, so that
+whether a path is the saved one does not depend on what the configuration
+was when something else first wrote into it.
 
 The agent's state at `down` is the state the next VM starts with, including
 logins, settings, and the agent's own record of trusting `/workspace`; only

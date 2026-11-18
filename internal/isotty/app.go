@@ -213,6 +213,7 @@ func (a *App) runUp(args []string) error {
 	syncMode := fs.String("sync", defaultSyncMode, "synchronization mode")
 	user := fs.String("user", "", "SSH username to use for auto-attach")
 	noAttach := fs.Bool("no-attach", false, "do not attach after preparing the environment")
+	ignoreRunning := fs.Bool("ignore-running", false, "go on without waiting for what an earlier, interrupted up left running in the VM; its steps may then not reach their result")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -251,7 +252,7 @@ func (a *App) runUp(args []string) error {
 		return err
 	}
 
-	state, err := a.ensureEnvironment(cfg, *syncMode)
+	state, err := a.ensureEnvironment(cfg, *syncMode, *ignoreRunning)
 	if err != nil {
 		return err
 	}
@@ -341,27 +342,6 @@ func (a *App) archiveAudit(state State) (string, error) {
 		return "", fmt.Errorf("archive audit logs: %w", err)
 	}
 	return path, nil
-}
-
-func (a *App) restoreAuditArchives(cfg Config, state State) error {
-	archives, err := runtimecfg.ListAuditArchives(cfg.ProjectPath)
-	if err != nil {
-		return err
-	}
-	conn := vmcfg.GCPConnection{ProjectID: state.GCPProjectID, Zone: state.Zone, InstanceName: state.InstanceName}
-	for _, archive := range archives {
-		if err := a.runPhase("Restoring audit archive %s", func() error {
-			stream, err := runtimecfg.OpenAuditArchive(cfg.HomeDir, archive)
-			if err != nil {
-				return err
-			}
-			defer stream.Close()
-			return vmcfg.RunGCPRemoteCommandWithInput(conn, runtimecfg.RestoreAuditArchiveCommand(cfg.Runtime.Agents), stream)
-		}, filepath.Base(archive)); err != nil {
-			return fmt.Errorf("restore audit archive: %w", err)
-		}
-	}
-	return nil
 }
 
 func (a *App) runAuditLogs(args []string) error {
@@ -1825,14 +1805,8 @@ func requireExecutable(name string) error {
 	return nil
 }
 
-func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
+func (a *App) ensureEnvironment(cfg Config, syncMode string, ignoreRunning bool) (State, error) {
 	state := NewState(cfg, syncMode)
-	created := false
-	gcpConfig := cfg.VM.GCP
-	homeArchive, hasHomeArchive, err := runtimecfg.HomeFilesArchive(cfg.HomeDir)
-	if err != nil {
-		return State{}, err
-	}
 	previous, stateErr := LoadStateForProject(cfg.ProjectPath)
 	hasState := stateErr == nil
 	if stateErr != nil && !IsStateNotFoundError(stateErr) {
@@ -1858,332 +1832,49 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string) (State, error) {
 	if err != nil {
 		return State{}, fmt.Errorf("check instance: %w", err)
 	}
-	exists := status != ""
-	if !hasState && exists {
+	if !hasState && status != "" {
 		return State{}, fmt.Errorf("instance %s already exists but no local IsoTTY state was found; use `isotty attach --target <id>` or remove the VM explicitly", state.InstanceName)
 	}
-	switch {
-	case !exists:
-		if err := a.runPhase("Creating VM %s", func() error {
-			return vmcfg.CreateGCPInstance(vmcfg.GCPInstanceSpec{
-				ProjectID:    cfg.GCPProjectID,
-				Zone:         cfg.Zone,
-				ProjectHash:  cfg.ProjectHash,
-				MachineType:  *gcpConfig.MachineType,
-				BootDiskSize: *gcpConfig.BootDiskSize,
-				ImageFamily:  *gcpConfig.ImageFamily,
-				ImageProject: *gcpConfig.ImageProject,
-			}, state.InstanceName, a.debug)
-		}, state.InstanceName); err != nil {
-			return State{}, err
-		}
-		created = true
-	case status == vmcfg.GCPStatusRunning:
-		a.phase("Reusing VM %s", state.InstanceName)
-	case status == vmcfg.GCPStatusTerminated:
-		if err := a.runPhase("Starting VM %s", func() error {
-			return vmcfg.StartGCPInstance(vmcfg.GCPConnection{
-				ProjectID:    cfg.GCPProjectID,
-				Zone:         cfg.Zone,
-				InstanceName: state.InstanceName,
-			}, a.debug)
-		}, state.InstanceName); err != nil {
-			return State{}, err
-		}
+	switch status {
+	case "", vmcfg.GCPStatusRunning, vmcfg.GCPStatusTerminated:
 	default:
 		return State{}, fmt.Errorf("instance %s is %s; wait for it to settle before `isotty up`", state.InstanceName, status)
 	}
 
-	if err := a.runPhase("Saving local state", func() error {
-		return SaveState(state)
-	}); err != nil {
-		return State{}, fmt.Errorf("save state: %w", err)
+	e := &upEnv{
+		a:          a,
+		cfg:        cfg,
+		state:      &state,
+		conn:       vmcfg.GCPConnection{ProjectID: state.GCPProjectID, Zone: state.Zone, InstanceName: state.InstanceName},
+		status:     status,
+		ignoreLeft: ignoreRunning,
 	}
-
-	if err := a.runPhase("Waiting for SSH", func() error {
-		return vmcfg.WaitForGCPSSH(vmcfg.GCPConnection{
-			ProjectID:    state.GCPProjectID,
-			Zone:         state.Zone,
-			InstanceName: state.InstanceName,
-		})
-	}); err != nil {
+	if e.homeArchive, e.hasHome, err = runtimecfg.HomeFilesArchive(cfg.HomeDir); err != nil {
 		return State{}, err
 	}
-	workspacePath, err := vmcfg.GetGCPWorkspacePath(vmcfg.GCPConnection{
-		ProjectID:    state.GCPProjectID,
-		Zone:         state.Zone,
-		InstanceName: state.InstanceName,
-	})
-	if err != nil {
+	if e.archives, err = runtimecfg.ListAuditArchives(cfg.ProjectPath); err != nil {
 		return State{}, err
 	}
-	state.RemoteWorkspacePath = workspacePath
-	if created {
-		command, err := runtimecfg.BootstrapCommand(cfg.Runtime, state.RemoteWorkspacePath)
+	for _, agent := range runtimecfg.SavedAgents() {
+		archive, ok, err := runtimecfg.LoadAgentAuth(cfg.HomeDir, cfg.ProjectPath, agent)
 		if err != nil {
 			return State{}, err
 		}
-		if err := a.runPhase(runtimecfg.BootstrapLabel(cfg.Runtime), func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, command, a.debug)
-		}); err != nil {
-			return State{}, err
+		if !ok {
+			continue
 		}
-		if hasHomeArchive {
-			if err := a.runPhase("Copying %s into the VM home", func() error {
-				return vmcfg.RunGCPRemoteCommandWithInput(vmcfg.GCPConnection{
-					ProjectID:    state.GCPProjectID,
-					Zone:         state.Zone,
-					InstanceName: state.InstanceName,
-				}, runtimecfg.UnpackHomeCommand(), bytes.NewReader(homeArchive))
-			}, runtimecfg.HomeFilesDir(cfg.HomeDir)); err != nil {
-				return State{}, err
-			}
-		}
-		if err := a.restoreAgentAuth(cfg, state); err != nil {
-			return State{}, err
-		}
-		if err := a.restoreAuditArchives(cfg, state); err != nil {
-			return State{}, err
-		}
-	} else {
-		a.phase("Skipping bootstrap for existing VM %s", state.InstanceName)
-	}
-	if err := a.runPhase("Refreshing SSH config", func() error {
-		return vmcfg.RefreshGCPSSHConfig(vmcfg.GCPConnection{
-			ProjectID:     state.GCPProjectID,
-			Zone:          state.Zone,
-			InstanceName:  state.InstanceName,
-			SSHConfigPath: state.SSHConfigPath,
-		}, a.debug)
-	}); err != nil {
-		return State{}, err
-	}
-	if err := a.runPhase("Preparing SSH wrappers", func() error {
-		return ensureSSHWrappers(state)
-	}); err != nil {
-		return State{}, err
-	}
-	if err := a.runPhase("Configuring audit", func() error {
-		return runtimecfg.ConfigureAudit(a.auditTarget(vmcfg.GCPConnection{
-			ProjectID:    state.GCPProjectID,
-			Zone:         state.Zone,
-			InstanceName: state.InstanceName,
-		}), a.debug)
-	}); err != nil {
-		return State{}, err
-	}
-	if cfg.Epweave != nil {
-		if err := a.runPhase("Installing ep_weave client", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, epweave.SetupCommand(*cfg.Epweave, cfg.Runtime.Agents), a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	}
-	if cfg.GitHub != nil {
-		if err := a.runPhase("Installing GitHub client", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, github.SetupCommand(cfg.Runtime.Agents), a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	}
-	if cfg.GitLab != nil {
-		if err := a.runPhase("Installing GitLab client", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, gitlab.SetupCommand(cfg.Runtime.Agents), a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	}
-	if cfg.Bitbucket != nil {
-		if err := a.runPhase("Installing Bitbucket client", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, bitbucket.SetupCommand(cfg.Runtime.Agents), a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	}
-	if cfg.Redmine != nil {
-		if err := a.runPhase("Installing Redmine client", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, redmine.SetupCommand(cfg.Runtime.Agents), a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	}
-	if cfg.Docker != nil {
-		if err := a.runPhase("Installing Docker client", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, docker.SetupCommand(cfg.Runtime.Agents), a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	}
-	if cfg.Google != nil {
-		if err := a.runPhase("Installing Google client", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, google.SetupCommand(cfg.Runtime.Agents), a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	}
-	if cfg.GAS != nil {
-		if err := a.runPhase("Installing Apps Script client", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, gas.SetupCommand(cfg.Runtime.Agents), a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	}
-	if cfg.DNS != nil {
-		if err := a.runPhase("Installing DNS client", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, dns.SetupCommand(cfg.Runtime.Agents), a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	}
-	if cfg.Children != nil {
-		if err := a.runPhase("Installing child VM client", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, child.SetupCommand(cfg.Runtime.Agents), a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	}
-	if err := a.runPhase("Preparing tmux", func() error {
-		return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-			ProjectID:    state.GCPProjectID,
-			Zone:         state.Zone,
-			InstanceName: state.InstanceName,
-		}, runtimecfg.TmuxSetupCommand(), a.debug)
-	}); err != nil {
-		return State{}, err
-	}
-	if command := runtimecfg.NotifyCommand(cfg.Runtime.Agents); command != "" {
-		if err := a.runPhase("Making the agents ring the terminal bell", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, command, a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	}
-	if err := a.runPhase("Installing browser opener", func() error {
-		return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-			ProjectID:    state.GCPProjectID,
-			Zone:         state.Zone,
-			InstanceName: state.InstanceName,
-		}, browser.SetupCommand(cfg.Runtime.Agents), a.debug)
-	}); err != nil {
-		return State{}, err
-	}
-	if opeco.Active(cfg.Runtime.Agents, cfg.Opeco) {
-		if err := a.runPhase("Installing opeco (QR page on port %d)", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, opeco.SetupCommand(cfg.Runtime.Agents, state.OpecoQRPort), a.debug)
-		}, state.OpecoQRPort); err != nil {
-			return State{}, err
-		}
-	} else if len(cfg.Runtime.Agents) > 0 {
-		if err := a.runPhase("Removing opeco", func() error {
-			return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-				ProjectID:    state.GCPProjectID,
-				Zone:         state.Zone,
-				InstanceName: state.InstanceName,
-			}, opeco.RemoveCommand(), a.debug)
-		}); err != nil {
-			return State{}, err
-		}
-	}
-	syncConn := vmcfg.GCPConnection{
-		ProjectID:    state.GCPProjectID,
-		Zone:         state.Zone,
-		InstanceName: state.InstanceName,
-	}
-	if err := a.runPhase("Installing sync status client", func() error {
-		return vmcfg.RunGCPRemoteCommand(syncConn, runtimecfg.SyncClientCommand(cfg.Runtime.Agents), a.debug)
-	}); err != nil {
-		return State{}, err
-	}
-	// up does not wait for the sync: the attach tells the VM how it stands.
-	if err := a.runPhase("Starting sync session", func() error {
-		if err := recreateMutagenSession(state, a.debug); err != nil {
-			return err
-		}
-		return writeSyncReport(syncConn, syncReport{Status: "starting"})
-	}); err != nil {
-		return State{}, err
-	}
-	if created {
-		hasPostInstall, err := runtimecfg.HasPostInstallScript(state.ProjectPath)
+		paths, err := runtimecfg.SavedAgentPaths(agent, archive)
 		if err != nil {
 			return State{}, err
 		}
-		if hasPostInstall {
-			if err := a.runPhase("Waiting for the first sync, which the post-install script reads", func() error {
-				return flushMutagenSession(state)
-			}); err != nil {
-				return State{}, err
-			}
-			if err := a.runPhase("Running post-install script", func() error {
-				return vmcfg.RunGCPRemoteCommand(vmcfg.GCPConnection{
-					ProjectID:    state.GCPProjectID,
-					Zone:         state.Zone,
-					InstanceName: state.InstanceName,
-				}, runtimecfg.PostInstallCommand(state.RemoteWorkspacePath), a.debug)
-			}); err != nil {
-				return State{}, err
-			}
-		}
+		e.auths = append(e.auths, savedAuth{agent: agent, archive: archive, paths: paths})
 	}
-	state.BootstrapCompleted = true
-	if err := a.runPhase("Saving local state", func() error {
-		return SaveState(state)
-	}); err != nil {
-		return State{}, fmt.Errorf("save state: %w", err)
+	if e.postInstall, err = runtimecfg.HasPostInstallScript(cfg.ProjectPath); err != nil {
+		return State{}, err
 	}
-
+	if err := a.runUpSteps(e); err != nil {
+		return State{}, err
+	}
 	return state, nil
 }
 
@@ -2212,25 +1903,6 @@ func (a *App) saveAgentAuth(state State) error {
 			return runtimecfg.SaveAgentAuth(homeDir, state.ProjectPath, agent, archive)
 		}, agent); err != nil {
 			return fmt.Errorf("save %s login state: %w", agent, err)
-		}
-	}
-	return nil
-}
-
-func (a *App) restoreAgentAuth(cfg Config, state State) error {
-	conn := vmcfg.GCPConnection{ProjectID: state.GCPProjectID, Zone: state.Zone, InstanceName: state.InstanceName}
-	for _, agent := range cfg.Runtime.Agents {
-		archive, ok, err := runtimecfg.LoadAgentAuth(cfg.HomeDir, cfg.ProjectPath, agent)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			continue
-		}
-		if err := a.runPhase("Restoring %s login state", func() error {
-			return vmcfg.RunGCPRemoteCommandWithInput(conn, runtimecfg.UnpackAgentAuthCommand(agent), bytes.NewReader(archive))
-		}, agent); err != nil {
-			return fmt.Errorf("restore %s login state: %w", agent, err)
 		}
 	}
 	return nil

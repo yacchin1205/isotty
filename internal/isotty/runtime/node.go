@@ -63,13 +63,22 @@ func ResolvedNodeVersion(cfg RuntimeConfig) string {
 	return defaultNodeMajorVersion
 }
 
+// NodeCheck holds when NodeSource serves the configured major version and
+// nodejs is installed.
+func NodeCheck(cfg RuntimeConfig) string {
+	return fmt.Sprintf(`[ -f /etc/apt/sources.list.d/nodesource.list ] && grep -q "node_%s\.x" /etc/apt/sources.list.d/nodesource.list && %s`,
+		ResolvedNodeVersion(cfg), AptCheck([]string{"nodejs"}))
+}
+
 func NodeBootstrapCommand(cfg RuntimeConfig) string {
-	return fmt.Sprintf(`NODE_MAJOR=%s
+	return fmt.Sprintf(`set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+NODE_MAJOR=%s
 if [ ! -f /etc/apt/sources.list.d/nodesource.list ] || ! grep -q "node_${NODE_MAJOR}\.x" /etc/apt/sources.list.d/nodesource.list; then
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" -o /tmp/nodesource_setup.sh
   sudo -E bash /tmp/nodesource_setup.sh
 fi
-sudo apt-get install -y nodejs`, shellJoin([]string{ResolvedNodeVersion(cfg)}))
+sudo -E apt-get install -y --no-upgrade nodejs`, shellJoin([]string{ResolvedNodeVersion(cfg)}))
 }
 
 func RunNode(projectPath string, args []string, stdout, stderr io.Writer) error {
