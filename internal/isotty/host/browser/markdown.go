@@ -41,9 +41,17 @@ func isMarkdown(rel string) bool {
 
 // renderMarkdown converts the file at rel into the page's body.
 func renderMarkdown(source []byte, prefix, rel string) ([]byte, error) {
+	return convertMarkdown(source, prefix, rel, "")
+}
+
+// convertMarkdown converts Markdown found in the file at rel; an image a
+// notebook's cell names as attachment:<name> is fetched from attachments
+// followed by the name.
+func convertMarkdown(source []byte, prefix, rel, attachments string) ([]byte, error) {
 	ctx := parser.NewContext()
 	ctx.Set(prefixKey, prefix)
 	ctx.Set(dirKey, path.Dir(rel))
+	ctx.Set(attachmentsKey, attachments)
 	var body bytes.Buffer
 	if err := markdown.Convert(source, &body, parser.WithContext(ctx)); err != nil {
 		return nil, err
@@ -52,8 +60,9 @@ func renderMarkdown(source []byte, prefix, rel string) ([]byte, error) {
 }
 
 var (
-	prefixKey = parser.NewContextKey()
-	dirKey    = parser.NewContextKey()
+	prefixKey      = parser.NewContextKey()
+	dirKey         = parser.NewContextKey()
+	attachmentsKey = parser.NewContextKey()
 )
 
 // block wraps one top-level block of the document with the source lines
@@ -102,6 +111,7 @@ func (reviewable) Transform(doc *ast.Document, reader text.Reader, pc parser.Con
 	}
 	prefix, _ := pc.Get(prefixKey).(string)
 	dir, _ := pc.Get(dirKey).(string)
+	attachments, _ := pc.Get(attachmentsKey).(string)
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
@@ -112,6 +122,10 @@ func (reviewable) Transform(doc *ast.Document, reader text.Reader, pc parser.Con
 				n.SetAttributeString("data-lines", []byte(fmt.Sprintf("%d-%d", from, to)))
 			}
 		case *ast.Image:
+			if name := attachmentName(string(n.Destination)); name != "" && attachments != "" {
+				n.Destination = []byte(attachments + url.QueryEscape(name))
+				break
+			}
 			n.Destination = []byte(served(string(n.Destination), prefix+"raw/", dir))
 		case *ast.Link:
 			n.Destination = []byte(served(string(n.Destination), prefix+"view/", dir))

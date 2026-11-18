@@ -1,6 +1,6 @@
 ---
 name: isotty-open
-description: Show a URL or a file of this workspace to the human on the host with the isotty-open command, and read the comments they leave on it. A URL opens in their browser; a file under /workspace opens there as the synced copy in a viewer where the human can comment on a line, a paragraph or a spot of an image, so a figure or report you wrote needs no server and leaves the machine for nowhere. `isotty-open reviews` lists their comments with file and line. It is the BROWSER of the attached session, so gh, Python's webbrowser and your own "open in browser" use it without being told.
+description: Show a URL or a file of this workspace to the human on the host with the isotty-open command, and read the comments they leave on it. A URL opens in their browser; a file under /workspace opens there as the synced copy in a viewer where the human can comment on a line, a paragraph or a spot of an image, so a figure, a report or a notebook you wrote needs no server and leaves the machine for nowhere. `isotty-open reviews` lists their comments with file and line. It is the BROWSER of the attached session, so gh, Python's webbrowser and your own "open in browser" use it without being told.
 ---
 
 # isotty-open
@@ -20,8 +20,9 @@ A path under `/workspace` opens in that browser too: the workspace is
 synced to the host, so the file is already on their machine. The host
 waits for the sync to carry it over and shows its copy in a viewer, a PNG
 as an image, a Markdown report as a page with the images it refers to by
-relative path, a video or a sound as a player, any other text line by
-line. Nothing is uploaded anywhere,
+relative path, a video or a sound as a player, a Jupyter notebook as its
+cells with their outputs, figures and tables included, any other text line
+by line. Nothing is uploaded anywhere,
 and no server is needed. Only paths under `/workspace`, and only what the
 sync shares: secrets, keys and the like stay out of it on both sides. What
 you wrote is shown inert; a script in an HTML file does not run, and HTML
@@ -31,7 +32,8 @@ is shown as text.
 
 In the viewer the human can comment on a line or a range of a text, on a
 paragraph, heading or list item of a Markdown page, on a spot or an area
-of an image, on a moment of a video or a sound, or on the file as a whole. The comments reach this VM through
+of an image, on a moment of a video or a sound, on a notebook's cell, a
+line of it or one of its outputs, or on the file as a whole. The comments reach this VM through
 the sync, as `/workspace/.isotty/reviews/<path>.jsonl`. After you showed
 a file, and before you report, read them:
 
@@ -41,9 +43,11 @@ isotty-open reviews docs/report.md
 ```
 
 Each comment names its place as the file was when it was written:
-`L12-14` with the text that was there, `(31%, 62%)` on an image. When the
-file has changed since, the listing says so and where the quoted text is
-now; take that as the place. Act on the comments, say in your report what
+`L12-14` with the text that was there, `(31%, 62%)` on an image,
+`cell 3 (id 1a2b) L2` or `cell 3 (id 1a2b) output 1` in a notebook, its
+lines counted in the cell. When the
+file has changed since, the listing says so, and where the quoted text
+and the cell are now; take that as the place. Act on the comments, say in your report what
 you did about each, and leave marking them resolved to the human. Do not
 edit the files under `.isotty/reviews/`.
 

@@ -52,28 +52,37 @@ is put on the page as what it is: a Markdown file converted on the host,
 since that is what a report the agent writes most often is, with raw HTML
 in the source left out and nothing that needs a script, such as a diagram
 or formula block, rendered; an image as an image; any other text, HTML
-included, line by line as text; what is none of those, a PDF or a binary,
-is not put on the page but linked, for the browser to show as it can. A
-path a Markdown file names leads to the neighbour under the same prefix,
-resolved and checked like any other: an image to the file itself, a link
-to its page.
+included, line by line as text; a Jupyter notebook as its cells with what
+they printed and drew, since a notebook is read for its outputs as much as
+for its code; what is none of those, a PDF or a binary, is not put on the
+page but linked, for the browser to show as it can. A path a Markdown file
+names leads to the neighbour under the same prefix, resolved and checked
+like any other: an image to the file itself, a link to its page.
 
 What the VM wrote is shown inert. The viewer is the server's code, so its
 own script runs, under a `Content-Security-Policy` of `default-src 'none'`
-with `script-src`, `style-src`, `img-src`, `connect-src`, `font-src` and
-`media-src` set to `'self'`: it loads nothing but what this server holds
-and reaches no other site, and no inline script runs. What the VM wrote
-enters that page only as text nodes, as an `<img>`, or as the converter's
-output. The file itself, under `raw/`, carries a policy of `sandbox`, so a
-script in an HTML or SVG file does not run and the document has no origin
-to read the server with, and of `default-src 'none'` with the same
-`'self'` sources; `X-Content-Type-Options: nosniff` keeps a file what its
-name says. No `Cross-Origin-Resource-Policy` is sent: the sandbox leaves
-such a page with an opaque origin, and the policy would count the page's
-own images as foreign. The file server listens on a loopback port of its
-own that is not forwarded into the VM, answers only requests addressed to
-that port, and puts a random prefix in its paths; it lives as long as the
-attach. The VM cannot open that server by `url`, only a file by its path.
+with `script-src`, `style-src`, `img-src`, `connect-src`, `font-src`,
+`media-src` and `frame-src` set to `'self'`: it loads nothing but what
+this server holds and reaches no other site, and no inline script runs.
+What the VM wrote enters that page only as text nodes, as an `<img>`, as a
+frame, or as the converter's output. The file itself, under `raw/`,
+carries a policy of `sandbox`, so a script in an HTML or SVG file does not
+run and the document has no origin to read the server with, and of
+`default-src 'none'` with the same `'self'` sources;
+`X-Content-Type-Options: nosniff` keeps a file what its name says. No
+`Cross-Origin-Resource-Policy` is sent: the sandbox leaves such a page
+with an opaque origin, and the policy would count the page's own images as
+foreign. A notebook's image and HTML outputs, a data frame's table most
+often, are served on their own under `out/` the same way, an image for an
+`<img>` and HTML for a frame. The HTML keeps the server's origin, so that
+the viewer can size the frame to the table: with no script running in it,
+the origin gives it nothing to read with. What needs a script does not run
+there: a widget is shown by its text, and an interactive plot's HTML shows
+only what it holds without one. The file server listens on a loopback port
+of its own that is not forwarded into the VM, answers only requests
+addressed to that port, and puts a random prefix in its paths; it lives as
+long as the attach. The VM cannot open that server by `url`, only a file
+by its path.
 
 The path must be under the workspace as the VM names it, and the file must
 be a regular file under the project as the host finds it: a symlink that
@@ -92,8 +101,9 @@ never the server's URL.
 Telling an agent where in a file something is wrong is tedious in words;
 in the viewer the human points at it. A line or a range of a text, a
 paragraph, heading or list item of a Markdown page (each carries the
-source lines it came from), a spot or an area of an image, or the file as
-a whole takes a comment, which the human can later edit, mark resolved or
+source lines it came from), a spot or an area of an image, a cell of a
+notebook, a line or a block of it or one of its outputs, or the file as a
+whole takes a comment, which the human can later edit, mark resolved or
 delete.
 
 The comments are kept beside the project, one file per reviewed file:
@@ -107,7 +117,10 @@ The comments are kept beside the project, one file per reviewed file:
 ```
 
 The anchor is `lines` with the text at the first of them quoted, `point`
-or `rect` in fractions of the image's size, or empty for the whole file.
+or `rect` in fractions of the image's size, `cell` with the cell's
+`cell_id` and its `lines` or an `output`, or empty for the whole file. A
+cell is named by its id too, since the agent edits a notebook by cell and
+a cell moves when one is added before it.
 It names the place as the file was then; `file_sha256` says whether the
 file has changed since, and the quote finds the place again when it has.
 

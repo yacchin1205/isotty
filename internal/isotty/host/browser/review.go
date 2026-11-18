@@ -42,16 +42,36 @@ type Comment struct {
 // Anchor is where in the file a comment sits: lines of a text or of a
 // Markdown page's source, with the text at the first of them quoted; a
 // point or a rectangle on an image, in fractions of its size; a moment of
-// a video or a sound, in seconds; or nothing, for the file as a whole.
+// a video or a sound, in seconds; a cell of a notebook, counted from 1 and
+// with its id when it has one, and in it lines of its source or one of its
+// outputs, counted from 1; or nothing, for the file as a whole.
 type Anchor struct {
-	Lines []int     `json:"lines,omitempty"`
-	Quote string    `json:"quote,omitempty"`
-	Point []float64 `json:"point,omitempty"`
-	Rect  []float64 `json:"rect,omitempty"`
-	Time  *float64  `json:"time,omitempty"`
+	Cell   *int      `json:"cell,omitempty"`
+	CellID string    `json:"cell_id,omitempty"`
+	Output *int      `json:"output,omitempty"`
+	Lines  []int     `json:"lines,omitempty"`
+	Quote  string    `json:"quote,omitempty"`
+	Point  []float64 `json:"point,omitempty"`
+	Rect   []float64 `json:"rect,omitempty"`
+	Time   *float64  `json:"time,omitempty"`
 }
 
+var errAnchor = errors.New("an anchor is two lines with the first quoted, a point or a rectangle in fractions of the image, a moment in seconds, a notebook's cell with its lines or one of its outputs, or nothing")
+
 func (a Anchor) valid() error {
+	if a.Cell != nil || a.CellID != "" || a.Output != nil {
+		if a.Cell == nil || *a.Cell < 1 || a.Point != nil || a.Rect != nil || a.Time != nil {
+			return errAnchor
+		}
+		switch {
+		case a.Output != nil && *a.Output >= 1 && a.Lines == nil && a.Quote == "":
+		case a.Output == nil && len(a.Lines) == 2 && a.Lines[0] >= 1 && a.Lines[1] >= a.Lines[0]:
+		case a.Output == nil && a.Lines == nil && a.Quote == "":
+		default:
+			return errAnchor
+		}
+		return nil
+	}
 	switch {
 	case len(a.Lines) == 2 && a.Lines[0] >= 1 && a.Lines[1] >= a.Lines[0] && a.Point == nil && a.Rect == nil && a.Time == nil:
 	case len(a.Point) == 2 && a.Lines == nil && a.Quote == "" && a.Rect == nil && a.Time == nil && unit(a.Point):
@@ -59,7 +79,7 @@ func (a Anchor) valid() error {
 	case a.Time != nil && *a.Time >= 0 && a.Lines == nil && a.Quote == "" && a.Point == nil && a.Rect == nil:
 	case a.Lines == nil && a.Quote == "" && a.Point == nil && a.Rect == nil && a.Time == nil:
 	default:
-		return errors.New("an anchor is two lines with the first quoted, a point or a rectangle in fractions of the image, a moment in seconds, or nothing")
+		return errAnchor
 	}
 	return nil
 }
