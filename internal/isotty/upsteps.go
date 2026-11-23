@@ -18,6 +18,7 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host/gitlab"
 	"github.com/yazawa/isotty/internal/isotty/host/google"
 	"github.com/yazawa/isotty/internal/isotty/host/redmine"
+	"github.com/yazawa/isotty/internal/isotty/host/sshhost"
 	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
@@ -147,6 +148,21 @@ func hostClientStep(name, label string, pinned func(Config) bool, extra []string
 	}
 }
 
+// sshHostStep installs the SSH host client, and hands the VM the keys of
+// the machines on its standard input rather than on the command line.
+func sshHostStep() upStep {
+	step := hostClientStep("ssh", "Setting up SSH hosts", func(c Config) bool { return c.SSH != nil }, nil,
+		[]string{".skill a .ssh"}, nil)
+	step.run = func(e *upEnv) error {
+		input, err := sshhost.SetupInput(*e.cfg.SSH, e.cfg.HomeDir, e.cfg.ProjectHash)
+		if err != nil {
+			return err
+		}
+		return e.vmInput("ssh", sshhost.SetupCommand(e.cfg.Runtime.Agents), input)
+	}
+	return step
+}
+
 var mergeScriptRes = []string{".mergeScript", `.pkg "python3-tomli-w"`}
 
 func upSteps() []upStep {
@@ -251,6 +267,7 @@ func upSteps() []upStep {
 			[]string{".skill a .dns"}, func(c Config) string { return dns.SetupCommand(c.Runtime.Agents) }),
 		hostClientStep("child", "Installing child VM client", func(c Config) bool { return c.Children != nil }, nil,
 			[]string{".skill a .child"}, func(c Config) string { return child.SetupCommand(c.Runtime.Agents) }),
+		sshHostStep(),
 		{label: "Preparing tmux", tag: "tmux", kind: kindStep, base: []string{`.pkg "tmux"`, ".tmuxConf"}, cond: always, rerun: true,
 			run: func(e *upEnv) error { return e.vm("tmux", runtimecfg.TmuxSetupCommand()) }},
 		{label: "Making the agents ring the terminal bell", tag: "notify", kind: kindStep, base: mergeScriptRes,

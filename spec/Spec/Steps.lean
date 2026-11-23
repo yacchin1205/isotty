@@ -31,6 +31,7 @@ def after : List (Template Config) :=
   , step [.client .gas, .keepalive] (each := fun a => [.skill a .gas]) (cond := (fun cfg => decide (.gas ∈ cfg.clients))) (rerun := true)
   , step [.client .dns, .keepalive] (each := fun a => [.skill a .dns]) (cond := (fun cfg => decide (.dns ∈ cfg.clients))) (rerun := true)
   , step [.client .child, .keepalive] (each := fun a => [.skill a .child]) (cond := (fun cfg => decide (.child ∈ cfg.clients))) (rerun := true)
+  , step [.client .ssh, .keepalive] (each := fun a => [.skill a .ssh]) (cond := (fun cfg => decide (.ssh ∈ cfg.clients))) (rerun := true)
   , step [.pkg "tmux", .tmuxConf] (rerun := true)
   , step [.mergeScript, .pkg "python3-tomli-w"] (each := fun a => [.notifySetting a]) (cond := (!·.agents.isEmpty)) (rerun := true)
   , step [.client .open] (each := fun a => [.skill a .open]) (rerun := true)

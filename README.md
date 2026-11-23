@@ -394,6 +394,33 @@ isotty-child delete web
 
 See [Child VM design](docs/CHILD.md).
 
+SSH hosts:
+
+The agent in the VM can log in over SSH to a machine on your network, a Raspberry Pi on your LAN for one, while you are attached.
+`add` logs in once with your own credentials: you confirm the machine's host key there, and a key made for this project and this machine goes into its `authorized_keys`. Your own keys never enter the VM, and the audit log records when the agent was connected to which machine.
+
+```bash
+isotty host ssh add pi --host raspberrypi.local --user pi
+isotty up
+```
+
+The project setting is stored in:
+
+```text
+./.isotty/ssh.yaml
+```
+
+Inside the VM:
+
+```bash
+ssh pi uname -a
+rsync -a dist/ pi:app/
+```
+
+`--key-type ecdsa` makes the key ECDSA for an OpenSSH older than 6.5, which has no ed25519.
+`isotty host ssh remove pi` takes the key out of the machine again; `--force` forgets a machine that is gone.
+See [SSH host design](docs/SSH.md).
+
 Browser:
 
 The agent can open a URL in your browser: `isotty-open <url>` in the VM shows it on the host while you are attached, and the attached session has `BROWSER` set to it, so a click in Codex or `gh` does the same. `http` and `https` only; every open is in the audit log. `isotty-open <path>` with a file under `/workspace` shows your synced copy of it in the browser, a Markdown report as a page with its figures, so what the agent wrote reaches you without a server and without leaving your machine. Click a line, a paragraph or a spot of an image there to leave a comment: it lands in `.isotty/reviews/` and the sync carries it to the agent, which reads it with `isotty-open reviews`.
@@ -530,6 +557,7 @@ IsoTTY stores local state under:
 * [Apps Script design](docs/GAS.md)
 * [DNS design](docs/DNS.md)
 * [Child VM design](docs/CHILD.md)
+* [SSH host design](docs/SSH.md)
 * [Browser design](docs/BROWSER.md)
 * [Docker design](docs/DOCKER.md)
 * [opeco design](docs/OPECO.md)
