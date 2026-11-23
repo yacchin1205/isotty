@@ -1853,7 +1853,15 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string, ignoreRunning bool)
 		return State{}, stateErr
 	}
 	if hasState {
+		// Another project or zone would find no VM there and make a second
+		// one, leaving the first without a state pointing at it.
+		if previous.GCPProjectID != cfg.GCPProjectID || previous.Zone != cfg.Zone {
+			return State{}, fmt.Errorf("the VM of this project is in %s/%s, but ISOTTY_GCP_PROJECT and ISOTTY_GCP_ZONE name %s/%s; run `isotty down` before moving it, or leave them unset to use where it is", previous.GCPProjectID, previous.Zone, cfg.GCPProjectID, cfg.Zone)
+		}
 		state.OpecoQRPort = previous.OpecoQRPort
+	}
+	if err := saveGCPContext(cfg.HomeDir, cfg.ProjectHash, gcpContext{Project: cfg.GCPProjectID, Zone: cfg.Zone}); err != nil {
+		return State{}, fmt.Errorf("remember the GCP project and zone: %w", err)
 	}
 	if opeco.Active(cfg.Runtime.Agents, cfg.Opeco) && state.OpecoQRPort == 0 {
 		others, err := ListStates()

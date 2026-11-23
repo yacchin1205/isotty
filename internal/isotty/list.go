@@ -36,7 +36,7 @@ func (a *App) runList(args []string) error {
 	if err != nil {
 		return err
 	}
-	defaultProjectID, err := resolveSetting("ISOTTY_GCP_PROJECT", []string{"gcloud", "config", "get-value", "project"})
+	defaultProjectID, err := resolveSetting("ISOTTY_GCP_PROJECT", "project")
 	if err != nil {
 		return fmt.Errorf("resolve GCP project: %w", err)
 	}

@@ -34,17 +34,24 @@ The hash is derived from the absolute project path.
 
 ## GCP Context
 
-Project resolution order:
+Project and zone are each resolved in this order:
 
-1. `ISOTTY_GCP_PROJECT`
-2. active `gcloud` project
-
-Zone resolution order:
-
-1. `ISOTTY_GCP_ZONE`
-2. active `gcloud` compute/zone
+1. `ISOTTY_GCP_PROJECT` / `ISOTTY_GCP_ZONE`
+2. where the project was last brought up
+3. active `gcloud` project / compute/zone
 
 If either value is missing, IsoTTY should fail.
+
+Where a project was last brought up is kept on the host in
+`~/.isotty/projects/<hash>.gcp.yaml` and outlives `down`: the active
+`gcloud` configuration is shared with other work and changes under it, and
+a project should come back where it was without the human naming it again.
+It is not in `.isotty/`, which is synced, so that the VM cannot point the
+next `up` at another GCP project.
+
+While the VM is up, `up` refuses a project or zone other than the VM's:
+it would find no VM there and make a second one, leaving the first with no
+state pointing at it. Moving takes a `down` first.
 
 ## VM Shape
 
