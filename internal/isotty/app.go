@@ -31,6 +31,7 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host/gitlab"
 	"github.com/yazawa/isotty/internal/isotty/host/google"
 	"github.com/yazawa/isotty/internal/isotty/host/redmine"
+	"github.com/yazawa/isotty/internal/isotty/host/sshhost"
 	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
@@ -158,6 +159,9 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host children enable [--machine-type <type>]... [--max <n>] [--boot-disk-size <size>] [--expose <port>]...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host children disable")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host children show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host ssh add <name> --host <host> --user <user> [--port <port>] [--key-type ed25519|ecdsa]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host ssh remove <name> [--force]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host ssh show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host opeco enable")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host opeco disable")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host opeco show")
@@ -500,6 +504,7 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 	var gasCfg *gas.ProjectConfig
 	var dnsCfg *dns.ProjectConfig
 	var childCfg *child.ProjectConfig
+	var sshCfg *sshhost.ProjectConfig
 	var agents []string
 	if !noHost {
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/forward.yaml"); err != nil {
@@ -640,6 +645,19 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 			}
 			childCfg = &verified
 		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/ssh.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			synced, err := sshhost.ParseProjectConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote ssh config: %w", err)
+			}
+			verified, err := sshhost.VerifyPinned(homeDir, projectHash, synced)
+			if err != nil {
+				return err
+			}
+			sshCfg = &verified
+		}
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/agent.yaml"); err != nil {
 			return err
 		} else if data != nil {
@@ -677,7 +695,7 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 		return err
 	}
 	// Without a project on the host there is no synced copy to open.
-	return a.attachWithConnection(conn, projectHash, workspacePath, shell, nil, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, shell, nil, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, sshCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -709,6 +727,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	var gasCfg *gas.ProjectConfig
 	var dnsCfg *dns.ProjectConfig
 	var childCfg *child.ProjectConfig
+	var sshCfg *sshhost.ProjectConfig
 	var agents []string
 	if !noHost {
 		forwardCfg, err = host.LoadForwardConfig(projectPath)
@@ -755,6 +774,10 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 		if err != nil {
 			return err
 		}
+		sshCfg, err = host.LoadSSHProjectConfig(projectPath, state.ProjectHash, homeDir)
+		if err != nil {
+			return err
+		}
 		agents, err = runtimecfg.ListAgents(projectPath)
 		if err != nil {
 			return err
@@ -790,14 +813,14 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 		defer files.Close()
 	}
 	if noHost {
-		return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+		return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, sshCfg)
 	}
 	// The attach that holds the gateway tells the VM how the sync stands
 	// while it runs; a second terminal leaves that to it.
 	stop := make(chan struct{})
 	reported := make(chan error, 1)
 	go func() { reported <- reportSync(state, conn, stop) }()
-	err = a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg)
+	err = a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, sshCfg)
 	close(stop)
 	return errors.Join(err, <-reported)
 }
@@ -824,7 +847,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, files *browser.Files, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, files *browser.Files, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, sshCfg *sshhost.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -843,7 +866,12 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		deferredErrs = append(deferredErrs, err)
 		deferredMu.Unlock()
 	}
-	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, files, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, record, fail)
+	var sshRelay *sshhost.Relay
+	if sshCfg != nil && !shell.Secondary {
+		sshRelay = sshhost.NewRelay(*sshCfg)
+		defer sshRelay.Close()
+	}
+	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, files, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, sshRelay, record, fail)
 	if err != nil {
 		return err
 	}
@@ -1022,7 +1050,7 @@ func (a *App) bell() {
 // gatewayHandler mounts the host services the session may use. --no-host
 // mounts nothing, so no gateway starts and the VM gets no reverse forward,
 // which lets a second terminal attach beside the first.
-func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
+func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, sshRelay *sshhost.Relay, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
 	mux := http.NewServeMux()
 	var services []string
 	if epweaveCfg != nil {
@@ -1100,6 +1128,18 @@ func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash 
 	if childCfg != nil {
 		mux.Handle("/child/", http.StripPrefix("/child", a.childHandler(*childCfg, conn, projectHash, record)))
 		services = append(services, "child VMs")
+	}
+	if sshRelay != nil {
+		mux.Handle("/ssh/", http.StripPrefix("/ssh", sshhost.Handler(sshRelay, func(event sshhost.Event) {
+			vmEvent, err := runtimecfg.NewSSHVMEvent(projectHash, event.Operation, event.Name, event.Address, event.Sent, event.Received, event.Seconds, event.Result)
+			if err == nil {
+				err = record(vmEvent)
+			}
+			if err != nil {
+				fail(fmt.Errorf("record ssh-%s event for %s: %w", event.Operation, event.Name, err))
+			}
+		})))
+		services = append(services, "SSH hosts")
 	}
 	if !noHost {
 		mux.Handle("/open", browser.Handler(browser.OpenInBrowser, func(target string) {

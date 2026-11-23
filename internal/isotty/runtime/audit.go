@@ -91,6 +91,9 @@ type VMEventRecord struct {
 	Shape          string `json:"shape,omitempty"`
 	Expose         string `json:"expose,omitempty"`
 	ExternalIP     string `json:"external_ip,omitempty"`
+	Sent           int64  `json:"sent,omitempty"`
+	Received       int64  `json:"received,omitempty"`
+	Seconds        int    `json:"seconds,omitempty"`
 	// Content and Replaced are what a Redmine read handed the VM and where
 	// the filter replaced something in it.
 	Content  string          `json:"content,omitempty"`
@@ -266,6 +269,23 @@ func NewChildVMEvent(projectHash, operation, name, instance, shape, expose, exte
 	record.Shape = shape
 	record.Expose = expose
 	record.ExternalIP = externalIP
+	record.Result = result
+	return record, nil
+}
+
+// NewSSHVMEvent records a connection the relay made to a machine on the
+// host's network for the VM ("open"), or how it ended ("close"), with the
+// bytes each way and how long it lasted.
+func NewSSHVMEvent(projectHash, operation, name, address string, sent, received int64, seconds int, result string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, "ssh-"+operation)
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.Name = name
+	record.Target = address
+	record.Sent = sent
+	record.Received = received
+	record.Seconds = seconds
 	record.Result = result
 	return record, nil
 }
