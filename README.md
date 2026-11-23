@@ -46,6 +46,9 @@ Set the GCP zone if needed:
 export ISOTTY_GCP_ZONE=us-central1-f
 ```
 
+The project and zone are remembered for the project, so a later `up`, after
+`down` too, uses them without the variables.
+
 Create an environment for the current project:
 
 ```bash

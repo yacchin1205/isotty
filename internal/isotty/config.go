@@ -70,13 +70,9 @@ func LoadConfig(projectPath string) (Config, error) {
 		return Config{}, fmt.Errorf("create isotty home: %w", err)
 	}
 
-	projectID, err := resolveSetting("ISOTTY_GCP_PROJECT", []string{"gcloud", "config", "get-value", "project"})
+	gcp, err := resolveGCPContext(homeDir, projectHash)
 	if err != nil {
-		return Config{}, fmt.Errorf("resolve GCP project: %w", err)
-	}
-	zone, err := resolveSetting("ISOTTY_GCP_ZONE", []string{"gcloud", "config", "get-value", "compute/zone"})
-	if err != nil {
-		return Config{}, fmt.Errorf("resolve GCP zone: %w", err)
+		return Config{}, err
 	}
 
 	runtimeConfig, err := runtimecfg.Load(projectPath)
@@ -140,8 +136,8 @@ func LoadConfig(projectPath string) (Config, error) {
 	return Config{
 		ProjectPath:  projectPath,
 		ProjectHash:  projectHash,
-		GCPProjectID: projectID,
-		Zone:         zone,
+		GCPProjectID: gcp.Project,
+		Zone:         gcp.Zone,
 		HomeDir:      homeDir,
 		Runtime:      runtimeConfig,
 		VM:           vmConfig,
@@ -176,16 +172,19 @@ func isottyHome() (string, error) {
 	return filepath.Join(homeDir, ".isotty"), nil
 }
 
-func resolveSetting(envKey string, fallbackCommand []string) (string, error) {
+func resolveSetting(envKey string, gcloudProperty string) (string, error) {
 	if value := strings.TrimSpace(os.Getenv(envKey)); value != "" {
 		return value, nil
 	}
+	return gcloudSetting(envKey, gcloudProperty)
+}
 
-	output, err := exec.Command(fallbackCommand[0], fallbackCommand[1:]...).Output()
+// gcloudSetting reads a property of the active gcloud configuration.
+func gcloudSetting(envKey, property string) (string, error) {
+	output, err := exec.Command("gcloud", "config", "get-value", property).Output()
 	if err != nil {
 		return "", err
 	}
-
 	value := strings.TrimSpace(string(output))
 	if value == "" || value == "(unset)" {
 		return "", fmt.Errorf("%s is not set and gcloud returned no value", envKey)
