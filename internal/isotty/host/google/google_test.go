@@ -208,9 +208,9 @@ func TestIssuerMintsAndReuses(t *testing.T) {
 	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	issuer.now = func() time.Time { return now }
 
-	token, minted, err := issuer.Issue()
-	if err != nil || !minted || token.AccessToken != "ya29.test" || token.ServiceAccount != testAccount {
-		t.Fatalf("Issue() = %#v, %v, %v", token, minted, err)
+	token, err := issuer.Issue(noRecord)
+	if err != nil || token.AccessToken != "ya29.test" || token.ServiceAccount != testAccount {
+		t.Fatalf("Issue() = %#v, %v", token, err)
 	}
 	if !token.ExpiresAt.Equal(now.Add(time.Hour)) {
 		t.Fatalf("ExpiresAt = %v", token.ExpiresAt)
@@ -227,12 +227,12 @@ func TestIssuerMintsAndReuses(t *testing.T) {
 	}
 
 	now = now.Add(50 * time.Minute)
-	if _, minted, err := issuer.Issue(); err != nil || minted {
-		t.Fatalf("second Issue() minted = %v, err %v; want reuse", minted, err)
+	if _, err := issuer.Issue(noRecord); err != nil || len(endpoint.claims) != 1 {
+		t.Fatalf("second Issue() err %v, %d mints; want reuse", err, len(endpoint.claims))
 	}
 	now = now.Add(6 * time.Minute)
-	if _, minted, err := issuer.Issue(); err != nil || !minted {
-		t.Fatalf("Issue() near expiry minted = %v, err %v; want a new token", minted, err)
+	if _, err := issuer.Issue(noRecord); err != nil {
+		t.Fatalf("Issue() near expiry err %v", err)
 	}
 	if len(endpoint.claims) != 2 {
 		t.Fatalf("token endpoint called %d times", len(endpoint.claims))
@@ -240,7 +240,7 @@ func TestIssuerMintsAndReuses(t *testing.T) {
 
 	endpoint.fail = true
 	now = now.Add(2 * time.Hour)
-	if _, _, err := issuer.Issue(); err == nil || !strings.Contains(err.Error(), "invalid_grant") {
+	if _, err := issuer.Issue(noRecord); err == nil || !strings.Contains(err.Error(), "invalid_grant") {
 		t.Fatalf("failed grant error = %v", err)
 	}
 }
@@ -345,5 +345,99 @@ func TestClientExec(t *testing.T) {
 	}
 	if out, code := run("exec"); code == 0 || !strings.Contains(out, "needs a command") {
 		t.Fatalf("exec without command: %d\n%s", code, out)
+	}
+}
+
+// A config written before impersonation means a key, and the credential is
+// part of what is pinned.
+func TestCredentialIsPartOfTheAgreement(t *testing.T) {
+	old, err := ParseProjectConfig([]byte("service_account: " + testAccount + "\nscopes: [documents]\n"))
+	if err != nil || old.CredentialKind() != CredentialKey {
+		t.Fatalf("old config: %+v %v", old, err)
+	}
+	if _, err := ParseProjectConfig([]byte("service_account: " + testAccount + "\ncredential: oauth\nscopes: [documents]\n")); err == nil {
+		t.Fatal("an unknown credential was accepted")
+	}
+	home := t.TempDir()
+	if err := pin.Save(home, "abc", PinKind, old); err != nil {
+		t.Fatal(err)
+	}
+	explicit := ProjectConfig{ServiceAccount: testAccount, Credential: CredentialKey, Scopes: []string{"documents"}}
+	if _, err := VerifyPinned(home, "abc", explicit); err != nil {
+		t.Fatalf("an explicit key against an old pin: %v", err)
+	}
+	switched := ProjectConfig{ServiceAccount: testAccount, Credential: CredentialImpersonation, Scopes: []string{"documents"}}
+	if _, err := VerifyPinned(home, "abc", switched); err == nil || !strings.Contains(err.Error(), "differs from what is pinned") {
+		t.Fatalf("a switched credential: %v", err)
+	}
+}
+
+func TestImpersonatingIssuerAsksIAMCredentialsWithTheHumanToken(t *testing.T) {
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	var asked []map[string]any
+	refuse := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/projects/-/serviceAccounts/"+testAccount+":generateAccessToken" || r.Header.Get("Authorization") != "Bearer human-token" {
+			t.Errorf("request %s %s %q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		if refuse {
+			http.Error(w, `{"error":{"status":"PERMISSION_DENIED"}}`, http.StatusForbidden)
+			return
+		}
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		asked = append(asked, body)
+		json.NewEncoder(w).Encode(map[string]string{"accessToken": "ya29.impersonated", "expireTime": now.Add(time.Hour).Format(time.RFC3339)})
+	}))
+	defer server.Close()
+	cfg := ProjectConfig{ServiceAccount: testAccount, Credential: CredentialImpersonation, Scopes: []string{"cloud-platform"}}
+	issuer := newImpersonatingIssuer(cfg, server.URL, func() (string, error) { return "human-token", nil })
+	issuer.now = func() time.Time { return now }
+
+	token, err := issuer.Issue(noRecord)
+	if err != nil || token.AccessToken != "ya29.impersonated" || token.ServiceAccount != testAccount || !token.ExpiresAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("Issue() = %#v, %v", token, err)
+	}
+	if scopes, _ := json.Marshal(asked[0]["scope"]); string(scopes) != `["https://www.googleapis.com/auth/cloud-platform"]` || asked[0]["lifetime"] != "3600s" {
+		t.Fatalf("asked %v", asked[0])
+	}
+	if _, err := issuer.Issue(noRecord); err != nil || len(asked) != 1 {
+		t.Fatal("a fresh token was not reused")
+	}
+	refuse = true
+	now = now.Add(2 * time.Hour)
+	if _, err := issuer.Issue(noRecord); err == nil || !strings.Contains(err.Error(), "PERMISSION_DENIED") {
+		t.Fatalf("a refused impersonation: %v", err)
+	}
+	failing := newImpersonatingIssuer(cfg, server.URL, func() (string, error) { return "", errors.New("gcloud is not logged in") })
+	if _, err := failing.Issue(noRecord); err == nil || !strings.Contains(err.Error(), "not logged in") {
+		t.Fatalf("no human login: %v", err)
+	}
+}
+
+func TestLoadIssuerFollowsTheCredential(t *testing.T) {
+	home := t.TempDir()
+	cfg := ProjectConfig{ServiceAccount: testAccount, Credential: CredentialImpersonation, Scopes: []string{"cloud-platform"}}
+	if issuer, err := LoadIssuer(home, cfg); err != nil || issuer.humanToken == nil {
+		t.Fatalf("impersonation: %v", err)
+	}
+	cfg.Credential = ""
+	if _, err := LoadIssuer(home, cfg); err == nil || !strings.Contains(err.Error(), "--key") {
+		t.Fatalf("a key that was never imported: %v", err)
+	}
+}
+
+func noRecord(Token) error { return nil }
+
+// A token whose record failed is neither handed out nor kept, so the retry
+// mints and records again rather than getting it unrecorded.
+func TestIssueKeepsNoTokenItCouldNotRecord(t *testing.T) {
+	issuer, endpoint, _ := newTestIssuer(t)
+	if _, err := issuer.Issue(func(Token) error { return errors.New("disk full") }); !errors.As(err, new(RecordError)) {
+		t.Fatalf("unrecorded mint: %v", err)
+	}
+	var recorded int
+	if _, err := issuer.Issue(func(Token) error { recorded++; return nil }); err != nil || recorded != 1 || len(endpoint.claims) != 2 {
+		t.Fatalf("retry: err %v, recorded %d, mints %d", err, recorded, len(endpoint.claims))
 	}
 }

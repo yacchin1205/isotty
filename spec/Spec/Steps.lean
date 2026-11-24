@@ -28,6 +28,7 @@ def after : List (Template Config) :=
   , step [.client .redmine, .keepalive] (each := fun a => [.skill a .redmine]) (cond := (fun cfg => decide (.redmine ∈ cfg.clients))) (rerun := true)
   , step [.client .docker, .keepalive] (each := fun a => [.skill a .docker]) (cond := (fun cfg => decide (.docker ∈ cfg.clients))) (rerun := true)
   , step [.client .google, .keepalive] (each := fun a => [.skill a .google]) (cond := (fun cfg => decide (.google ∈ cfg.clients))) (rerun := true)
+  , step [.client .aws, .keepalive] (each := fun a => [.skill a .aws]) (cond := (fun cfg => decide (.aws ∈ cfg.clients))) (rerun := true)
   , step [.client .gas, .keepalive] (each := fun a => [.skill a .gas]) (cond := (fun cfg => decide (.gas ∈ cfg.clients))) (rerun := true)
   , step [.client .dns, .keepalive] (each := fun a => [.skill a .dns]) (cond := (fun cfg => decide (.dns ∈ cfg.clients))) (rerun := true)
   , step [.client .child, .keepalive] (each := fun a => [.skill a .child]) (cond := (fun cfg => decide (.child ∈ cfg.clients))) (rerun := true)

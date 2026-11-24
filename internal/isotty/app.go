@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/yazawa/isotty/internal/isotty/host"
+	"github.com/yazawa/isotty/internal/isotty/host/aws"
 	"github.com/yazawa/isotty/internal/isotty/host/bitbucket"
 	"github.com/yazawa/isotty/internal/isotty/host/browser"
 	"github.com/yazawa/isotty/internal/isotty/host/child"
@@ -146,9 +147,12 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker remove --repo <registry/path>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker clear")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host docker show")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] host google enable [--key <service-account.json>] --scope <scope>...")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host google enable [--key <service-account.json> | --impersonate <service-account>] --scope <scope>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host google disable")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host google show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host aws enable --role-arn <arn> [--profile <name>]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host aws disable")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] host aws show")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host gas add --script <id>... --client <client_secret.json> --scope <url>...")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host gas remove --script <id>")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host gas clear")
@@ -501,6 +505,7 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 	var redmineCfg *redmine.ProjectConfig
 	var dockerCfg *docker.ProjectConfig
 	var googleCfg *google.ProjectConfig
+	var awsCfg *aws.ProjectConfig
 	var gasCfg *gas.ProjectConfig
 	var dnsCfg *dns.ProjectConfig
 	var childCfg *child.ProjectConfig
@@ -606,6 +611,19 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 			}
 			googleCfg = &verified
 		}
+		if data, err := fetchOptionalProjectFile(conn, ".isotty/aws.yaml"); err != nil {
+			return err
+		} else if data != nil {
+			synced, err := aws.ParseProjectConfig(data)
+			if err != nil {
+				return fmt.Errorf("parse remote aws config: %w", err)
+			}
+			verified, err := aws.VerifyPinned(homeDir, projectHash, synced)
+			if err != nil {
+				return err
+			}
+			awsCfg = &verified
+		}
 		if data, err := fetchOptionalProjectFile(conn, ".isotty/gas.yaml"); err != nil {
 			return err
 		} else if data != nil {
@@ -695,7 +713,7 @@ func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
 		return err
 	}
 	// Without a project on the host there is no synced copy to open.
-	return a.attachWithConnection(conn, projectHash, workspacePath, shell, nil, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, sshCfg)
+	return a.attachWithConnection(conn, projectHash, workspacePath, shell, nil, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, awsCfg, gasCfg, dnsCfg, childCfg, sshCfg)
 }
 
 // fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
@@ -724,6 +742,7 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	var redmineCfg *redmine.ProjectConfig
 	var dockerCfg *docker.ProjectConfig
 	var googleCfg *google.ProjectConfig
+	var awsCfg *aws.ProjectConfig
 	var gasCfg *gas.ProjectConfig
 	var dnsCfg *dns.ProjectConfig
 	var childCfg *child.ProjectConfig
@@ -759,6 +778,10 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 			return err
 		}
 		googleCfg, err = host.LoadGoogleProjectConfig(projectPath, state.ProjectHash, homeDir)
+		if err != nil {
+			return err
+		}
+		awsCfg, err = host.LoadAWSProjectConfig(projectPath, state.ProjectHash, homeDir)
 		if err != nil {
 			return err
 		}
@@ -813,14 +836,14 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 		defer files.Close()
 	}
 	if noHost {
-		return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, sshCfg)
+		return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, awsCfg, gasCfg, dnsCfg, childCfg, sshCfg)
 	}
 	// The attach that holds the gateway tells the VM how the sync stands
 	// while it runs; a second terminal leaves that to it.
 	stop := make(chan struct{})
 	reported := make(chan error, 1)
 	go func() { reported <- reportSync(state, conn, stop) }()
-	err = a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, sshCfg)
+	err = a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, awsCfg, gasCfg, dnsCfg, childCfg, sshCfg)
 	close(stop)
 	return errors.Join(err, <-reported)
 }
@@ -847,7 +870,7 @@ type reverseForward struct {
 	HostPort int
 }
 
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, files *browser.Files, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, sshCfg *sshhost.ProjectConfig) (err error) {
+func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, files *browser.Files, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, awsCfg *aws.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, sshCfg *sshhost.ProjectConfig) (err error) {
 	names := host.SortedForwardNames(forwardCfg)
 	target := a.auditTarget(conn)
 
@@ -871,7 +894,7 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 		sshRelay = sshhost.NewRelay(*sshCfg)
 		defer sshRelay.Close()
 	}
-	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, files, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, gasCfg, dnsCfg, childCfg, sshRelay, record, fail)
+	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, files, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, awsCfg, gasCfg, dnsCfg, childCfg, sshRelay, record, fail)
 	if err != nil {
 		return err
 	}
@@ -1050,7 +1073,7 @@ func (a *App) bell() {
 // gatewayHandler mounts the host services the session may use. --no-host
 // mounts nothing, so no gateway starts and the VM gets no reverse forward,
 // which lets a second terminal attach beside the first.
-func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, sshRelay *sshhost.Relay, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
+func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, awsCfg *aws.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, sshRelay *sshhost.Relay, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
 	mux := http.NewServeMux()
 	var services []string
 	if epweaveCfg != nil {
@@ -1108,6 +1131,14 @@ func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash 
 		}
 		mux.Handle("/google/", http.StripPrefix("/google", handler))
 		services = append(services, "Google")
+	}
+	if awsCfg != nil {
+		handler, err := a.awsHandler(*awsCfg, projectHash, record)
+		if err != nil {
+			return nil, nil, err
+		}
+		mux.Handle("/aws/", http.StripPrefix("/aws", handler))
+		services = append(services, "AWS")
 	}
 	if gasCfg != nil {
 		handler, err := a.gasHandler(*gasCfg, projectHash, record)
@@ -1331,16 +1362,32 @@ func (a *App) googleHandler(cfg google.ProjectConfig, projectHash string, record
 	if err != nil {
 		return nil, err
 	}
-	key, err := google.LoadKey(homeDir, cfg.ServiceAccount)
-	if err != nil {
-		return nil, err
-	}
-	issuer, err := google.NewIssuer(key, cfg)
+	issuer, err := google.LoadIssuer(homeDir, cfg)
 	if err != nil {
 		return nil, err
 	}
 	return google.Handler(issuer, func(event google.MintEvent) error {
 		vmEvent, err := runtimecfg.NewGoogleVMEvent(projectHash, event.ServiceAccount, event.Scopes)
+		if err != nil {
+			return err
+		}
+		return record(vmEvent)
+	}), nil
+}
+
+// awsHandler hands out credentials of the pinned role, assumed with the
+// profile this host recorded, recording every assumption in the VM event log.
+func (a *App) awsHandler(cfg aws.ProjectConfig, projectHash string, record func(runtimecfg.VMEventRecord) error) (http.Handler, error) {
+	homeDir, err := isottyHome()
+	if err != nil {
+		return nil, err
+	}
+	hostCfg, err := aws.LoadHostConfig(homeDir, projectHash)
+	if err != nil {
+		return nil, err
+	}
+	return aws.Handler(aws.NewIssuer(cfg, hostCfg, projectHash), func(event aws.IssueEvent) error {
+		vmEvent, err := runtimecfg.NewAWSVMEvent(projectHash, event.RoleARN, event.Session, event.Expiration)
 		if err != nil {
 			return err
 		}

@@ -94,6 +94,7 @@ type VMEventRecord struct {
 	Sent           int64  `json:"sent,omitempty"`
 	Received       int64  `json:"received,omitempty"`
 	Seconds        int    `json:"seconds,omitempty"`
+	Expires        string `json:"expires,omitempty"`
 	// Content and Replaced are what a Redmine read handed the VM and where
 	// the filter replaced something in it.
 	Content  string          `json:"content,omitempty"`
@@ -222,6 +223,19 @@ func NewGoogleVMEvent(projectHash, serviceAccount string, scopes []string) (VMEv
 	}
 	record.Account = serviceAccount
 	record.Scopes = strings.Join(scopes, ",")
+	return record, nil
+}
+
+// NewAWSVMEvent records credentials the gateway obtained for the VM by
+// assuming the role, under the session name CloudTrail shows.
+func NewAWSVMEvent(projectHash, roleARN, session string, expires time.Time) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, "aws-credentials")
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.Target = roleARN
+	record.Name = session
+	record.Expires = expires.UTC().Format(time.RFC3339)
 	return record, nil
 }
 
@@ -714,6 +728,8 @@ func formatVMEvent(record VMEventRecord) string {
 	add("script", record.Script)
 	add("function", record.Function)
 	add("parameters", record.Parameters)
+	add("name", record.Name)
+	add("expires", record.Expires)
 	return strings.Join(parts, " ")
 }
 

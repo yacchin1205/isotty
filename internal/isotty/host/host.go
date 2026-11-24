@@ -13,7 +13,7 @@ import (
 
 func Run(projectPath, projectHash, homeDir string, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("host requires a subcommand: forward, epweave, github, gitlab, bitbucket, redmine, docker, google, gas, dns, children, ssh, or opeco")
+		return errors.New("host requires a subcommand: forward, epweave, github, gitlab, bitbucket, redmine, docker, google, aws, gas, dns, children, ssh, or opeco")
 	}
 
 	switch args[0] {
@@ -33,6 +33,8 @@ func Run(projectPath, projectHash, homeDir string, args []string, stdout, stderr
 		return runDocker(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
 	case "google":
 		return runGoogle(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
+	case "aws":
+		return runAWS(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
 	case "gas":
 		return runGAS(projectPath, projectHash, homeDir, args[1:], stdout, stderr)
 	case "dns":

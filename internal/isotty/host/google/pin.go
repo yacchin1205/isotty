@@ -21,7 +21,7 @@ func VerifyPinned(homeDir, projectHash string, synced ProjectConfig) (ProjectCon
 	if !ok {
 		return ProjectConfig{}, fmt.Errorf("Google is configured in .isotty/google.yaml but not pinned on this host; run `isotty host google enable` here to accept it")
 	}
-	if pinned.ServiceAccount != synced.ServiceAccount || !slices.Equal(pinned.sortedScopes(), synced.sortedScopes()) {
+	if pinned.ServiceAccount != synced.ServiceAccount || pinned.CredentialKind() != synced.CredentialKind() || !slices.Equal(pinned.sortedScopes(), synced.sortedScopes()) {
 		return ProjectConfig{}, fmt.Errorf(
 			".isotty/google.yaml (%s) differs from what is pinned on this host (%s); the file is synced from the VM, so something in the VM may have edited it. Review it, then run `isotty host google enable` again to accept the new value",
 			synced.summary(), pinned.summary(),
@@ -31,5 +31,5 @@ func VerifyPinned(homeDir, projectHash string, synced ProjectConfig) (ProjectCon
 }
 
 func (c ProjectConfig) summary() string {
-	return c.ServiceAccount + " " + strings.Join(c.sortedScopes(), ",")
+	return c.ServiceAccount + " (" + c.CredentialKind() + ") " + strings.Join(c.sortedScopes(), ",")
 }
