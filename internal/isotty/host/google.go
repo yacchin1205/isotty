@@ -46,15 +46,41 @@ func runGoogle(projectPath, projectHash, homeDir string, args []string, stdout, 
 	}
 }
 
-// runGoogleEnable imports the key when --key is given and otherwise keeps
-// the service account already pinned; the scopes are always written whole.
+// checkGoogle issues one token as the agreement asks, so that a service
+// account the host cannot use is found at enable and not at attach.
+var checkGoogle = func(homeDir string, cfg google.ProjectConfig) error {
+	issuer, err := google.LoadIssuer(homeDir, cfg)
+	if err != nil {
+		return err
+	}
+	// The token stays on the host, so there is nothing to record.
+	_, err = issuer.Issue(func(google.Token) error { return nil })
+	return err
+}
+
+// runGoogleEnable takes the service account from --key or --impersonate, or
+// keeps the one already pinned with its credential; the scopes are always
+// written whole. Nothing is pinned until a token has been issued.
 func runGoogleEnable(projectPath, projectHash, homeDir string, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("host google enable", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	keyPath := fs.String("key", "", "service account key file to import; may be omitted once a key is pinned for this project")
+	keyPath := fs.String("key", "", "service account key file to import")
+	impersonate := fs.String("impersonate", "", "service account to impersonate with the host's gcloud login")
 	var scopes specs
 	fs.Var(&scopes, "scope", "scope without the https://www.googleapis.com/auth/ prefix (repeatable)")
+	fs.Usage = func() {
+		fmt.Fprint(stderr, `Usage: isotty host google enable [--key <service-account.json> | --impersonate <service-account>] --scope <scope>...
+
+Lets the VM use Google APIs as the service account, through tokens the
+host issues while attached. Once a service account is pinned, --scope
+alone changes the scopes.
+
+`+googleGuide)
+	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if fs.NArg() != 0 {
@@ -63,28 +89,38 @@ func runGoogleEnable(projectPath, projectHash, homeDir string, args []string, st
 	if len(scopes) == 0 {
 		return errors.New("host google enable requires at least one --scope")
 	}
+	if *keyPath != "" && *impersonate != "" {
+		return errors.New("host google enable takes --key or --impersonate, not both")
+	}
 
-	var serviceAccount string
-	if *keyPath != "" {
+	var cfg google.ProjectConfig
+	switch {
+	case *keyPath != "":
 		imported, err := google.ImportKey(homeDir, projectPath, *keyPath)
 		if err != nil {
 			return err
 		}
-		serviceAccount = imported
-	} else {
+		cfg = google.ProjectConfig{ServiceAccount: imported, Credential: google.CredentialKey}
+	case *impersonate != "":
+		cfg = google.ProjectConfig{ServiceAccount: *impersonate, Credential: google.CredentialImpersonation}
+	default:
 		var pinned google.ProjectConfig
 		ok, err := pin.Load(homeDir, projectHash, google.PinKind, &pinned)
 		if err != nil {
 			return err
 		}
 		if !ok {
-			return errors.New("host google enable requires --key <file> the first time")
+			return errors.New("host google enable requires --key <file> or --impersonate <service-account> the first time")
 		}
-		serviceAccount = pinned.ServiceAccount
+		cfg = google.ProjectConfig{ServiceAccount: pinned.ServiceAccount, Credential: pinned.CredentialKind()}
 	}
-	cfg := google.ProjectConfig{ServiceAccount: serviceAccount, Scopes: scopes}
-	if _, err := google.LoadKey(homeDir, serviceAccount); err != nil {
+	cfg.Scopes = scopes
+	if err := cfg.Validate(); err != nil {
 		return err
+	}
+	if err := checkGoogle(homeDir, cfg); err != nil {
+		fmt.Fprint(stderr, googleGuide)
+		return fmt.Errorf("no token could be issued as %s, so nothing was pinned: %w", cfg.ServiceAccount, err)
 	}
 	if err := google.SaveProjectConfig(projectPath, cfg); err != nil {
 		return err
@@ -92,11 +128,28 @@ func runGoogleEnable(projectPath, projectHash, homeDir string, args []string, st
 	if err := pin.Save(homeDir, projectHash, google.PinKind, cfg); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Enabled Google for this project as %s\n", cfg.ServiceAccount)
+	fmt.Fprintf(stdout, "Enabled Google for this project as %s (%s)\n", cfg.ServiceAccount, cfg.Credential)
 	fmt.Fprintf(stdout, "scopes: %s\n", strings.Join(cfg.Scopes, ", "))
 	fmt.Fprintln(stdout, "Run `isotty up` to install the client in the VM.")
 	return nil
 }
+
+const googleGuide = `Make the service account ready, in any Google Cloud project:
+
+  1. Create it, or pick one:
+       gcloud iam service-accounts create <name> --project <project>
+  2. For --impersonate, let your gcloud account issue its tokens:
+       gcloud iam service-accounts add-iam-policy-binding <service-account> \
+           --member user:<your account> --role roles/iam.serviceAccountTokenCreator
+     If the check says the IAM Service Account Credentials API is disabled,
+     enable iamcredentials.googleapis.com in the project it names.
+     For --key, create a key and keep it outside the project directory:
+       gcloud iam service-accounts keys create <file> --iam-account <service-account>
+     An organization created since 2024 forbids keys by default.
+  3. What the agent may reach is what you share with the service account
+     and the roles you grant it; grant those as you would for anyone.
+
+`
 
 func runGoogleDisable(projectPath, projectHash, homeDir string, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("host google disable", flag.ContinueOnError)
@@ -134,12 +187,15 @@ func runGoogleShow(projectPath, projectHash, homeDir string, args []string, stdo
 		fmt.Fprintln(stdout, "Google is not enabled for this project.")
 		return nil
 	}
-	if _, err := google.LoadKey(homeDir, cfg.ServiceAccount); err != nil {
-		return err
-	}
 	fmt.Fprintf(stdout, "service_account: %s\n", cfg.ServiceAccount)
+	fmt.Fprintf(stdout, "credential: %s\n", cfg.CredentialKind())
 	fmt.Fprintf(stdout, "scopes: %s\n", strings.Join(cfg.Scopes, ", "))
 	fmt.Fprintf(stdout, "pinned: %s\n", pin.Path(homeDir, projectHash, google.PinKind))
-	fmt.Fprintf(stdout, "key: %s\n", google.KeyPath(homeDir, cfg.ServiceAccount))
+	if cfg.CredentialKind() == google.CredentialKey {
+		if _, err := google.LoadKey(homeDir, cfg.ServiceAccount); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "key: %s\n", google.KeyPath(homeDir, cfg.ServiceAccount))
+	}
 	return nil
 }

@@ -31,11 +31,31 @@ type Key struct {
 	TokenURI    string `json:"token_uri"`
 }
 
-// ProjectConfig names the service account the VM acts as and the scopes its
-// tokens carry, written without the https://www.googleapis.com/auth/ prefix.
+// How the host gets the service account's tokens: with its key, or by
+// impersonating it with the human's gcloud login.
+const (
+	CredentialKey           = "key"
+	CredentialImpersonation = "impersonation"
+)
+
+// ProjectConfig names the service account the VM acts as, how the host gets
+// its tokens, and the scopes they carry, written without the
+// https://www.googleapis.com/auth/ prefix.
 type ProjectConfig struct {
-	ServiceAccount string   `json:"service_account"`
-	Scopes         []string `json:"scopes"`
+	ServiceAccount string `json:"service_account"`
+	// Credential is empty in a config written before impersonation, which
+	// means a key.
+	Credential string   `json:"credential,omitempty"`
+	Scopes     []string `json:"scopes"`
+}
+
+// CredentialKind is the credential, a config written before impersonation
+// read as a key.
+func (c ProjectConfig) CredentialKind() string {
+	if c.Credential == "" {
+		return CredentialKey
+	}
+	return c.Credential
 }
 
 func KeyDir(homeDir string) string {
@@ -136,14 +156,14 @@ func ParseProjectConfig(data []byte) (ProjectConfig, error) {
 	if err := yaml.UnmarshalStrict(data, &cfg); err != nil {
 		return ProjectConfig{}, err
 	}
-	if err := cfg.validate(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return ProjectConfig{}, err
 	}
 	return cfg, nil
 }
 
 func SaveProjectConfig(projectPath string, cfg ProjectConfig) error {
-	if err := cfg.validate(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return err
 	}
 	data, err := yaml.Marshal(cfg)
@@ -168,9 +188,15 @@ func RemoveProjectConfig(projectPath string) error {
 	return nil
 }
 
-func (c ProjectConfig) validate() error {
+// Validate checks the config as it would be pinned.
+func (c ProjectConfig) Validate() error {
 	if !emailPattern.MatchString(c.ServiceAccount) {
 		return fmt.Errorf("invalid service_account %q: expected an email address", c.ServiceAccount)
+	}
+	switch c.Credential {
+	case "", CredentialKey, CredentialImpersonation:
+	default:
+		return fmt.Errorf("invalid credential %q: expected %s or %s", c.Credential, CredentialKey, CredentialImpersonation)
 	}
 	if len(c.Scopes) == 0 {
 		return errors.New("scopes must name at least one scope")

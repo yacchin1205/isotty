@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yazawa/isotty/internal/isotty/host/aws"
 	"github.com/yazawa/isotty/internal/isotty/host/bitbucket"
 	"github.com/yazawa/isotty/internal/isotty/host/browser"
 	"github.com/yazawa/isotty/internal/isotty/host/child"
@@ -261,6 +262,8 @@ func upSteps() []upStep {
 			[]string{".skill a .docker"}, func(c Config) string { return docker.SetupCommand(c.Runtime.Agents) }),
 		hostClientStep("google", "Installing Google client", func(c Config) bool { return c.Google != nil }, nil,
 			[]string{".skill a .google"}, func(c Config) string { return google.SetupCommand(c.Runtime.Agents) }),
+		hostClientStep("aws", "Installing AWS client", func(c Config) bool { return c.AWS != nil }, nil,
+			[]string{".skill a .aws"}, func(c Config) string { return aws.SetupCommand(c.Runtime.Agents) }),
 		hostClientStep("gas", "Installing Apps Script client", func(c Config) bool { return c.GAS != nil }, nil,
 			[]string{".skill a .gas"}, func(c Config) string { return gas.SetupCommand(c.Runtime.Agents) }),
 		hostClientStep("dns", "Installing DNS client", func(c Config) bool { return c.DNS != nil }, nil,

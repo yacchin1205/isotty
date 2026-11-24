@@ -3,7 +3,7 @@
 
 The gateway runs on the host inside `isotty attach` and hands out one-hour
 access tokens for the service account and scopes pinned in
-.isotty/google.yaml. The key never enters this VM. A token already issued
+.isotty/google.yaml. Its credential never enters this VM. A token already issued
 keeps working until it expires; after that the host must be attached again.
 """
 import argparse

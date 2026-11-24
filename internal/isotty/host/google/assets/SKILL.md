@@ -6,7 +6,7 @@ description: Run Google Docs, Sheets, Forms and other Google-API tools as this p
 # isotty-google
 
 This VM holds no Google credential. Google APIs are reached as a service
-account the human chose, whose key stays on the host; `isotty attach`
+account the human chose, whose credential stays on the host; `isotty attach`
 provides a gateway that issues one-hour access tokens for the scopes pinned
 in `/workspace/.isotty/google.yaml`.
 
@@ -28,7 +28,7 @@ Use `token` only for a tool that cannot read the variable.
 ## What you may reach
 
 - Only what was shared with the service account `isotty-google status`
-  names, and only within its scopes. A file the human did not share is
+  names, or granted to it by a role, and only within its scopes. A file the human did not share is
   invisible, not forbidden: ask the human to share it with that address.
 - Application Default Credentials find nothing in this VM, so a tool that
   ignores `GOOGLE_OAUTH_ACCESS_TOKEN` fails to authenticate. Tell the human

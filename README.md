@@ -298,15 +298,16 @@ See [Redmine design](docs/REDMINE.md).
 
 Google:
 
-The agent in the VM can use Google Docs, Sheets, Forms and other Google APIs as a service account you choose, for the files shared with that account and the scopes you pin.
-The key stays on the host; `isotty attach` hands the VM one-hour tokens.
+The agent in the VM can use Google Docs, Sheets, Forms, Google Cloud and other Google APIs as a service account you choose, for what is shared with that account or granted to it and the scopes you pin.
+The host keeps the account's key, or impersonates it with your gcloud login; `isotty attach` hands the VM one-hour tokens.
 
 ```bash
 isotty host google enable --key ~/Downloads/my-project-1234.json --scope documents.readonly
+isotty host google enable --impersonate isotty@my-project.iam.gserviceaccount.com --scope cloud-platform
 isotty up
 ```
 
-The key is copied under `~/.isotty/google/`; the project setting is stored in:
+`isotty host google enable --help` shows how to make the service account ready. A key is copied under `~/.isotty/google/`; the project setting is stored in:
 
 ```text
 ./.isotty/google.yaml
@@ -319,6 +320,30 @@ isotty-google exec -- node tools/document-cli.js get <document-id>
 ```
 
 See [Google design](docs/GOOGLE.md).
+
+AWS:
+
+The agent in the VM can use AWS as an IAM role you choose, in its account, for what the role's policies allow.
+The host assumes the role with your aws CLI; `isotty attach` hands the VM one-hour credentials.
+
+```bash
+isotty host aws enable --role-arn arn:aws:iam::123456789012:role/isotty-agent [--profile <name>]
+isotty up
+```
+
+`isotty host aws enable --help` shows how to make the role ready. The project setting is stored in:
+
+```text
+./.isotty/aws.yaml
+```
+
+Inside the VM, AWS tools run through the client, which points them at the gateway:
+
+```bash
+isotty-aws exec -- aws sts get-caller-identity
+```
+
+See [AWS design](docs/AWS.md).
 
 Apps Script:
 
@@ -557,6 +582,7 @@ IsoTTY stores local state under:
 * [Bitbucket design](docs/BITBUCKET.md)
 * [Redmine design](docs/REDMINE.md)
 * [Google design](docs/GOOGLE.md)
+* [AWS design](docs/AWS.md)
 * [Apps Script design](docs/GAS.md)
 * [DNS design](docs/DNS.md)
 * [Child VM design](docs/CHILD.md)

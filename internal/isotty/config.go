@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/yazawa/isotty/internal/isotty/host"
+	"github.com/yazawa/isotty/internal/isotty/host/aws"
 	"github.com/yazawa/isotty/internal/isotty/host/bitbucket"
 	"github.com/yazawa/isotty/internal/isotty/host/child"
 	"github.com/yazawa/isotty/internal/isotty/host/dns"
@@ -48,6 +49,8 @@ type Config struct {
 	Docker *docker.ProjectConfig
 	// Google is nil when the project has not enabled the Google token gateway.
 	Google *google.ProjectConfig
+	// AWS is nil when the project has not enabled the AWS credentials gateway.
+	AWS *aws.ProjectConfig
 	// GAS is nil when the project has not enabled the Apps Script relay.
 	GAS *gas.ProjectConfig
 	// DNS is nil when the project has no pinned DNS name.
@@ -111,6 +114,10 @@ func LoadConfig(projectPath string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	awsConfig, err := host.LoadAWSProjectConfig(projectPath, projectHash, homeDir)
+	if err != nil {
+		return Config{}, err
+	}
 	gasConfig, err := host.LoadGASProjectConfig(projectPath, projectHash, homeDir)
 	if err != nil {
 		return Config{}, err
@@ -148,6 +155,7 @@ func LoadConfig(projectPath string) (Config, error) {
 		Redmine:      redmineConfig,
 		Docker:       dockerConfig,
 		Google:       googleConfig,
+		AWS:          awsConfig,
 		GAS:          gasConfig,
 		DNS:          dnsConfig,
 		Children:     childConfig,

@@ -7,10 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yazawa/isotty/internal/isotty/host/gcloud"
 )
 
 const (
@@ -48,23 +49,11 @@ type Client struct {
 }
 
 func NewClient() *Client {
-	return newClient(apiUpstream, gcloudToken)
+	return newClient(apiUpstream, gcloud.AccessToken)
 }
 
 func newClient(upstream string, token func() (string, error)) *Client {
 	return &Client{http: &http.Client{Timeout: 30 * time.Second}, upstream: upstream, token: token}
-}
-
-func gcloudToken() (string, error) {
-	out, err := exec.Command("gcloud", "auth", "print-access-token").Output()
-	if err != nil {
-		var stderr string
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			stderr = strings.TrimSpace(string(exitErr.Stderr))
-		}
-		return "", fmt.Errorf("gcloud auth print-access-token: %w %s", err, stderr)
-	}
-	return strings.TrimSpace(string(out)), nil
 }
 
 func (c *Client) bearer(renew bool) (string, error) {

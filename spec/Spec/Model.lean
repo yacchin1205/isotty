@@ -11,12 +11,12 @@ deriving DecidableEq, Repr
 
 def allAgents : List Agent := [.claude, .codex]
 
-inductive Client | epweave | github | gitlab | bitbucket | redmine | docker | google | gas | dns | child
+inductive Client | epweave | github | gitlab | bitbucket | redmine | docker | google | aws | gas | dns | child
   | ssh | «open» | sync | opeco | audit
 deriving DecidableEq, Repr
 
 def allClients : List Client :=
-  [.epweave, .github, .gitlab, .bitbucket, .redmine, .docker, .google, .gas, .dns, .child,
+  [.epweave, .github, .gitlab, .bitbucket, .redmine, .docker, .google, .aws, .gas, .dns, .child,
    .ssh, .open, .sync, .opeco, .audit]
 
 /-- The paths of an agent's home that its saved state restores. -/
