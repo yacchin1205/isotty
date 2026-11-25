@@ -35,6 +35,7 @@ def after : List (Template Config) :=
   , step [.client .ssh, .keepalive] (each := fun a => [.skill a .ssh]) (cond := (fun cfg => decide (.ssh ∈ cfg.clients))) (rerun := true)
   , step [.pkg "tmux", .tmuxConf] (rerun := true)
   , step [.mergeScript, .pkg "python3-tomli-w"] (each := fun a => [.notifySetting a]) (cond := (!·.agents.isEmpty)) (rerun := true)
+  , step [.client .idle, .mergeScript, .pkg "python3-tomli-w"] (each := fun a => [.hook a .idle]) (cond := (!·.agents.isEmpty)) (rerun := true)
   , step [.client .open] (each := fun a => [.skill a .open]) (rerun := true)
   , opecoT
   , step [.client .sync, .mergeScript, .pkg "python3-tomli-w"] (each := fun a => [.skill a .sync, .hook a .sync]) (rerun := true)

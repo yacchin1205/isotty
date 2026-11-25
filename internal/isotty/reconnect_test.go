@@ -10,6 +10,7 @@ import (
 	"time"
 
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
+	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
 
 // session is how one interactive ssh goes: how long it runs and its exit
@@ -50,8 +51,14 @@ func fakeSessions(t *testing.T, sessions ...session) *[]time.Duration {
 }
 
 func runFakeSession(t *testing.T) (error, string) {
+	return runFakeSessionOn(t, func() (string, error) { return vmcfg.GCPStatusRunning, nil })
+}
+
+// runFakeSessionOn runs the session against a VM whose status GCP reports
+// as vmStatus does.
+func runFakeSessionOn(t *testing.T, vmStatus func() (string, error)) (error, string) {
 	var out bytes.Buffer
-	err := (&App{stdout: &out}).runSession(nil, runtimecfg.RemoteTarget{}, false)
+	err := (&App{stdout: &out}).runSession(nil, runtimecfg.RemoteTarget{}, false, vmStatus)
 	return err, out.String()
 }
 
@@ -68,7 +75,7 @@ func TestReconnectKeepsTryingAfterADrop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := reconnectDelays[:3]; !slices.Equal(*slept, want) {
+	if want := append([]time.Duration{shutdownGrace}, reconnectDelays[:3]...); !slices.Equal(*slept, want) {
 		t.Fatalf("slept %v, want %v", *slept, want)
 	}
 	if !strings.Contains(out, "(3/5)") {
@@ -86,7 +93,7 @@ func TestReconnectGivesUpAfterTheLastDelay(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "failed 5 times") {
 		t.Fatalf("gave up with %v", err)
 	}
-	if !slices.Equal(*slept, reconnectDelays) {
+	if !slices.Equal(*slept, append([]time.Duration{shutdownGrace}, reconnectDelays...)) {
 		t.Fatalf("slept %v", *slept)
 	}
 }
@@ -127,5 +134,49 @@ func TestFirstAttachIsNotRetried(t *testing.T) {
 	}
 	if len(*slept) != 0 {
 		t.Fatalf("slept %v", *slept)
+	}
+}
+
+// A VM that powered itself off is not attached again: the session ends at
+// once with what happened, instead of failing five times.
+func TestReconnectStopsWhenTheVMStopped(t *testing.T) {
+	slept := fakeSessions(t, session{40 * time.Minute, "255"})
+	err, _ := runFakeSessionOn(t, func() (string, error) { return vmcfg.GCPStatusTerminated, nil })
+	if !errors.Is(err, errVMStopped) {
+		t.Fatalf("ended with %v", err)
+	}
+	if len(*slept) != 0 {
+		t.Fatalf("waited %v for a VM that is off", *slept)
+	}
+}
+
+// A status GCP cannot give, as when the drop took the network, does not
+// stop the attempts.
+func TestReconnectGoesOnWhenTheVMStatusIsUnknown(t *testing.T) {
+	fakeSessions(t, session{10 * time.Minute, "255"}, session{time.Minute, "0"})
+	err, out := runFakeSessionOn(t, func() (string, error) { return "", errors.New("network is unreachable") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Could not tell whether the VM still runs") {
+		t.Fatalf("output:\n%s", out)
+	}
+}
+
+// A guest power-off cuts ssh while GCP still reports the VM as running: the
+// drop waits a moment and finds it stopping, without an attempt.
+func TestReconnectWaitsOutAVMThatIsStopping(t *testing.T) {
+	slept := fakeSessions(t, session{40 * time.Minute, "255"})
+	statuses := []string{vmcfg.GCPStatusRunning, "STOPPING"}
+	err, out := runFakeSessionOn(t, func() (string, error) {
+		status := statuses[0]
+		statuses = statuses[1:]
+		return status, nil
+	})
+	if !errors.Is(err, errVMStopped) {
+		t.Fatalf("ended with %v", err)
+	}
+	if !slices.Equal(*slept, []time.Duration{shutdownGrace}) || strings.Contains(out, "(1/5)") {
+		t.Fatalf("slept %v\n%s", *slept, out)
 	}
 }

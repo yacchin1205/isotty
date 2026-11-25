@@ -973,8 +973,18 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 			stopSweep = docker.CacheFor(projectHash).KeepSwept(docker.CLI{}, dockerHost.Keep, fail)
 		}
 		a.bell()
-		attachErr = a.runSession(sshArgs, target, reverse != nil)
+		attachErr = a.runSession(sshArgs, target, reverse != nil, func() (string, error) {
+			return vmcfg.GCPInstanceStatus(conn.ProjectID, conn.Zone, conn.InstanceName)
+		})
 		stopSweep()
+	}
+	if errors.Is(attachErr, errVMStopped) {
+		// The VM is off: there is no log to record the end in, and the
+		// power-off is already there as idle-stop.
+		a.phase("%v", errVMStopped)
+		deferredMu.Lock()
+		defer deferredMu.Unlock()
+		return errors.Join(deferredErrs...)
 	}
 
 	result := "ok"
@@ -1033,15 +1043,21 @@ var (
 	sessionNow     = time.Now
 )
 
+// errVMStopped ends a session whose VM powered itself off: no agent had
+// work for the time the host set (see docs/VM.md, Idle Stop). Attaching
+// again would only fail until the next `isotty up`.
+var errVMStopped = errors.New("the VM powered itself off once no agent had work; `isotty up` starts it again")
+
 // runSession runs the interactive ssh and attaches again whenever the
 // connection drops after the session has run for a while; each such drop
-// gets all of reconnectDelays anew.
-func (a *App) runSession(sshArgs []string, target runtimecfg.RemoteTarget, gatewayForwarded bool) error {
+// gets all of reconnectDelays anew. A drop because the VM stopped is not
+// attached again.
+func (a *App) runSession(sshArgs []string, target runtimecfg.RemoteTarget, gatewayForwarded bool, vmStatus func() (string, error)) error {
 	started := sessionNow()
-	err := interactiveSSH(sshArgs...)
+	err := a.sshSession(sshArgs)
 	for droppedAfter(err, sessionNow().Sub(started), reconnectAfter) {
 		var attached bool
-		started, attached, err = a.reconnect(sshArgs, target, gatewayForwarded)
+		started, attached, err = a.reconnect(sshArgs, target, gatewayForwarded, vmStatus)
 		if !attached {
 			return err
 		}
@@ -1050,12 +1066,28 @@ func (a *App) runSession(sshArgs []string, target runtimecfg.RemoteTarget, gatew
 }
 
 // reconnect attaches again after a drop, and returns the session it got:
-// its start and how it ended, or that none attached. An attempt that fails before a session runs,
-// whatever the reason, is followed by the next one; the bell rings when the
-// last one fails too.
-func (a *App) reconnect(sshArgs []string, target runtimecfg.RemoteTarget, gatewayForwarded bool) (time.Time, bool, error) {
+// its start and how it ended, or that none attached. Each attempt first asks
+// GCP whether the VM still runs, and stops at errVMStopped when it does not.
+// An attempt that fails otherwise, whatever the reason, is followed by the
+// next one; the bell rings when the last one fails too.
+func (a *App) reconnect(sshArgs []string, target runtimecfg.RemoteTarget, gatewayForwarded bool, vmStatus func() (string, error)) (time.Time, bool, error) {
 	var last error
 	for n, delay := range reconnectDelays {
+		status, err := vmStatus()
+		if n == 0 && err == nil && status == vmcfg.GCPStatusRunning {
+			// A guest power-off cuts ssh before GCP stops reporting the VM
+			// as running.
+			a.phase("The connection dropped; checking in %d seconds whether the VM is stopping", int(shutdownGrace.Seconds()))
+			sessionSleep(shutdownGrace)
+			status, err = vmStatus()
+		}
+		if err == nil && status != vmcfg.GCPStatusRunning {
+			return time.Time{}, false, errVMStopped
+		}
+		if err != nil {
+			// Asking GCP needs the network the drop may have taken.
+			a.phase("Could not tell whether the VM still runs: %v", err)
+		}
 		a.phase("The connection dropped; attaching again in %d seconds (%d/%d)", int(delay.Seconds()), n+1, len(reconnectDelays))
 		sessionSleep(delay)
 		if gatewayForwarded {
@@ -1066,7 +1098,7 @@ func (a *App) reconnect(sshArgs []string, target runtimecfg.RemoteTarget, gatewa
 			}
 		}
 		started := sessionNow()
-		err := interactiveSSH(sshArgs...)
+		err = a.sshSession(sshArgs)
 		if sshFailed(err) && sessionNow().Sub(started) < reconnectAfter {
 			a.phase("Attaching again failed: %v", err)
 			last = err
@@ -1077,6 +1109,31 @@ func (a *App) reconnect(sshArgs []string, target runtimecfg.RemoteTarget, gatewa
 	a.bell()
 	return time.Time{}, false, fmt.Errorf("the connection dropped and attaching again failed %d times; the last: %w", len(reconnectDelays), last)
 }
+
+// shutdownGrace is how long a drop waits before taking a VM GCP still
+// reports as running for one that runs.
+const shutdownGrace = 15 * time.Second
+
+// sshSession runs the interactive ssh. One that ssh ended itself, a lost
+// connection among them, leaves the terminal in the modes the session set:
+// tmux turns on mouse reporting, focus events, bracketed paste and the
+// alternate screen, and turns them off only when it detaches. A terminal
+// left reporting the mouse types escape sequences into whatever reads it
+// next, the attach's messages and the shell after it, so they are turned
+// off here.
+func (a *App) sshSession(sshArgs []string) error {
+	err := interactiveSSH(sshArgs...)
+	if sshFailed(err) && a.isTTY() {
+		fmt.Fprint(a.stdout, terminalReset)
+	}
+	return err
+}
+
+// terminalReset turns off mouse reporting in each of its encodings, focus
+// events and bracketed paste, leaves the alternate screen and shows the
+// cursor.
+const terminalReset = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
+	"\x1b[?1004l\x1b[?2004l\x1b[?1049l\x1b[?25h"
 
 // freeGatewayPort waits for the dropped session to let go of the gateway's
 // VM port, which the new one forwards again.
