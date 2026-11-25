@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	pty "github.com/aymanbagabas/go-pty"
@@ -48,14 +49,15 @@ func Run(proc Process) error {
 		}
 	}()
 
-	go func() {
-		_, _ = io.Copy(terminal, os.Stdin)
-	}()
+	done := make(chan struct{})
+	go forwardStdin(terminal, done)
 	go func() {
 		_, _ = io.Copy(os.Stdout, terminal)
 	}()
 
-	if err := cmd.Wait(); err != nil {
+	err = cmd.Wait()
+	close(done)
+	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			// Interactive sessions may return 130 after delivering Ctrl+C to the remote process.
@@ -67,6 +69,76 @@ func Run(proc Process) error {
 		return err
 	}
 	return nil
+}
+
+// stdin is read by one goroutine for the life of the process, not one per
+// Run: a read blocks until the human types, so a goroutine of a Run that
+// has ended would take the first keys meant for the next one, an attach
+// again after a dropped connection, and write them to a terminal no one
+// reads.
+var (
+	stdinOnce sync.Once
+	stdinKeys chan []byte
+
+	// pendingKeys is what reached a Run after its process ended, kept for
+	// the next one.
+	pendingMu   sync.Mutex
+	pendingKeys []byte
+)
+
+func readStdin() <-chan []byte {
+	stdinOnce.Do(func() {
+		stdinKeys = make(chan []byte)
+		go func() {
+			buf := make([]byte, 32*1024)
+			for {
+				n, err := os.Stdin.Read(buf)
+				if n > 0 {
+					stdinKeys <- append([]byte(nil), buf[:n]...)
+				}
+				if err != nil {
+					close(stdinKeys)
+					return
+				}
+			}
+		}()
+	})
+	return stdinKeys
+}
+
+// forwardStdin writes the human's keys to the terminal until done.
+func forwardStdin(terminal io.Writer, done <-chan struct{}) {
+	pendingMu.Lock()
+	kept := pendingKeys
+	pendingKeys = nil
+	pendingMu.Unlock()
+	if len(kept) > 0 {
+		if _, err := terminal.Write(kept); err != nil {
+			return
+		}
+	}
+	keys := readStdin()
+	for {
+		select {
+		case <-done:
+			return
+		case chunk, ok := <-keys:
+			if !ok {
+				return
+			}
+			select {
+			case <-done:
+				pendingMu.Lock()
+				pendingKeys = append(pendingKeys, chunk...)
+				pendingMu.Unlock()
+				return
+			default:
+			}
+			if _, err := terminal.Write(chunk); err != nil {
+				return
+			}
+		}
+	}
 }
 
 func terminalSize() (height, width int) {

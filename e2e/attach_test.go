@@ -183,3 +183,59 @@ func TestAttachWaitsOutASessionThatDropped(t *testing.T) {
 
 	h.isotty("down")
 }
+
+// TestAttachReconnectsAfterADrop guards an attach through a network that is
+// gone for a while: the session that ran for minutes drops, the tries that
+// follow fail while the VM cannot be reached, and a later one returns to
+// the same tmux session with the gateway forwarded again. The timings are
+// the real ones, so it takes some four minutes.
+func TestAttachReconnectsAfterADrop(t *testing.T) {
+	h := newHarness(t)
+	h.isotty("up", "--no-attach")
+
+	s := h.attach()
+	typedReaches(t, h, s, "touch before-drop", "before-drop")
+	// Only a session that ran three minutes is attached again.
+	time.Sleep(3*time.Minute + 5*time.Second)
+
+	// The network goes: the VM stops taking the host's key, and the
+	// connection of the session is cut.
+	h.mustVM("mv ~/.ssh/authorized_keys ~/.ssh/authorized_keys.away")
+	if out, err := exec.Command("docker", "exec", h.container, "pkill", "-KILL", "-f", "^sshd: "+vmUser).CombinedOutput(); err != nil {
+		t.Fatalf("cut the session: %v\n%s", err, out)
+	}
+	h.waitFor("the first try to fail", 60*time.Second, func() bool {
+		return strings.Contains(s.output.String(), "(2/5)")
+	})
+	// The network comes back before the next try.
+	h.mustVM("mv ~/.ssh/authorized_keys.away ~/.ssh/authorized_keys")
+
+	h.waitFor("the attach to return to the session", 90*time.Second, func() bool {
+		select {
+		case err := <-s.done:
+			t.Fatalf("the attach ended instead of attaching again: %v\n%s", err, s.output.String())
+		default:
+		}
+		out, err := h.vm("tmux list-sessions -F '#{session_name} #{session_attached}'")
+		return err == nil && strings.TrimSpace(out) == "isotty 1"
+	})
+	out := s.output.String()
+	for _, want := range []string{"attaching again in 5 seconds (1/5)", "Attaching again failed", "attaching again in 30 seconds (2/5)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the attach did not say %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "(3/5)") {
+		t.Fatalf("tried more than it needed:\n%s", out)
+	}
+	if _, err := h.vm(gateway.PortFreeCommand(0)); err == nil {
+		t.Fatal("the attach that came back should forward the gateway again")
+	}
+	typedReaches(t, h, s, "touch after-drop", "after-drop")
+
+	h.mustVM("tmux detach-client -s isotty")
+	if err := s.wait(t, 30*time.Second); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	h.isotty("down")
+}

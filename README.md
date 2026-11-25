@@ -84,6 +84,8 @@ isotty stop
 
 The VM stays on its disk with the workspace, the installed tools and the agents' sessions, but it no longer costs compute time. Running processes, a tmux session say, end as on a reboot. The next `isotty up` starts it again.
 
+A VM with agents does this by itself once no agent has had work for 30 minutes; `stop_after` in `~/.isotty/idle.yaml` on the host changes the time, and `0` turns it off. See [VM design](docs/VM.md#idle-stop).
+
 Destroy the environment:
 
 ```bash

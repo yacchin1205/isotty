@@ -14,6 +14,7 @@ isotty down
 
 * `up` creates or reuses one VM per project, starting it when `stop` left it stopped
 * `attach` opens a tmux session named `isotty` in the workspace over `gcloud compute ssh`, attaching to it when it exists, so what runs there survives a detach or a dropped connection; it refuses a VM that is not running, since `up` is what starts one
+* a connection that drops after the session ran three minutes is attached again, up to five times over some six minutes with growing waits between, so a network gone for minutes, as while a laptop moves between networks, is waited out and a short drop comes back at once; a session attached again that runs three minutes gets all five anew. A session that ends sooner after the first attach is not attached again: ssh ends with the same status for an authentication or a forward that cannot bind, which no wait fixes. While attaching again, every failed try is followed by the next, since the session ran minutes before and a failure then is the network's; the bell rings when the last one fails. A dropped session leaves the terminal in the modes tmux set, mouse reporting among them, which tmux turns off only when it detaches; the attach turns them off, or the mouse would type escape sequences into the attach's messages and the shell after it
 * while `attach` connects, a terminal shows a tide pool with a crab in it, after IsoTTY's logo; it is drawn on the host during a wait that passes anyway, not as a tmux popup in the session, which would take the keys typed ahead; a pipe or a file gets none of it, nor does `--debug`
 * `attach --no-host` joins that session as a grouped tmux session: the same windows, its own current window, gone when it detaches
 * `attach --no-tmux`, or `tmux: false` in `~/.isotty/attach.yaml` on the host, gives a plain login shell; `up` installs tmux when the image lacks it and writes `/etc/tmux.conf`, which tells tmux to relay OSC 8 hyperlinks to the attached terminal: tmux relays them only to a terminal it knows takes them, which it tells from `TERM_PROGRAM`, and ssh does not carry that, so a link an agent prints would otherwise stop at tmux
@@ -106,6 +107,58 @@ the VM, since a step that finishes late can undo the new `up`'s work.
 `isotty up --ignore-running` goes on without waiting.
 
 That the steps reach the configuration is proved in [spec/](../spec/README.md).
+
+## Idle Stop
+
+A VM with agents configured powers itself off once no agent has had work
+for 30 minutes, so a VM the human walked away from stops costing compute
+time. The VM decides, not the host: the case worth stopping is the one in
+which the human closed the laptop, and then no host process is there to
+decide. A guest power-off leaves the instance as `isotty stop` does, with
+its disk; the next `up` starts it and makes the sync session again. What
+`stop` flushes to the host first stays on the disk and syncs at that `up`.
+
+Work is what the agents' own hooks report, which `up` installs:
+
+* a session has work from a prompt until its turn ends, so a turn that
+  waits for the human's approval is work
+* after the turn, a Claude Code session still has work while it has
+  background tasks or scheduled prompts (`/loop`, CronCreate) that will
+  wake it, since stopping the VM would lose them
+* a turn the human interrupted ends without Stop; Claude Code's idle prompt
+  and Codex's Interrupt end its work
+* a session whose agent process is gone has none
+
+Neither an attached terminal nor typing into it counts: what costs is the
+VM, and the agents' turns are what the human leaves it running for. The
+machine-level signals other products use, connections, CPU or input, were
+not taken: a connection left open keeps a VM up for nothing, and an agent
+waiting on its model looks idle to the CPU. Each `up` counts as work, so a
+VM does not power off right after one.
+
+`isotty-idle check` runs every minute from a systemd timer and records the
+power-off in the VM event log as `idle-stop` before it powers off.
+
+An attach open at the power-off ends there, saying so, instead of attaching
+again: before each attempt it asks GCP whether the VM still runs, since
+attempts against a VM that is off only fail until the next `up`. The
+attach-end event is not recorded then; the VM is off, and `idle-stop` is
+already in its log. A power-off cuts ssh while GCP still reports the VM as
+running, so a drop that finds it running waits 15 seconds and asks again
+before the first attempt.
+
+The time is the host's choice, never synced, since what the VM may cost is
+the human's to decide:
+
+```text
+~/.isotty/idle.yaml
+```
+
+```yaml
+stop_after: 2h     # 0 never stops
+```
+
+The next `up` takes a change to the VM.
 
 ## Local State
 

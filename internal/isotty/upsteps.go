@@ -276,6 +276,15 @@ func upSteps() []upStep {
 		{label: "Making the agents ring the terminal bell", tag: "notify", kind: kindStep, base: mergeScriptRes,
 			each: []string{".notifySetting a"}, cond: agentsCond(), rerun: true,
 			run: func(e *upEnv) error { return e.vm("notify", runtimecfg.NotifyCommand(e.cfg.Runtime.Agents)) }},
+		{label: "Making the VM stop without agent work", tag: "idle", kind: kindStep, base: append([]string{".client .idle"}, mergeScriptRes...),
+			each: []string{".hook a .idle"}, cond: agentsCond(), rerun: true,
+			run: func(e *upEnv) error {
+				idle, err := LoadIdleConfig(e.cfg.HomeDir)
+				if err != nil {
+					return err
+				}
+				return e.vm("idle", runtimecfg.IdleStopCommand(e.cfg.Runtime.Agents, idle.Stop()))
+			}},
 		{label: "Installing browser opener", tag: "open", kind: kindStep, base: []string{".client .open"}, each: []string{".skill a .open"},
 			cond: always, rerun: true,
 			run: func(e *upEnv) error { return e.vm("open", browser.SetupCommand(e.cfg.Runtime.Agents)) }},
