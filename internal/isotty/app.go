@@ -1014,52 +1014,94 @@ func (a *App) waitForGatewayPort(target runtimecfg.RemoteTarget) error {
 	return err
 }
 
-// A session that drops after reconnectAfter is tried once more, after
-// reconnectDelay. One that ends sooner is not: ssh ends with 255 for its own
-// errors too, an authentication or a forward that cannot bind among them,
-// and those end it right at the start.
-const (
-	reconnectAfter = 3 * time.Minute
-	reconnectDelay = 5 * time.Second
+// A session that drops after reconnectAfter is attached again, once after
+// each of reconnectDelays until one attaches, so a network that is gone for
+// minutes, a laptop moving between networks say, is waited out. The delays
+// grow so that a short drop comes back at once and a long one is still
+// waited for, some six minutes of waiting in all. A session that ends
+// sooner is not attached again: ssh ends with 255 for its own errors too,
+// an authentication or a forward that cannot bind among them, and those end
+// it right at the start. The first attach is that case and is not retried.
+const reconnectAfter = 3 * time.Minute
+
+var reconnectDelays = []time.Duration{5 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute, 3 * time.Minute}
+
+// Replaced in tests.
+var (
+	interactiveSSH = vmcfg.RunGCPInteractiveSSH
+	sessionSleep   = time.Sleep
+	sessionNow     = time.Now
 )
 
-// runSession runs the interactive ssh, and once more when the connection
-// dropped after the session had run for a while. The bell rings when the
-// second one fails too.
+// runSession runs the interactive ssh and attaches again whenever the
+// connection drops after the session has run for a while; each such drop
+// gets all of reconnectDelays anew.
 func (a *App) runSession(sshArgs []string, target runtimecfg.RemoteTarget, gatewayForwarded bool) error {
-	started := time.Now()
-	err := vmcfg.RunGCPInteractiveSSH(sshArgs...)
-	if !droppedAfter(err, time.Since(started), reconnectAfter) {
-		return err
-	}
-	a.phase("The connection dropped; attaching again in %d seconds", int(reconnectDelay.Seconds()))
-	time.Sleep(reconnectDelay)
-	if err := a.reattach(sshArgs, target, gatewayForwarded); err != nil {
-		a.bell()
-		return fmt.Errorf("the connection dropped and attaching again failed: %w", err)
-	}
-	return nil
-}
-
-func (a *App) reattach(sshArgs []string, target runtimecfg.RemoteTarget, gatewayForwarded bool) error {
-	if gatewayForwarded {
-		if err := target.Run(gateway.PortFreeCommand(0), a.debug); err != nil {
-			if target.ExitCode(err) != gateway.PortHeld {
-				return err
-			}
-			if err := a.waitForGatewayPort(target); err != nil {
-				return err
-			}
+	started := sessionNow()
+	err := interactiveSSH(sshArgs...)
+	for droppedAfter(err, sessionNow().Sub(started), reconnectAfter) {
+		var attached bool
+		started, attached, err = a.reconnect(sshArgs, target, gatewayForwarded)
+		if !attached {
+			return err
 		}
 	}
-	return vmcfg.RunGCPInteractiveSSH(sshArgs...)
+	return err
+}
+
+// reconnect attaches again after a drop, and returns the session it got:
+// its start and how it ended, or that none attached. An attempt that fails before a session runs,
+// whatever the reason, is followed by the next one; the bell rings when the
+// last one fails too.
+func (a *App) reconnect(sshArgs []string, target runtimecfg.RemoteTarget, gatewayForwarded bool) (time.Time, bool, error) {
+	var last error
+	for n, delay := range reconnectDelays {
+		a.phase("The connection dropped; attaching again in %d seconds (%d/%d)", int(delay.Seconds()), n+1, len(reconnectDelays))
+		sessionSleep(delay)
+		if gatewayForwarded {
+			if err := a.freeGatewayPort(target); err != nil {
+				a.phase("Attaching again failed: %v", err)
+				last = err
+				continue
+			}
+		}
+		started := sessionNow()
+		err := interactiveSSH(sshArgs...)
+		if sshFailed(err) && sessionNow().Sub(started) < reconnectAfter {
+			a.phase("Attaching again failed: %v", err)
+			last = err
+			continue
+		}
+		return started, true, err
+	}
+	a.bell()
+	return time.Time{}, false, fmt.Errorf("the connection dropped and attaching again failed %d times; the last: %w", len(reconnectDelays), last)
+}
+
+// freeGatewayPort waits for the dropped session to let go of the gateway's
+// VM port, which the new one forwards again.
+func (a *App) freeGatewayPort(target runtimecfg.RemoteTarget) error {
+	err := target.Run(gateway.PortFreeCommand(0), a.debug)
+	if err == nil {
+		return nil
+	}
+	if target.ExitCode(err) != gateway.PortHeld {
+		return err
+	}
+	return a.waitForGatewayPort(target)
+}
+
+// sshFailed tells ssh ended with 255, its own failure, a lost connection
+// among them, rather than with the status of the session's shell.
+func sshFailed(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 255
 }
 
 // droppedAfter tells a session ssh ended with 255, its exit status for a
 // lost connection, after running at least that long.
 func droppedAfter(err error, ran, least time.Duration) bool {
-	var exitErr *exec.ExitError
-	return errors.As(err, &exitErr) && exitErr.ExitCode() == 255 && ran >= least
+	return sshFailed(err) && ran >= least
 }
 
 // bell rings the terminal the human attached from, where it shows as the
