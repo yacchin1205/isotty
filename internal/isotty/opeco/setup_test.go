@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -90,7 +92,7 @@ func TestOpecoRemoveCommand(t *testing.T) {
 }
 
 func TestOpecoSetupCommand(t *testing.T) {
-	command := SetupCommand([]string{"claude"}, 61002)
+	command := SetupCommand([]string{"claude"}, 61002, false)
 	parts := strings.Split(command, " && ")
 	if !strings.Contains(command, "python3-tomli-w") || !strings.Contains(command, " | sudo tee /usr/local/share/isotty/mcp-merge.py ") {
 		t.Fatalf("command = %q, want the merge script put in the VM first", command)
@@ -152,5 +154,114 @@ func TestPairingHooksPassTheReminderToTheAgentsHookTool(t *testing.T) {
 		if hook.Input["event"] != "UserPromptSubmit" || !strings.Contains(hook.Input["without_session"], "session_create") {
 			t.Fatalf("%s: input = %+v", agent, hook.Input)
 		}
+	}
+}
+
+// The session is kept by default; either file turns that off, and neither
+// turns it back on over the other.
+func TestPersistIsTheDefault(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	if settings, err := LoadSettings(home, project); err != nil || !settings.Persist() {
+		t.Fatalf("default: %+v %v", settings, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(ProjectConfigPath(project)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ProjectConfigPath(project), []byte("persist: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if settings, err := LoadSettings(home, project); err != nil || settings.Persist() {
+		t.Fatalf("project off: %+v %v", settings, err)
+	}
+	if err := os.WriteFile(UserConfigPath(home), []byte("persist: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if settings, _ := LoadSettings(home, project); settings.Persist() {
+		t.Fatal("the host's file turned back on what the project's turned off")
+	}
+	if err := os.Remove(ProjectConfigPath(project)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(UserConfigPath(home), []byte("persist: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if settings, _ := LoadSettings(home, project); settings.Persist() {
+		t.Fatal("the host's off was not taken")
+	}
+}
+
+func TestSetupKeepsTheSessionOnlyWhenAsked(t *testing.T) {
+	decoded := func(command string) string {
+		t.Helper()
+		parts := strings.Split(command, "printf %s ")
+		script, err := base64.StdEncoding.DecodeString(strings.Fields(parts[len(parts)-1])[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(script)
+	}
+	on := decoded(SetupCommand([]string{"claude"}, 61002, true))
+	for _, want := range []string{`persist="1"`, `session_dir="` + SessionDir + `"`, `"$HOME/.opeco/config.json"`, "isotty-opeco-boot.service"} {
+		if !strings.Contains(on, want) {
+			t.Errorf("setup with persist lacks %s", want)
+		}
+	}
+	off := decoded(SetupCommand([]string{"claude"}, 61002, false))
+	if !strings.Contains(off, `persist="0"`) || !strings.Contains(off, `"$session_client" close`) {
+		t.Errorf("setup without persist does not take the session away:\n%s", off)
+	}
+	if !strings.Contains(decoded(RemoveCommand()), `"$session_client" close`) {
+		t.Error("remove leaves the session")
+	}
+}
+
+// The client does nothing without a session, and records instead of failing
+// when opeco cannot send.
+func TestSessionClient(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	log := filepath.Join(dir, "events.jsonl")
+	called := filepath.Join(dir, "called")
+	for name, content := range map[string]string{
+		"opeco": "#!/bin/sh\necho \"$@\" >> " + called + "\necho 'session_expired' >&2\nexit 1\n",
+		"sudo":  "#!/bin/sh\nexec \"$@\"\n",
+	} {
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sessions := filepath.Join(dir, "sessions")
+	script := strings.NewReplacer("__SESSION_DIR__", sessions, "__EVENT_LOG__", log).Replace(sessionScript)
+	path := filepath.Join(dir, "isotty-opeco-session")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func() {
+		t.Helper()
+		cmd := exec.Command(path, "status", "VM started")
+		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+	}
+	run()
+	if _, err := os.Stat(called); err == nil {
+		t.Fatal("opeco ran without a session")
+	}
+	if err := os.MkdirAll(filepath.Join(sessions, "opeco-session-1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessions, "opeco-session-1", "state.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run()
+	if data, _ := os.ReadFile(called); string(data) != "status VM started\n" {
+		t.Fatalf("opeco got %q", data)
+	}
+	if data, err := os.ReadFile(log); err != nil || !strings.Contains(string(data), `"type":"opeco-status"`) || !strings.Contains(string(data), "session_expired") {
+		t.Fatalf("event log: %s %v", data, err)
 	}
 }

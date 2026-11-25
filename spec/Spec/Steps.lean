@@ -36,6 +36,7 @@ def after : List (Template Config) :=
   , step [.pkg "tmux", .tmuxConf] (rerun := true)
   , step [.mergeScript, .pkg "python3-tomli-w"] (each := fun a => [.notifySetting a]) (cond := (!·.agents.isEmpty)) (rerun := true)
   , step [.client .idle, .mergeScript, .pkg "python3-tomli-w"] (each := fun a => [.hook a .idle]) (cond := (!·.agents.isEmpty)) (rerun := true)
+  , step [.client .wake] (each := fun a => [.skill a .wake]) (cond := (!·.agents.isEmpty)) (rerun := true)
   , step [.client .open] (each := fun a => [.skill a .open]) (rerun := true)
   , opecoT
   , step [.client .sync, .mergeScript, .pkg "python3-tomli-w"] (each := fun a => [.skill a .sync, .hook a .sync]) (rerun := true)

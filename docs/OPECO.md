@@ -10,12 +10,13 @@ The agent runs in the VM and keeps running when the person closes their
 laptop. Notifications must therefore leave from the VM: opeco runs there and
 talks to opeco.link directly. The host is needed only once, to pair a device.
 
-## Pairing through the attach session
+## Pairing through the host
 
 opeco shows a one-shot QR code on a loopback page of the machine it runs on
 and opens it with the command named by `BROWSER`. In the VM there is no
-browser, so `isotty attach` carries both the page and the "open it" request
-to the host, through the opener described in [BROWSER.md](BROWSER.md):
+browser, so the [host daemon](FORWARD.md#the-host-daemon) carries both the
+page and the "open it" request to the host, through the opener described in
+[BROWSER.md](BROWSER.md):
 
 ```text
 VM:   opeco mcp --qr-port <port>, BROWSER=/usr/local/bin/isotty-open
@@ -23,18 +24,17 @@ VM:   opeco mcp --qr-port <port>, BROWSER=/usr/local/bin/isotty-open
         isotty-open http://127.0.0.1:<port>/qr/<token>
           --POST /open--> 127.0.0.1:61001 ==ssh -R==> host gateway
 host: gateway runs the desktop opener; the browser reaches the page through
-      ssh -L 127.0.0.1:<port>:127.0.0.1:<port> (added by attach)
+      ssh -L 127.0.0.1:<port>:127.0.0.1:<port> (held by the daemon)
 ```
 
 The page is reached on the host at the address opeco serves it on in the VM,
 so the URL opens unchanged and opeco reports `qr_opened: true` because
-`isotty-open` succeeded. When the host is not attached, `isotty-open` fails,
+`isotty-open` succeeded. When the host cannot be reached, `isotty-open` fails,
 opeco reports `qr_open_error`, and the agent shows the URL instead. After
 pairing the host plays no part.
 
-The QR forward appears as `opeco-qr` beside the project's own forwards and
-exists only while attached. `attach --no-host` skips it together with the
-other forwards and the gateway.
+The QR forward appears as `opeco-qr` beside the project's own forwards and,
+like them, is up while the VM runs.
 
 opeco needs no configuration: it is installed whenever
 `.isotty/agent.yaml` lists an agent, unless it is turned off.
@@ -80,7 +80,45 @@ The setting takes effect at the next `isotty up`. With opeco off, `up`
 removes it from the VM instead of installing it: the binary, the MCP server
 and the hooks in each agent's settings, and the skill. It does so on every
 `up`, since an agent's saved state carries the registration into the next
-VM. `attach` then adds no QR forward.
+VM. The daemon then holds no QR forward.
+
+## Keeping the session
+
+An agent started anew, after an [idle stop](VM.md#idle-stop) or by a wake,
+would otherwise start with no session and ask for another pairing, since
+each agent's opeco keeps its session in its process. So `up` gives the VM
+one session for all its agents, through opeco's own `session_dir` in
+`~/.opeco/config.json`, kept in `/var/lib/isotty/opeco`: on the VM's disk,
+outside the synced workspace and the agents' saved homes, so it lives and
+dies with the VM.
+
+That puts the session's keys on the VM's disk. A human who would rather
+keep them in the agents' processes turns it off for every project in the
+never-synced `~/.isotty/opeco.yaml`, or for one in the project's
+`.isotty/opeco.yaml`:
+
+```yaml
+persist: false
+```
+
+As with `enabled`, either file turns it off and neither turns it back on
+over the other; an agent that rewrites the project's file can only keep
+the keys off the disk. Turning it off closes the session and removes what
+keeping it installed.
+
+The session tells the paired devices how the VM stands:
+
+* a status as the VM starts, from a systemd unit
+* a status as it stops, from the idle stop and from `isotty stop`
+* `isotty down` closes it, since the VM that holds its keys goes
+
+These statuses are also what keeps the session from expiring, a day after
+its last use: a VM started daily keeps it. A status that cannot be sent, the
+session having expired among the reasons, goes into the VM event log as
+`opeco-status` and holds up neither the start nor the stop.
+
+The agents share the session and one cursor of responses, so a response
+goes to the first agent that reads it.
 
 ## The QR port
 
@@ -88,10 +126,9 @@ opeco learns its QR port when the agent starts, and the host must use the same
 number, so the port is fixed per project for the life of its VM. `up` picks
 the lowest port from 61002 (above the Linux ephemeral range) that no other
 project on this host holds and keeps it in the project state
-(`~/.isotty/projects/<hash>.json`, which `down` removes); `attach` reads it
-from there. Two projects attached from one host therefore never share the
-port. Attaching the same project twice from one host still fails on the second
-attach, because the forward cannot bind.
+(`~/.isotty/projects/<hash>.json`, which `down` removes); the daemon reads
+it from there. Two projects held by one host's daemon therefore never share
+the port.
 
 ## What `up` installs
 
@@ -123,7 +160,7 @@ fails when the latest release is older than that.
 * opeco's session keys live in the VM process, like everything else the
   agent does there; the host never holds them
 * the QR page binds to the VM loopback and is reachable from the host only
-  through the attach session's forward
+  through the daemon's forward
 * the VM can make the host browser show only URLs under the forwarded QR
   port; any other URL is refused by the gateway, and every accepted request
   is audited

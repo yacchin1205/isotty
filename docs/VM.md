@@ -13,13 +13,11 @@ isotty down
 ## Contract
 
 * `up` creates or reuses one VM per project, starting it when `stop` left it stopped
-* `attach` opens a tmux session named `isotty` in the workspace over `gcloud compute ssh`, attaching to it when it exists, so what runs there survives a detach or a dropped connection; it refuses a VM that is not running, since `up` is what starts one
-* a connection that drops after the session ran three minutes is attached again, up to five times over some six minutes with growing waits between, so a network gone for minutes, as while a laptop moves between networks, is waited out and a short drop comes back at once; a session attached again that runs three minutes gets all five anew. A session that ends sooner after the first attach is not attached again: ssh ends with the same status for an authentication or a forward that cannot bind, which no wait fixes. While attaching again, every failed try is followed by the next, since the session ran minutes before and a failure then is the network's; the bell rings when the last one fails. A dropped session leaves the terminal in the modes tmux set, mouse reporting among them, which tmux turns off only when it detaches; the attach turns them off, or the mouse would type escape sequences into the attach's messages and the shell after it
+* `attach` opens a tmux session named `isotty` in the workspace over `gcloud compute ssh`, attaching to it when it exists, so what runs there survives a detach or a dropped connection; it refuses a VM that is not running, since `up` is what starts one. It is a terminal and nothing more: the forwards and the host gateway are held by the [host daemon](FORWARD.md#the-host-daemon) while the VM runs, so any number of terminals attach alike, and closing one takes nothing from the agent. It says in one line how the daemon holds the project, so a human sees a missing gateway before an agent trips on it
+* a connection that drops after the session ran three minutes is attached again, up to five times over some six minutes with growing waits between, so a network gone for minutes, as while a laptop moves between networks, is waited out and a short drop comes back at once; a session attached again that runs three minutes gets all five anew. A session that ends sooner after the first attach is not attached again: ssh ends with the same status for an authentication that fails, which no wait fixes. While attaching again, every failed try is followed by the next, since the session ran minutes before and a failure then is the network's; the bell rings when the last one fails. A dropped session leaves the terminal in the modes tmux set, mouse reporting among them, which tmux turns off only when it detaches; the attach turns them off, or the mouse would type escape sequences into the attach's messages and the shell after it
 * while `attach` connects, a terminal shows a tide pool with a crab in it, after IsoTTY's logo; it is drawn on the host during a wait that passes anyway, not as a tmux popup in the session, which would take the keys typed ahead; a pipe or a file gets none of it, nor does `--debug`
-* `attach --no-host` joins that session as a grouped tmux session: the same windows, its own current window, gone when it detaches
+* a terminal that attaches while another is attached joins the session as a grouped tmux session: the same windows, its own current window, gone when it detaches
 * `attach --no-tmux`, or `tmux: false` in `~/.isotty/attach.yaml` on the host, gives a plain login shell; `up` installs tmux when the image lacks it and writes `/etc/tmux.conf`, which tells tmux to relay OSC 8 hyperlinks to the attached terminal: tmux relays them only to a terminal it knows takes them, which it tells from `TERM_PROGRAM`, and ssh does not carry that, so a link an agent prints would otherwise stop at tmux
-* `id` prints a stable VM target id for remote attach
-* `attach --target ...` attaches without local project state
 * `stop` stops the VM and keeps its disk and the local state; the sync session ends with it
 * `down` deletes the VM and removes local state, starting a stopped VM first to save the agents' logins and the audit log
 
@@ -128,6 +126,10 @@ Work is what the agents' own hooks report, which `up` installs:
 * a turn the human interrupted ends without Stop; Claude Code's idle prompt
   and Codex's Interrupt end its work
 * a session whose agent process is gone has none
+
+Codex runs a hook added to its settings only once the human has reviewed it
+with `/hooks`, so until then its work is not seen, and the VM can power off
+while it works. Claude Code takes the hooks up without that.
 
 Neither an attached terminal nor typing into it counts: what costs is the
 VM, and the agents' turns are what the human leaves it running for. The

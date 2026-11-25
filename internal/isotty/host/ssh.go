@@ -192,7 +192,7 @@ func runSSHAdd(projectPath, projectHash, homeDir string, args []string, stdout, 
 	for _, key := range h.HostKeys {
 		fmt.Fprintf(stdout, "  host key %s\n", fingerprint(key))
 	}
-	fmt.Fprintf(stdout, "Run `isotty up` to set it up in the VM; there, `ssh %s` reaches it while `isotty attach` runs.\n", name)
+	fmt.Fprintf(stdout, "Run `isotty up` to set it up in the VM; there, `ssh %s` reaches it while the VM runs and the host's isotty daemon holds it.\n", name)
 	return nil
 }
 

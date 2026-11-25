@@ -6,7 +6,7 @@ http and https URLs open in the human's browser. A path under the workspace
 opens the host's synced copy of that file in a viewer where the human can
 comment on a line, a block, a spot of an image, a notebook's cell or
 output, or the file as a whole. The
-gateway exists while the host is attached. Exit status and stderr carry the
+gateway is there while the host is reachable. Exit status and stderr carry the
 reason when nothing opened.
 
 The comments come back through the sync, as .isotty/reviews/<path>.jsonl
@@ -39,7 +39,8 @@ def open_target(target):
     except urllib.error.HTTPError as e:
         raise SystemExit('isotty-open: ' + json.load(e)['error'])
     except urllib.error.URLError as e:
-        raise SystemExit(f'isotty-open: the host is not attached ({e.reason}); give the URL or path to the human instead')
+        raise SystemExit(f'isotty-open: the host is not reachable ({e.reason}): it is asleep or offline, '
+                         'or its isotty daemon is not running; give the URL or path to the human instead')
 
 
 def workspace_of(path):

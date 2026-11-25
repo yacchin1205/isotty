@@ -37,7 +37,6 @@ const contentSecurityPolicy = "sandbox; default-src 'none'; img-src 'self'; styl
 // synced to a project directory on the host, and a path under it is served
 // from that copy on a loopback port only the host reaches, so the human's
 // browser renders the file and nothing hands it to another application.
-// It is nil when the attach has no project on the host (`attach --target`).
 type Files struct {
 	// Workspace is the workspace path in the VM.
 	Workspace string

@@ -12,6 +12,7 @@ has background tasks or scheduled prompts that will wake it.
 import argparse
 import json
 import os
+import pwd
 import subprocess
 import sys
 import time
@@ -20,6 +21,8 @@ STATE_DIR = '__ISOTTY_IDLE_STATE__'
 CONFIG = '__ISOTTY_IDLE_CONFIG__'
 LAST_WORK = '__ISOTTY_IDLE_LAST_WORK__'
 EVENTS = '__ISOTTY_EVENTS__'
+OPECO_SESSION = '__ISOTTY_OPECO_SESSION__'
+OPECO_DIR = '__ISOTTY_OPECO_DIR__'
 KERNEL_STAT = '__ISOTTY_KERNEL_STAT__'
 
 WORKING, WAITING, IDLE = 'working', 'waiting', 'idle'
@@ -148,8 +151,24 @@ def cmd_check(_args):
         last = max(last, read_state(LAST_WORK)['at'])
     if now - last < seconds:
         return
-    record({'type': 'idle-stop', 'result': f'no agent work for {int(now - last) // 60} minutes'})
+    reason = f'no agent work for {int(now - last) // 60} minutes'
+    record({'type': 'idle-stop', 'result': reason})
+    tell_opeco(f'VM powered off: {reason}')
     subprocess.run(['systemctl', 'poweroff'], check=True)
+
+
+def tell_opeco(text):
+    """Shows text on the card of the opeco session the VM keeps, as its
+    owner, when it keeps one. The client records what it could not send and
+    never fails, so the power-off goes on whatever happens here."""
+    if not os.path.exists(OPECO_SESSION) or not os.path.isdir(OPECO_DIR):
+        return
+    owner = pwd.getpwuid(os.stat(OPECO_DIR).st_uid).pw_name
+    try:
+        subprocess.run(['sudo', '-u', owner, '-H', OPECO_SESSION, 'status', text], check=True, timeout=60)
+    except (subprocess.SubprocessError, OSError) as e:
+        # The power-off goes on; what could not be told is in the journal.
+        print(f'isotty-idle: the opeco session was not told: {e}', file=sys.stderr)
 
 
 def main():

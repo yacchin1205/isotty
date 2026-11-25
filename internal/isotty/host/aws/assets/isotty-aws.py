@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Run AWS tools as the project's IAM role through the IsoTTY gateway.
 
-The gateway runs on the host inside `isotty attach` and hands out one-hour
+The gateway runs in the host's isotty daemon and hands out one-hour
 credentials of the role pinned in .isotty/aws.yaml, assumed with the human's
 AWS login, which never enters this VM. `exec` points the AWS CLI and SDKs
-at the gateway, and they fetch credentials again before they expire. After
-the host detaches, credentials already fetched keep working until they
-expire.
+at the gateway, and they fetch credentials again before they expire. While
+the host is not reachable, credentials already fetched keep working until
+they expire.
 """
 import argparse
 import json
@@ -28,8 +28,8 @@ OTHER_IDENTITIES = (
 
 UNREACHABLE = (
     'isotty-aws: the AWS credentials gateway at {gateway} is not reachable ({reason}). '
-    'It is available only while the host is attached with `isotty attach`. '
-    'Retry after re-attach.'
+    'The host is asleep or offline, or its isotty daemon is not running; nothing is queued. '
+    'Keep your work under /workspace, retry once the host is back, and tell the human.'
 )
 
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Run Google-API tools as the project's service account through the IsoTTY gateway.
 
-The gateway runs on the host inside `isotty attach` and hands out one-hour
+The gateway runs in the host's isotty daemon and hands out one-hour
 access tokens for the service account and scopes pinned in
 .isotty/google.yaml. Its credential never enters this VM. A token already issued
-keeps working until it expires; after that the host must be attached again.
+keeps working until it expires; after that the host must be reachable again.
 """
 import argparse
 import json
@@ -18,8 +18,8 @@ TOKEN_ENV = 'GOOGLE_OAUTH_ACCESS_TOKEN'
 
 UNREACHABLE = (
     'isotty-google: the Google token gateway at {gateway} is not reachable ({reason}). '
-    'It is available only while the host is attached with `isotty attach`. '
-    'Retry after re-attach.'
+    'The host is asleep or offline, or its isotty daemon is not running; nothing is queued. '
+    'Keep your work under /workspace, retry once the host is back, and tell the human.'
 )
 
 

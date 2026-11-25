@@ -8,8 +8,8 @@ description: Pull and push container images that need a registry login or sit in
 This VM holds no registry credential and may not reach every registry the
 human can. For the repositories the human pinned in
 `/workspace/.isotty/docker.yaml`, the host's Docker talks to the registry,
-with the host's login and from the host's network, and `isotty attach`
-carries the image between it and the Docker of this VM.
+with the host's login and from the host's network, and the isotty daemon on
+the host carries the image between it and the Docker of this VM.
 
 ```
 isotty-docker status
@@ -60,14 +60,16 @@ say so; tell the human, who enables it on the host with
   for pushing.
 - Public images need none of this: pull them with plain `docker pull`.
 - Every push is recorded in the audit log the human reads.
-- Do not edit `/workspace/.isotty/docker.yaml`. It is synced to the host, and
-  the host refuses to attach when it differs from what the human pinned.
+- Do not edit `/workspace/.isotty/docker.yaml`. It is synced to the host,
+  and the host stops serving images while it differs from what the human
+  pinned; `isotty daemon status` there says why.
 
-## Lifecycle: the image goes through the attached host
+## Lifecycle: the image goes through the host while it is reachable
 
 A large image takes a while the first time; the layers that arrived in a
-pull of the last hours are not fetched again. When the human detaches or
-their machine sleeps, a pull fails with an explicit error and loads nothing;
-pulling again fetches what is still missing. A push fails too; when the host
-went away in the middle of one, the error says that the registry may or may
-not have the image. Retry after re-attach, and say so in your report.
+pull of the last hours are not fetched again. When the host sleeps or goes
+offline, or its isotty daemon is not running, a pull fails with an explicit
+error and loads nothing; pulling again fetches what is still missing. A push
+fails too; when the host went away in the middle of one, the error says that
+the registry may or may not have the image. Retry once the host is back, and
+say so in your report.

@@ -3,7 +3,7 @@
 IsoTTY can let the agent in the VM run functions of Google Apps Script
 projects as the human, through the Apps Script API, without the human's
 Google credential ever entering the VM. The host keeps the login; the
-attach gateway runs functions of the scripts the human pinned.
+host gateway runs functions of the scripts the human pinned.
 
 ## Problem
 
@@ -24,7 +24,7 @@ record each ask.
 ## Model
 
 ```text
-agent in VM --isotty-gas run script f [args]--> 127.0.0.1:61001/gas ==ssh -R==> host gateway in `isotty attach`
+agent in VM --isotty-gas run script f [args]--> 127.0.0.1:61001/gas ==ssh -R==> host gateway in `isotty daemon`
                                                                                     |
                                                                         login in ~/.isotty/gas/  --scripts.run--> script.googleapis.com
 ```
@@ -133,9 +133,11 @@ host and build on that copy, not on the synced file:
 ~/.isotty/projects/<project-hash>.gas.yaml
 ```
 
-`up`, `attach` and `attach --target` compare the synced file with the pin
-and refuse to continue when they differ or when no pin exists. Accepting a
-change means running `isotty host gas add` or `remove` on the host.
+`up` compares the synced file with the pin and refuses to continue when
+they differ or when no pin exists. While the VM runs, the daemon does not
+serve the relay when they differ, and `isotty daemon status` says so.
+Accepting a change means running `isotty host gas add` or `remove` on the
+host.
 
 ## VM Side
 
@@ -189,8 +191,8 @@ script did.
 
 ## Lifecycle
 
-Runs go through the attached host only. When the human detaches, `run`
-fails within seconds; a run already under way on Google's side continues,
+Runs go through the host's daemon only, while the VM runs. When the host
+sleeps or goes offline, `run` fails within seconds; a run already under way on Google's side continues,
 and its answer is lost with the connection. Nothing is queued.
 
 A refresh token lives until the human revokes it in their Google account
@@ -205,5 +207,5 @@ or Google expires it; `add` logs in again when it is gone.
   Google enforces the scopes, the script's code decides the rest
 * each script's client, account and scopes are pinned on the host; the
   synced copy cannot widen them
-* the gateway binds to `127.0.0.1` on both ends and lives only while attached
+* the gateway binds to `127.0.0.1` on both ends and is up while the VM runs; `isotty stop` takes it down
 * every run, parameters included, is recorded before the VM hears its outcome

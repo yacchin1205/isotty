@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 )
 
 var (
@@ -27,7 +29,7 @@ var (
 const (
 	auditExecKey    = "isotty-exec"
 	auditConnectKey = "isotty-connect"
-	vmEventLogPath  = "/var/log/isotty/events.jsonl"
+	vmEventLogPath  = gateway.VMEventLogPath
 )
 
 var auditPackages = []string{"auditd"}
@@ -236,6 +238,22 @@ func NewAWSVMEvent(projectHash, roleARN, session string, expires time.Time) (VME
 	record.Target = roleARN
 	record.Name = session
 	record.Expires = expires.UTC().Format(time.RFC3339)
+	return record, nil
+}
+
+// NewWakeVMEvent records a wake an agent asked the host for (wake-request)
+// or one the host delivered (wake), with the conversation, when, and the
+// prompt it resumes with.
+func NewWakeVMEvent(projectHash, eventType, agent, session string, at time.Time, prompt, result string) (VMEventRecord, error) {
+	record, err := newVMEvent(projectHash, eventType)
+	if err != nil {
+		return VMEventRecord{}, err
+	}
+	record.Target = agent
+	record.Name = session
+	record.Expires = at.UTC().Format(time.RFC3339)
+	record.Parameters = prompt
+	record.Result = result
 	return record, nil
 }
 

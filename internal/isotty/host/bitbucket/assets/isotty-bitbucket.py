@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Work with the project's Bitbucket repositories through the IsoTTY relay.
 
-The relay runs on the host inside `isotty attach` and is reachable only
-while the host is attached. It forwards git fetch/push and a fixed set of
+The relay runs in the host's isotty daemon and is reachable only while
+the host is awake and online. It forwards git fetch/push and a fixed set of
 pull request, pipeline and repository-settings operations for the
 repositories pinned in .isotty/bitbucket.yaml, with the host's credential;
 this VM holds none. Reads, comments, pushes and settings changes each need
@@ -24,8 +24,8 @@ GIT_BASE = RELAY + '/git/'
 
 UNREACHABLE = (
     'isotty-bitbucket: the Bitbucket relay at {relay} is not reachable ({reason}). '
-    'It is available only while the host is attached with `isotty attach`; nothing is queued. '
-    'Keep your commits and text under /workspace and retry after re-attach.'
+    'The host is asleep or offline, or its isotty daemon is not running; nothing is queued. '
+    'Keep your commits and text under /workspace, retry once the host is back, and tell the human.'
 )
 
 REMOTE_PATTERNS = [
@@ -153,7 +153,8 @@ def cmd_git(command, git_args):
     if result.returncode != 0:
         print('isotty-bitbucket: git failed. A "403" means the repository is not pinned for this '
               'project or not pinned as write; `isotty-bitbucket status` lists what this VM may reach. '
-              'A connection error means the host is not attached.', file=sys.stderr)
+              'A connection error means the host is not reachable: it is asleep or offline, '
+              'or its isotty daemon is not running.', file=sys.stderr)
     raise SystemExit(result.returncode)
 
 

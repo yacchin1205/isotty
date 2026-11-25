@@ -112,6 +112,11 @@ func ListStates() ([]State, error) {
 	}
 	states := make([]State, 0, len(paths))
 	for _, path := range paths {
+		// A project's state is <hash>.json; what else the host keeps of a
+		// project is <hash>.<kind>.<ext>, the wakes among it.
+		if strings.Contains(strings.TrimSuffix(filepath.Base(path), ".json"), ".") {
+			continue
+		}
 		state, err := readState(path)
 		if err != nil {
 			return nil, err

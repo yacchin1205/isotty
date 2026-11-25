@@ -1,6 +1,6 @@
 ---
 name: isotty-open
-description: Show a URL or a file of this workspace to the human on the host with the isotty-open command, and read the comments they leave on it. A URL opens in their browser; a file under /workspace opens there as the synced copy in a viewer where the human can comment on a line, a paragraph or a spot of an image, so a figure, a report or a notebook you wrote needs no server and leaves the machine for nowhere. `isotty-open reviews` lists their comments with file and line. It is the BROWSER of the attached session, so gh, Python's webbrowser and your own "open in browser" use it without being told.
+description: Show a URL or a file of this workspace to the human on the host with the isotty-open command, and read the comments they leave on it. A URL opens in their browser; a file under /workspace opens there as the synced copy in a viewer where the human can comment on a line, a paragraph or a spot of an image, so a figure, a report or a notebook you wrote needs no server and leaves the machine for nowhere. `isotty-open reviews` lists their comments with file and line. It is the BROWSER of the agents' session, so gh, Python's webbrowser and your own "open in browser" use it without being told.
 ---
 
 # isotty-open
@@ -12,9 +12,8 @@ isotty-open reviews [--all] [<path>]
 ```
 
 A URL opens in the human's default browser on the host, in front of them,
-while the host is attached with `isotty attach`. The attached session has
-`BROWSER` set to this command, so tools that open a browser do so through
-it on their own. Only `http` and `https` URLs are opened.
+while the host is reachable. The agents' session has `BROWSER` set to this
+command, so tools that open a browser do so through it on their own. Only `http` and `https` URLs are opened.
 
 A path under `/workspace` opens in that browser too: the workspace is
 synced to the host, so the file is already on their machine. The host
@@ -51,6 +50,6 @@ and the cell are now; take that as the place. Act on the comments, say in your r
 you did about each, and leave marking them resolved to the human. Do not
 edit the files under `.isotty/reviews/`.
 
-When it refuses, or the host is not attached, put the URL or the path in
+When it refuses, or the host is not reachable, put the URL or the path in
 your report for the human to open. Every open is recorded in the audit log
 the human reads.

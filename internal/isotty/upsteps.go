@@ -20,6 +20,7 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host/google"
 	"github.com/yazawa/isotty/internal/isotty/host/redmine"
 	"github.com/yazawa/isotty/internal/isotty/host/sshhost"
+	"github.com/yazawa/isotty/internal/isotty/host/wake"
 	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
@@ -283,8 +284,11 @@ func upSteps() []upStep {
 				if err != nil {
 					return err
 				}
-				return e.vm("idle", runtimecfg.IdleStopCommand(e.cfg.Runtime.Agents, idle.Stop()))
+				return e.vm("idle", runtimecfg.IdleStopCommand(e.cfg.Runtime.Agents, idle.Stop(), opeco.SessionClientPath, opeco.SessionDir))
 			}},
+		{label: "Installing wake client", tag: "wake", kind: kindStep, base: []string{".client .wake"}, each: []string{".skill a .wake"},
+			cond: agentsCond(), rerun: true,
+			run: func(e *upEnv) error { return e.vm("wake", wake.SetupCommand(e.cfg.Runtime.Agents)) }},
 		{label: "Installing browser opener", tag: "open", kind: kindStep, base: []string{".client .open"}, each: []string{".skill a .open"},
 			cond: always, rerun: true,
 			run: func(e *upEnv) error { return e.vm("open", browser.SetupCommand(e.cfg.Runtime.Agents)) }},
@@ -474,7 +478,7 @@ func (a *App) restoreAuditArchives(e *upEnv) error {
 func (a *App) applyOpeco(e *upEnv) error {
 	if opeco.Active(e.cfg.Runtime.Agents, e.cfg.Opeco) {
 		return a.runPhase("Installing opeco (QR page on port %d)", func() error {
-			return e.vm("opeco", opeco.SetupCommand(e.cfg.Runtime.Agents, e.state.OpecoQRPort))
+			return e.vm("opeco", opeco.SetupCommand(e.cfg.Runtime.Agents, e.state.OpecoQRPort, e.cfg.Opeco.Persist()))
 		}, e.state.OpecoQRPort)
 	}
 	if len(e.cfg.Runtime.Agents) == 0 {

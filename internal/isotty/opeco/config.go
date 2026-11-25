@@ -13,6 +13,10 @@ import (
 type Config struct {
 	// Enabled unset or true leaves opeco on; false turns it off.
 	Enabled *bool `json:"enabled,omitempty"`
+	// Persist unset or true keeps one session on the VM's disk for every
+	// agent of the VM, its keys among it; false keeps it in each agent's
+	// process.
+	Persist *bool `json:"persist,omitempty"`
 }
 
 func (c Config) On() bool {
@@ -70,6 +74,14 @@ func LoadSettings(homeDir, projectPath string) (Settings, error) {
 		return Settings{}, err
 	}
 	return Settings{User: user, Project: project}, nil
+}
+
+// Persist tells whether the VM keeps its opeco session on its disk. As with
+// Enabled, either file turns it off and neither turns it back on over the
+// other.
+func (s Settings) Persist() bool {
+	on := func(c Config) bool { return c.Persist == nil || *c.Persist }
+	return on(s.User) && on(s.Project)
 }
 
 func (s Settings) Enabled() bool {

@@ -12,7 +12,7 @@ another API and is not covered.
 ## Model
 
 ```text
-agent in VM --isotty-bitbucket--> 127.0.0.1:61001/bitbucket ==ssh -R==> host gateway in `isotty attach` --> bitbucket.org
+agent in VM --isotty-bitbucket--> 127.0.0.1:61001/bitbucket ==ssh -R==> host gateway in `isotty daemon` --> bitbucket.org
 ```
 
 * The relay is mounted under `/bitbucket`. It shares its mechanics with
@@ -41,7 +41,7 @@ workspace. So, as on GitHub, the narrowing is IsoTTY's. App passwords,
 the former way, stopped working in June 2026.
 
 The token has an expiry date, which Bitbucket requires; when it passes,
-`attach` keeps working but every relayed call answers 401, and the human
+the relay keeps running but every relayed call answers 401, and the human
 creates a new one. The scopes a pin needs:
 
 | pin | scopes |
@@ -134,7 +134,8 @@ token: ATATT3x...
 token and which scopes it needs, asks for the token on the terminal
 without echo, confirms it against `/2.0/user`, and replaces what was
 there, which is what to do when the token expires. The token is read when
-`attach` starts, so a new value takes effect at the next attach.
+the daemon takes up the project, so a new value takes effect at the next
+`up`.
 
 Project config, synced with the rest of `.isotty/`:
 

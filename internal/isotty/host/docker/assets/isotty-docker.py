@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pull and push images of pinned repositories through the IsoTTY gateway.
 
-The gateway runs on the host inside `isotty attach`. The host's Docker
+The gateway runs in the host's isotty daemon. The host's Docker
 talks to the registry, with the host's login and from wherever the host can
 reach, and the image travels between it and the Docker of this VM. No
 registry credential enters this VM. The repositories are the ones pinned in
@@ -29,13 +29,13 @@ GATEWAY_PORT = __ISOTTY_GATEWAY_PORT__
 
 UNREACHABLE = (
     'isotty-docker: the Docker gateway at 127.0.0.1:{port} is not reachable ({reason}). '
-    'It is available only while the host is attached with `isotty attach`. '
-    'Retry after re-attach.'
+    'The host is asleep or offline, or its isotty daemon is not running; nothing is queued. '
+    'Keep your work under /workspace, retry once the host is back, and tell the human.'
 )
 
 NOT_PULLED = (
     'isotty-docker: the host went away while its Docker was pulling; nothing was loaded. '
-    'Retry the pull after re-attach.'
+    'Retry the pull once the host is back.'
 )
 
 BROKE_OFF = (
@@ -45,12 +45,12 @@ BROKE_OFF = (
 
 NOT_SENT = (
     'isotty-docker: the host went away while the image was being sent; nothing was pushed. '
-    'Retry the push after re-attach.'
+    'Retry the push once the host is back.'
 )
 
 WENT_AWAY = (
     'isotty-docker: the host went away while its Docker was pushing, so whether the registry has '
-    'the image is not known. Retry the push after re-attach.'
+    'the image is not known. Retry the push once the host is back.'
 )
 
 BLOB = re.compile(r'blobs/sha256/([0-9a-f]{64})')

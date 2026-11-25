@@ -16,7 +16,7 @@ agreement around it, no record, and nobody deletes it.
 ## Model
 
 ```text
-agent in VM --isotty-child--> 127.0.0.1:61001/child ==ssh -R==> host gateway in `isotty attach` --> gcloud (host login)
+agent in VM --isotty-child--> 127.0.0.1:61001/child ==ssh -R==> host gateway in `isotty daemon` --> gcloud (host login)
 ```
 
 * The relay is one service of the host gateway, mounted under `/child`.
@@ -98,8 +98,9 @@ therefore also records the accepted agreement on the host:
 ~/.isotty/projects/<project-hash>.children.yaml
 ```
 
-`up`, `attach` and `attach --target` compare the synced file with the pin
-and refuse to continue when they differ or when no pin exists.
+`up` compares the synced file with the pin and refuses to continue when
+they differ or when no pin exists. While the VM runs, the daemon does not
+serve the relay when they differ, and `isotty daemon status` says so.
 
 ## VM Side
 
@@ -129,8 +130,8 @@ gives it a new ephemeral external IP, which the relay answers with so the
 agent can set its DNS records again. A child shut down from inside stays
 stopped until `isotty-child start`: the VM has no other way to start it.
 
-The relay itself lives as long as the attach session; `isotty-child ssh`
-works whenever the child runs.
+The relay itself is up while the VM runs and the host's daemon can reach
+it; `isotty-child ssh` works whenever the child runs.
 
 ## Audit
 

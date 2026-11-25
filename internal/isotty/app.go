@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/yazawa/isotty/internal/isotty/host"
@@ -27,12 +26,12 @@ import (
 	"github.com/yazawa/isotty/internal/isotty/host/epweave"
 	"github.com/yazawa/isotty/internal/isotty/host/forge"
 	"github.com/yazawa/isotty/internal/isotty/host/gas"
-	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 	"github.com/yazawa/isotty/internal/isotty/host/github"
 	"github.com/yazawa/isotty/internal/isotty/host/gitlab"
 	"github.com/yazawa/isotty/internal/isotty/host/google"
 	"github.com/yazawa/isotty/internal/isotty/host/redmine"
 	"github.com/yazawa/isotty/internal/isotty/host/sshhost"
+	"github.com/yazawa/isotty/internal/isotty/host/wake"
 	"github.com/yazawa/isotty/internal/isotty/opeco"
 	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
@@ -79,8 +78,6 @@ func (a *App) Run(args []string) error {
 	switch args[0] {
 	case "up":
 		return a.runUp(args[1:])
-	case "id":
-		return a.runID(args[1:])
 	case "attach":
 		return a.runAttach(args[1:])
 	case "host":
@@ -95,6 +92,10 @@ func (a *App) Run(args []string) error {
 		return a.runDown(args[1:])
 	case "stop":
 		return a.runStop(args[1:])
+	case "schedule":
+		return a.runSchedule(args[1:])
+	case "daemon":
+		return a.runDaemon(args[1:])
 	case "status":
 		return a.runStatus(args[1:])
 	case "list":
@@ -112,10 +113,11 @@ func (a *App) Run(args []string) error {
 func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "Usage:")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] up [PATH] [--sync one-way-safe|two-way-safe] [--user <name>] [--no-attach]")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] id")
-	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--target <id>] [--user <name>] [--no-host] [--no-tmux]")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] attach [--user <name>] [--no-tmux]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] down [--force]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] stop")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] schedule enable|disable|show")
+	fmt.Fprintln(a.stdout, "  isotty [--debug] daemon status|restart|stop")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] audit logs [-f] [--archive <file>]")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] audit archive")
 	fmt.Fprintln(a.stdout, "  isotty [--debug] host forward add <name> --local-port <port> --remote-port <port>")
@@ -192,28 +194,6 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.stdout, "  isotty [--debug] version")
 }
 
-func (a *App) runID(args []string) error {
-	fs := flag.NewFlagSet("id", flag.ContinueOnError)
-	fs.SetOutput(a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("id does not accept arguments")
-	}
-
-	projectPath, err := filepath.Abs(".")
-	if err != nil {
-		return fmt.Errorf("resolve current directory: %w", err)
-	}
-	state, err := LoadStateForProject(projectPath)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(a.stdout, vmcfg.FormatGCPID(state.GCPProjectID, state.Zone, state.InstanceName))
-	return nil
-}
-
 func (a *App) runUp(args []string) error {
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
@@ -270,10 +250,25 @@ func (a *App) runUp(args []string) error {
 	fmt.Fprintf(a.stdout, "Project: %s\n", state.GCPProjectID)
 	fmt.Fprintf(a.stdout, "Zone: %s\n", state.Zone)
 	fmt.Fprintf(a.stdout, "Sync mode: %s\n", state.SyncMode)
+	// The daemon holds the forwards and the gateway while the VM runs; it
+	// reads the project again here, which is where a change to the host's
+	// agreements takes effect.
+	homeDir, err := isottyHome()
+	if err != nil {
+		return err
+	}
+	if err := a.runPhase("Handing the project to the isotty daemon", func() error {
+		if err := a.ensureDaemon(homeDir); err != nil {
+			return err
+		}
+		return reloadProject(homeDir, state.ProjectHash)
+	}); err != nil {
+		return err
+	}
 	if *noAttach {
 		return nil
 	}
-	return a.attachToState(projectPath, state, *user, false, false)
+	return a.attachToState(state, *user, false)
 }
 
 func (a *App) runAudit(args []string) error {
@@ -416,9 +411,7 @@ func (a *App) printAuditArchive(path string) error {
 func (a *App) runAttach(args []string) error {
 	fs := flag.NewFlagSet("attach", flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
-	targetID := fs.String("target", "", "attach to a remote IsoTTY target id")
 	user := fs.String("user", "", "SSH username to use for attach")
-	noHost := fs.Bool("no-host", false, "attach without port forwards and without the host gateway")
 	noTmux := fs.Bool("no-tmux", false, "open a plain login shell instead of the tmux session")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -429,27 +422,18 @@ func (a *App) runAttach(args []string) error {
 	if err := requireExecutable("ssh"); err != nil {
 		return err
 	}
-	if *targetID != "" {
-		return a.attachToTarget(*targetID, *user, *noHost, *noTmux)
-	}
-
 	projectPath, err := filepath.Abs(".")
 	if err != nil {
 		return fmt.Errorf("resolve current directory: %w", err)
 	}
-
 	state, err := LoadStateForProject(projectPath)
 	if err != nil {
-		if IsStateNotFoundError(err) {
-			return fmt.Errorf("%w\nhint: use `isotty attach --target <id>` with an id from `isotty id`", err)
-		}
 		return err
 	}
 	if err := requireRunningInstance(state.GCPProjectID, state.Zone, state.InstanceName); err != nil {
 		return err
 	}
-
-	return a.attachToState(projectPath, state, *user, *noHost, *noTmux)
+	return a.attachToState(state, *user, *noTmux)
 }
 
 // requireRunningInstance refuses to attach to a VM that is stopped or in
@@ -468,354 +452,19 @@ func requireRunningInstance(projectID, zone, instanceName string) error {
 	return nil
 }
 
-func (a *App) attachToTarget(targetID, user string, noHost, noTmux bool) error {
-	target, err := vmcfg.ParseGCPID(targetID)
-	if err != nil {
-		return err
-	}
+// attachToState opens a terminal into the VM. The forwards and the gateway
+// are the daemon's, which it holds while the VM runs; the attach makes
+// sure it runs and says how it holds the project.
+func (a *App) attachToState(state State, user string, noTmux bool) error {
 	homeDir, err := isottyHome()
 	if err != nil {
 		return err
 	}
-	conn := vmcfg.GCPConnection{
-		ProjectID:     target.ProjectID,
-		Zone:          target.Zone,
-		InstanceName:  target.InstanceName,
-		User:          user,
-		SSHConfigPath: filepath.Join(homeDir, "ssh", "config"),
-	}
-	if err := requireRunningInstance(conn.ProjectID, conn.Zone, conn.InstanceName); err != nil {
-		return err
-	}
-
-	workspacePath, err := vmcfg.GetGCPWorkspacePath(conn)
+	shell, err := attachShellFor(homeDir, noTmux)
 	if err != nil {
 		return err
 	}
-	projectHash, err := vmcfg.GetGCPProjectHash(conn)
-	if err != nil {
-		return err
-	}
-
-	forwardCfg := host.ForwardConfig{Forwards: map[string]host.Forward{}}
-	var epweaveCfg *epweave.ProjectConfig
-	var githubCfg *github.ProjectConfig
-	var gitlabCfg *gitlab.ProjectConfig
-	var bitbucketCfg *bitbucket.ProjectConfig
-	var redmineCfg *redmine.ProjectConfig
-	var dockerCfg *docker.ProjectConfig
-	var googleCfg *google.ProjectConfig
-	var awsCfg *aws.ProjectConfig
-	var gasCfg *gas.ProjectConfig
-	var dnsCfg *dns.ProjectConfig
-	var childCfg *child.ProjectConfig
-	var sshCfg *sshhost.ProjectConfig
-	var agents []string
-	if !noHost {
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/forward.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			forwardCfg, err = host.ParseForwardConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote forward config: %w", err)
-			}
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/epweave.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			synced, err := epweave.ParseProjectConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote epweave config: %w", err)
-			}
-			verified, err := epweave.VerifyPinned(homeDir, projectHash, synced)
-			if err != nil {
-				return err
-			}
-			epweaveCfg = &verified
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/github.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			synced, err := github.Kind.ParseProjectConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote github config: %w", err)
-			}
-			verified, err := github.Kind.VerifyPinned(homeDir, projectHash, synced)
-			if err != nil {
-				return err
-			}
-			githubCfg = &verified
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/gitlab.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			synced, err := gitlab.Kind.ParseProjectConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote gitlab config: %w", err)
-			}
-			verified, err := gitlab.Kind.VerifyPinned(homeDir, projectHash, synced)
-			if err != nil {
-				return err
-			}
-			gitlabCfg = &verified
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/bitbucket.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			synced, err := bitbucket.Kind.ParseProjectConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote bitbucket config: %w", err)
-			}
-			verified, err := bitbucket.Kind.VerifyPinned(homeDir, projectHash, synced)
-			if err != nil {
-				return err
-			}
-			bitbucketCfg = &verified
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/redmine.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			synced, err := redmine.ParseProjectConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote redmine config: %w", err)
-			}
-			verified, err := redmine.VerifyPinned(homeDir, projectHash, synced)
-			if err != nil {
-				return err
-			}
-			redmineCfg = &verified
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/docker.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			synced, err := docker.Kind.ParseProjectConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote docker config: %w", err)
-			}
-			verified, err := docker.Kind.VerifyPinned(homeDir, projectHash, synced)
-			if err != nil {
-				return err
-			}
-			dockerCfg = &verified
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/google.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			synced, err := google.ParseProjectConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote google config: %w", err)
-			}
-			verified, err := google.VerifyPinned(homeDir, projectHash, synced)
-			if err != nil {
-				return err
-			}
-			googleCfg = &verified
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/aws.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			synced, err := aws.ParseProjectConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote aws config: %w", err)
-			}
-			verified, err := aws.VerifyPinned(homeDir, projectHash, synced)
-			if err != nil {
-				return err
-			}
-			awsCfg = &verified
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/gas.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			synced, err := gas.ParseProjectConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote gas config: %w", err)
-			}
-			verified, err := gas.VerifyPinned(homeDir, projectHash, synced)
-			if err != nil {
-				return err
-			}
-			gasCfg = &verified
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/dns.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			synced, err := dns.ParseProjectConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote dns config: %w", err)
-			}
-			verified, err := dns.VerifyPinned(homeDir, projectHash, synced)
-			if err != nil {
-				return err
-			}
-			dnsCfg = &verified
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/children.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			synced, err := child.ParseProjectConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote children config: %w", err)
-			}
-			verified, err := child.VerifyPinned(homeDir, projectHash, synced)
-			if err != nil {
-				return err
-			}
-			childCfg = &verified
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/ssh.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			synced, err := sshhost.ParseProjectConfig(data)
-			if err != nil {
-				return fmt.Errorf("parse remote ssh config: %w", err)
-			}
-			verified, err := sshhost.VerifyPinned(homeDir, projectHash, synced)
-			if err != nil {
-				return err
-			}
-			sshCfg = &verified
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/agent.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			agents, err = runtimecfg.ParseAgents(data)
-			if err != nil {
-				return fmt.Errorf("parse remote agent config: %w", err)
-			}
-		}
-		opecoSettings := opeco.Settings{}
-		if opecoSettings.User, err = opeco.LoadConfig(opeco.UserConfigPath(homeDir)); err != nil {
-			return err
-		}
-		if data, err := fetchOptionalProjectFile(conn, ".isotty/opeco.yaml"); err != nil {
-			return err
-		} else if data != nil {
-			if opecoSettings.Project, err = opeco.ParseConfig(data); err != nil {
-				return fmt.Errorf("parse remote opeco config: %w", err)
-			}
-		}
-		if opeco.Active(agents, opecoSettings) {
-			state, err := LoadState(projectHash)
-			if os.IsNotExist(err) {
-				return fmt.Errorf("this host has no state for project %s, so the opeco QR port that `isotty up` allocated is unknown; run `isotty up` in the project directory, or attach with --no-host", projectHash)
-			}
-			if err != nil {
-				return err
-			}
-			if err := addOpecoForward(forwardCfg, state.OpecoQRPort); err != nil {
-				return err
-			}
-		}
-	}
-	shell, err := attachShellFor(homeDir, noHost, noTmux)
-	if err != nil {
-		return err
-	}
-	// Without a project on the host there is no synced copy to open.
-	return a.attachWithConnection(conn, projectHash, workspacePath, shell, nil, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, awsCfg, gasCfg, dnsCfg, childCfg, sshCfg)
-}
-
-// fetchOptionalProjectFile returns nil when the VM's workspace has no such file.
-func fetchOptionalProjectFile(conn vmcfg.GCPConnection, pathInWorkspace string) ([]byte, error) {
-	data, err := vmcfg.FetchGCPProjectFile(conn, pathInWorkspace)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	return data, err
-}
-
-func (a *App) attachToState(projectPath string, state State, user string, noHost, noTmux bool) error {
-	homeDir, err := isottyHome()
-	if err != nil {
-		return err
-	}
-	shell, err := attachShellFor(homeDir, noHost, noTmux)
-	if err != nil {
-		return err
-	}
-	forwardCfg := host.ForwardConfig{Forwards: map[string]host.Forward{}}
-	var epweaveCfg *epweave.ProjectConfig
-	var githubCfg *github.ProjectConfig
-	var gitlabCfg *gitlab.ProjectConfig
-	var bitbucketCfg *bitbucket.ProjectConfig
-	var redmineCfg *redmine.ProjectConfig
-	var dockerCfg *docker.ProjectConfig
-	var googleCfg *google.ProjectConfig
-	var awsCfg *aws.ProjectConfig
-	var gasCfg *gas.ProjectConfig
-	var dnsCfg *dns.ProjectConfig
-	var childCfg *child.ProjectConfig
-	var sshCfg *sshhost.ProjectConfig
-	var agents []string
-	if !noHost {
-		forwardCfg, err = host.LoadForwardConfig(projectPath)
-		if err != nil {
-			return err
-		}
-		epweaveCfg, err = host.LoadEpweaveProjectConfig(projectPath, state.ProjectHash, homeDir)
-		if err != nil {
-			return err
-		}
-		githubCfg, err = github.Kind.LoadPinned(projectPath, state.ProjectHash, homeDir)
-		if err != nil {
-			return err
-		}
-		gitlabCfg, err = gitlab.Kind.LoadPinned(projectPath, state.ProjectHash, homeDir)
-		if err != nil {
-			return err
-		}
-		bitbucketCfg, err = bitbucket.Kind.LoadPinned(projectPath, state.ProjectHash, homeDir)
-		if err != nil {
-			return err
-		}
-		redmineCfg, err = redmine.LoadPinned(projectPath, state.ProjectHash, homeDir)
-		if err != nil {
-			return err
-		}
-		dockerCfg, err = docker.Kind.LoadPinned(projectPath, state.ProjectHash, homeDir)
-		if err != nil {
-			return err
-		}
-		googleCfg, err = host.LoadGoogleProjectConfig(projectPath, state.ProjectHash, homeDir)
-		if err != nil {
-			return err
-		}
-		awsCfg, err = host.LoadAWSProjectConfig(projectPath, state.ProjectHash, homeDir)
-		if err != nil {
-			return err
-		}
-		gasCfg, err = host.LoadGASProjectConfig(projectPath, state.ProjectHash, homeDir)
-		if err != nil {
-			return err
-		}
-		dnsCfg, err = host.LoadDNSProjectConfig(projectPath, state.ProjectHash, homeDir)
-		if err != nil {
-			return err
-		}
-		childCfg, err = host.LoadChildProjectConfig(projectPath, state.ProjectHash, homeDir)
-		if err != nil {
-			return err
-		}
-		sshCfg, err = host.LoadSSHProjectConfig(projectPath, state.ProjectHash, homeDir)
-		if err != nil {
-			return err
-		}
-		agents, err = runtimecfg.ListAgents(projectPath)
-		if err != nil {
-			return err
-		}
-		opecoSettings, err := opeco.LoadSettings(homeDir, projectPath)
-		if err != nil {
-			return err
-		}
-		if opeco.Active(agents, opecoSettings) {
-			if err := addOpecoForward(forwardCfg, state.OpecoQRPort); err != nil {
-				return err
-			}
-		}
-	}
-
+	a.describeHold(homeDir, state)
 	conn := vmcfg.GCPConnection{
 		ProjectID:     state.GCPProjectID,
 		Zone:          state.Zone,
@@ -827,25 +476,41 @@ func (a *App) attachToState(projectPath string, state State, user string, noHost
 	if err != nil {
 		return err
 	}
-	var files *browser.Files
-	if !noHost {
-		files = &browser.Files{Workspace: workspacePath, Project: state.ProjectPath, Flush: func() error { return flushMutagenSession(state) }, Ignored: syncIgnored}
-		if err := files.Serve(); err != nil {
-			return err
+	return a.attachTerminal(conn, state.ProjectHash, workspacePath, shell)
+}
+
+// describeHold says in one line how the daemon holds the project, so a
+// human sees a missing gateway before an agent trips on it. A daemon that
+// cannot be started leaves the terminal usable.
+func (a *App) describeHold(homeDir string, state State) {
+	if err := a.ensureDaemon(homeDir); err != nil {
+		fmt.Fprintf(a.stderr, "warning: the isotty daemon is not running, so the VM has no forwards and no gateway: %v\n", err)
+		return
+	}
+	statuses, err := daemonStatus(homeDir)
+	if err != nil {
+		fmt.Fprintf(a.stderr, "warning: %v\n", err)
+		return
+	}
+	for _, s := range statuses {
+		if s.ProjectHash != state.ProjectHash {
+			continue
 		}
-		defer files.Close()
+		line := "Host daemon: gateway " + s.Gateway
+		if len(s.Services) > 0 {
+			line += " (" + strings.Join(s.Services, ", ") + ")"
+		}
+		if n := len(s.Refused); n > 0 {
+			line += fmt.Sprintf("; %d not served, see `isotty daemon status`", n)
+		}
+		a.phase("%s", line)
+		return
 	}
-	if noHost {
-		return a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, awsCfg, gasCfg, dnsCfg, childCfg, sshCfg)
+	if err := reloadProject(homeDir, state.ProjectHash); err != nil {
+		fmt.Fprintf(a.stderr, "warning: the isotty daemon does not hold this project: %v\n", err)
+		return
 	}
-	// The attach that holds the gateway tells the VM how the sync stands
-	// while it runs; a second terminal leaves that to it.
-	stop := make(chan struct{})
-	reported := make(chan error, 1)
-	go func() { reported <- reportSync(state, conn, stop) }()
-	err = a.attachWithConnection(conn, state.ProjectHash, workspacePath, shell, files, forwardCfg, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, awsCfg, gasCfg, dnsCfg, childCfg, sshCfg)
-	close(stop)
-	return errors.Join(err, <-reported)
+	a.phase("Host daemon: taking the project up now")
 }
 
 const opecoForwardName = "opeco-qr"
@@ -864,69 +529,13 @@ func addOpecoForward(forwardCfg host.ForwardConfig, qrPort int) error {
 	return nil
 }
 
-// reverseForward exposes the host gateway on the VM's loopback for the attach session.
-type reverseForward struct {
-	VMPort   int
-	HostPort int
-}
-
-func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell, files *browser.Files, forwardCfg host.ForwardConfig, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, awsCfg *aws.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, sshCfg *sshhost.ProjectConfig) (err error) {
-	names := host.SortedForwardNames(forwardCfg)
+// attachTerminal runs the terminal's ssh into the VM's tmux, attaching
+// again after a drop, and records the session's start and end.
+func (a *App) attachTerminal(conn vmcfg.GCPConnection, projectHash, workspacePath string, shell attachShell) error {
 	target := a.auditTarget(conn)
-
-	// Pad writes and browser-open requests are recorded in the VM event log
-	// while the interactive session owns the terminal, so gcloud output must
-	// never reach it (debug is forced off).
-	record := func(record runtimecfg.VMEventRecord) error {
-		return runtimecfg.RecordVMEvent(target, record, false)
-	}
-	// Open requests are answered before their event is recorded, so a failed
-	// record has no request to fail; it fails the attach once the session ends.
-	var deferredErrs []error
-	var deferredMu sync.Mutex
-	fail := func(err error) {
-		deferredMu.Lock()
-		deferredErrs = append(deferredErrs, err)
-		deferredMu.Unlock()
-	}
-	var sshRelay *sshhost.Relay
-	if sshCfg != nil && !shell.Secondary {
-		sshRelay = sshhost.NewRelay(*sshCfg)
-		defer sshRelay.Close()
-	}
-	mux, services, err := a.gatewayHandler(shell.Secondary, conn, projectHash, files, epweaveCfg, githubCfg, gitlabCfg, bitbucketCfg, redmineCfg, dockerCfg, googleCfg, awsCfg, gasCfg, dnsCfg, childCfg, sshRelay, record, fail)
-	if err != nil {
-		return err
-	}
-	var reverse *reverseForward
-	if len(services) > 0 {
-		gw, err := gateway.Serve(mux)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if closeErr := gw.Close(); closeErr != nil && err == nil {
-				err = closeErr
-			}
-		}()
-		reverse = &reverseForward{VMPort: gateway.VMPort, HostPort: gw.Port()}
-	}
-	sshArgs := buildAttachSSHArgs(conn, workspacePath, forwardCfg, reverse, shell)
-
-	var with []string
-	if len(names) > 0 {
-		with = append(with, fmt.Sprintf("%d forwards", len(names)))
-	}
-	if reverse != nil {
-		with = append(with, fmt.Sprintf("host gateway (%s) on VM port %d", strings.Join(services, ", "), reverse.VMPort))
-	}
-	if len(with) > 0 {
-		a.phase("Attaching to %s with %s", conn.InstanceName, strings.Join(with, " and "))
-	} else {
-		a.phase("Attaching to %s", conn.InstanceName)
-	}
-
-	startEvent, err := runtimecfg.NewAttachVMEvent(projectHash, "attach-start", len(names), "")
+	sshArgs := buildAttachSSHArgs(conn, workspacePath, shell)
+	a.phase("Attaching to %s", conn.InstanceName)
+	startEvent, err := runtimecfg.NewAttachVMEvent(projectHash, "attach-start", 0, "")
 	if err != nil {
 		return err
 	}
@@ -934,18 +543,9 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 	if err != nil {
 		return err
 	}
-	// The round trip that records the event also tells whether the VM port
-	// of the gateway is free, so an attach that finds it free pays nothing.
-	if reverse != nil {
-		startCommand += " && " + gateway.PortFreeCommand(0)
-	}
-	portHeld := false
 	if err := a.waitAtTidepool(func() error {
 		if err := target.Run(startCommand, a.debug); err != nil {
-			if reverse == nil || target.ExitCode(err) != gateway.PortHeld {
-				return fmt.Errorf("record attach-start event: %w", err)
-			}
-			portHeld = true
+			return fmt.Errorf("record attach-start event: %w", err)
 		}
 		if err := vmcfg.RefreshGCPSSHConfig(conn, a.debug); err != nil {
 			return fmt.Errorf("refresh SSH config: %w", err)
@@ -954,74 +554,28 @@ func (a *App) attachWithConnection(conn vmcfg.GCPConnection, projectHash, worksp
 	}); err != nil {
 		return err
 	}
-
-	var attachErr error
-	if portHeld {
-		attachErr = a.waitForGatewayPort(target)
-	}
-	if attachErr == nil {
-		stopSweep := func() {}
-		if dockerCfg != nil && !shell.Secondary {
-			homeDir, err := isottyHome()
-			if err != nil {
-				return err
-			}
-			dockerHost, err := docker.LoadHostConfig(homeDir)
-			if err != nil {
-				return err
-			}
-			stopSweep = docker.CacheFor(projectHash).KeepSwept(docker.CLI{}, dockerHost.Keep, fail)
-		}
-		a.bell()
-		attachErr = a.runSession(sshArgs, target, reverse != nil, func() (string, error) {
-			return vmcfg.GCPInstanceStatus(conn.ProjectID, conn.Zone, conn.InstanceName)
-		})
-		stopSweep()
-	}
+	a.bell()
+	attachErr := a.runSession(interactiveSSH, sshArgs, func() (string, error) {
+		return vmcfg.GCPInstanceStatus(conn.ProjectID, conn.Zone, conn.InstanceName)
+	})
 	if errors.Is(attachErr, errVMStopped) {
 		// The VM is off: there is no log to record the end in, and the
 		// power-off is already there as idle-stop.
 		a.phase("%v", errVMStopped)
-		deferredMu.Lock()
-		defer deferredMu.Unlock()
-		return errors.Join(deferredErrs...)
+		return nil
 	}
-
 	result := "ok"
 	if attachErr != nil {
 		result = attachErr.Error()
 	}
-	endEvent, err := runtimecfg.NewAttachVMEvent(projectHash, "attach-end", len(names), result)
+	endEvent, err := runtimecfg.NewAttachVMEvent(projectHash, "attach-end", 0, result)
 	if err != nil {
-		if attachErr != nil {
-			return fmt.Errorf("attach session failed: %v; resolve attach-end event context: %w", attachErr, err)
-		}
-		return err
+		return errors.Join(attachErr, err)
 	}
 	if err := runtimecfg.RecordVMEvent(target, endEvent, a.debug); err != nil {
-		if attachErr != nil {
-			return fmt.Errorf("attach session failed: %v; record attach-end event: %w", attachErr, err)
-		}
-		return fmt.Errorf("record attach-end event: %w", err)
+		return errors.Join(attachErr, fmt.Errorf("record attach-end event: %w", err))
 	}
-	deferredMu.Lock()
-	defer deferredMu.Unlock()
-	return errors.Join(append([]error{attachErr}, deferredErrs...)...)
-}
-
-// waitForGatewayPort waits out a session whose host went away: it holds the
-// gateway's VM port until sshd notices, and ssh would fail on the forward
-// with a message that does not say so. A live attach holds the port the
-// same way and for good, so the wait is bounded and says how to join one.
-func (a *App) waitForGatewayPort(target runtimecfg.RemoteTarget) error {
-	a.phase("VM port %d is still taken; waiting up to %d seconds for a dropped session to let go of it (a second terminal beside a live attach is `isotty attach --no-host`)", gateway.VMPort, int(gateway.PortWait.Seconds()))
-	err := a.waitAtTidepool(func() error {
-		return target.Run(gateway.PortFreeCommand(gateway.PortWait), a.debug)
-	})
-	if err != nil && target.ExitCode(err) == gateway.PortHeld {
-		return fmt.Errorf("VM port %d is held by another attach; use `isotty attach --no-host` for a second terminal", gateway.VMPort)
-	}
-	return err
+	return attachErr
 }
 
 // A session that drops after reconnectAfter is attached again, once after
@@ -1052,12 +606,12 @@ var errVMStopped = errors.New("the VM powered itself off once no agent had work;
 // connection drops after the session has run for a while; each such drop
 // gets all of reconnectDelays anew. A drop because the VM stopped is not
 // attached again.
-func (a *App) runSession(sshArgs []string, target runtimecfg.RemoteTarget, gatewayForwarded bool, vmStatus func() (string, error)) error {
+func (a *App) runSession(run func(...string) error, sshArgs []string, vmStatus func() (string, error)) error {
 	started := sessionNow()
-	err := a.sshSession(sshArgs)
+	err := a.sshSession(run, sshArgs)
 	for droppedAfter(err, sessionNow().Sub(started), reconnectAfter) {
 		var attached bool
-		started, attached, err = a.reconnect(sshArgs, target, gatewayForwarded, vmStatus)
+		started, attached, err = a.reconnect(run, sshArgs, vmStatus)
 		if !attached {
 			return err
 		}
@@ -1070,7 +624,7 @@ func (a *App) runSession(sshArgs []string, target runtimecfg.RemoteTarget, gatew
 // GCP whether the VM still runs, and stops at errVMStopped when it does not.
 // An attempt that fails otherwise, whatever the reason, is followed by the
 // next one; the bell rings when the last one fails too.
-func (a *App) reconnect(sshArgs []string, target runtimecfg.RemoteTarget, gatewayForwarded bool, vmStatus func() (string, error)) (time.Time, bool, error) {
+func (a *App) reconnect(run func(...string) error, sshArgs []string, vmStatus func() (string, error)) (time.Time, bool, error) {
 	var last error
 	for n, delay := range reconnectDelays {
 		status, err := vmStatus()
@@ -1090,15 +644,8 @@ func (a *App) reconnect(sshArgs []string, target runtimecfg.RemoteTarget, gatewa
 		}
 		a.phase("The connection dropped; attaching again in %d seconds (%d/%d)", int(delay.Seconds()), n+1, len(reconnectDelays))
 		sessionSleep(delay)
-		if gatewayForwarded {
-			if err := a.freeGatewayPort(target); err != nil {
-				a.phase("Attaching again failed: %v", err)
-				last = err
-				continue
-			}
-		}
 		started := sessionNow()
-		err = a.sshSession(sshArgs)
+		err = a.sshSession(run, sshArgs)
 		if sshFailed(err) && sessionNow().Sub(started) < reconnectAfter {
 			a.phase("Attaching again failed: %v", err)
 			last = err
@@ -1121,8 +668,8 @@ const shutdownGrace = 15 * time.Second
 // left reporting the mouse types escape sequences into whatever reads it
 // next, the attach's messages and the shell after it, so they are turned
 // off here.
-func (a *App) sshSession(sshArgs []string) error {
-	err := interactiveSSH(sshArgs...)
+func (a *App) sshSession(run func(...string) error, sshArgs []string) error {
+	err := run(sshArgs...)
 	if sshFailed(err) && a.isTTY() {
 		fmt.Fprint(a.stdout, terminalReset)
 	}
@@ -1134,19 +681,6 @@ func (a *App) sshSession(sshArgs []string) error {
 // cursor.
 const terminalReset = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
 	"\x1b[?1004l\x1b[?2004l\x1b[?1049l\x1b[?25h"
-
-// freeGatewayPort waits for the dropped session to let go of the gateway's
-// VM port, which the new one forwards again.
-func (a *App) freeGatewayPort(target runtimecfg.RemoteTarget) error {
-	err := target.Run(gateway.PortFreeCommand(0), a.debug)
-	if err == nil {
-		return nil
-	}
-	if target.ExitCode(err) != gateway.PortHeld {
-		return err
-	}
-	return a.waitForGatewayPort(target)
-}
 
 // sshFailed tells ssh ended with 255, its own failure, a lost connection
 // among them, rather than with the status of the session's shell.
@@ -1169,10 +703,9 @@ func (a *App) bell() {
 	}
 }
 
-// gatewayHandler mounts the host services the session may use. --no-host
-// mounts nothing, so no gateway starts and the VM gets no reverse forward,
-// which lets a second terminal attach beside the first.
-func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, awsCfg *aws.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, sshRelay *sshhost.Relay, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
+// gatewayHandler mounts the host services the VM may use, which the daemon
+// serves while the VM runs.
+func (a *App) gatewayHandler(conn vmcfg.GCPConnection, projectHash string, files *browser.Files, epweaveCfg *epweave.ProjectConfig, githubCfg *github.ProjectConfig, gitlabCfg *gitlab.ProjectConfig, bitbucketCfg *bitbucket.ProjectConfig, redmineCfg *redmine.ProjectConfig, dockerCfg *docker.ProjectConfig, googleCfg *google.ProjectConfig, awsCfg *aws.ProjectConfig, gasCfg *gas.ProjectConfig, dnsCfg *dns.ProjectConfig, childCfg *child.ProjectConfig, sshRelay *sshhost.Relay, record func(runtimecfg.VMEventRecord) error, fail func(error)) (http.Handler, []string, error) {
 	mux := http.NewServeMux()
 	var services []string
 	if epweaveCfg != nil {
@@ -1271,18 +804,28 @@ func (a *App) gatewayHandler(noHost bool, conn vmcfg.GCPConnection, projectHash 
 		})))
 		services = append(services, "SSH hosts")
 	}
-	if !noHost {
-		mux.Handle("/open", browser.Handler(browser.OpenInBrowser, func(target string) {
-			event, err := runtimecfg.NewOpenVMEvent(projectHash, target)
-			if err == nil {
-				err = record(event)
-			}
-			if err != nil {
-				fail(fmt.Errorf("record open-url event for %s: %w", target, err))
-			}
-		}, files))
-		services = append(services, "browser open")
+	mux.Handle("/open", browser.Handler(browser.OpenInBrowser, func(target string) {
+		event, err := runtimecfg.NewOpenVMEvent(projectHash, target)
+		if err == nil {
+			err = record(event)
+		}
+		if err != nil {
+			fail(fmt.Errorf("record open-url event for %s: %w", target, err))
+		}
+	}, files))
+	services = append(services, "browser open")
+	homeDir, err := isottyHome()
+	if err != nil {
+		return nil, nil, err
 	}
+	mux.Handle("/wake/", http.StripPrefix("/wake", wake.Handler(homeDir, projectHash, func(kind string, request wake.Request) error {
+		event, err := runtimecfg.NewWakeVMEvent(projectHash, kind, request.Agent, request.Session, request.At, request.Prompt, "")
+		if err != nil {
+			return err
+		}
+		return record(event)
+	})))
+	services = append(services, "wake")
 	return mux, services, nil
 }
 
@@ -1514,79 +1057,57 @@ func (a *App) gasHandler(cfg gas.ProjectConfig, projectHash string, record func(
 	}), nil
 }
 
-// attachShell says what the attach session runs in the VM. Secondary is
-// `--no-host`: a second terminal beside the one that holds the gateway.
+// attachShell says what the attach session runs in the VM.
 type attachShell struct {
-	Tmux      bool
-	Secondary bool
+	Tmux bool
 }
 
-func attachShellFor(homeDir string, noHost, noTmux bool) (attachShell, error) {
+func attachShellFor(homeDir string, noTmux bool) (attachShell, error) {
 	cfg, err := LoadAttachConfig(homeDir)
 	if err != nil {
 		return attachShell{}, err
 	}
-	return attachShell{Tmux: cfg.UseTmux() && !noTmux, Secondary: noHost}, nil
+	return attachShell{Tmux: cfg.UseTmux() && !noTmux}, nil
 }
 
 const tmuxSession = "isotty"
 
-func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, forwardCfg host.ForwardConfig, reverse *reverseForward, shell attachShell) []string {
+func buildAttachSSHArgs(conn vmcfg.GCPConnection, workspacePath string, shell attachShell) []string {
 	instanceTarget := fmt.Sprintf("%s.%s.%s", conn.InstanceName, conn.Zone, conn.ProjectID)
 	if conn.User != "" {
 		instanceTarget = conn.User + "@" + instanceTarget
 	}
-	sshArgs := []string{
+	return []string{
 		"-F", conn.SSHConfigPath,
 		"-tt",
-		// A forward that cannot bind must fail the attach instead of leaving
-		// a session whose forwards silently point nowhere.
-		"-o", "ExitOnForwardFailure=yes",
-		// Detect a dead peer within ~45s so a dropped session releases its
-		// forwards instead of lingering until TCP gives up.
+		// Detect a dead peer within ~45s, so a dropped terminal is noticed
+		// and attached again instead of lingering until TCP gives up.
 		"-o", "ServerAliveInterval=15",
 		"-o", "ServerAliveCountMax=3",
+		instanceTarget, "cd " + workspacePath + " && " + attachShellCommand(workspacePath, shell),
 	}
-	for _, name := range host.SortedForwardNames(forwardCfg) {
-		forward := forwardCfg.Forwards[name]
-		sshArgs = append(sshArgs, "-L", fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", forward.LocalPort, forward.RemotePort))
-	}
-	if reverse != nil {
-		sshArgs = append(sshArgs, "-R", fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", reverse.VMPort, reverse.HostPort))
-	}
-	sshArgs = append(sshArgs, instanceTarget, "cd "+workspacePath+" && "+attachShellCommand(workspacePath, reverse != nil, shell))
-	return sshArgs
 }
 
 // attachShellCommand is what the attach runs once in the workspace.
 //
-// The session's shell gets BROWSER only when the gateway behind
-// `isotty-open` exists, so an agent's own open or `gh` opens on the host
-// while attached and fails plainly otherwise. In tmux the variable goes into the
-// session environment as well, for the windows opened later; the shells
-// already running keep what they had.
+// The session's shell gets BROWSER, so an agent's own open or `gh` opens on
+// the host through the gateway the daemon holds while the VM runs. In tmux
+// the variable goes into the session environment as well, for the windows
+// opened later.
 //
-// With tmux, the attach that holds the gateway owns the session named
-// `isotty`, created when missing. A secondary attach joins it as a grouped
-// session, which shares the windows but has its own current window, and
-// goes away when that terminal detaches.
-func attachShellCommand(workspacePath string, browserSet bool, shell attachShell) string {
-	env := ""
-	if browserSet {
-		env = "BROWSER=" + browser.ClientPath + " "
-	}
+// With tmux, a terminal attaches to the session named `isotty`, created
+// when missing. One that attaches while another is attached joins it as a
+// grouped session, which shares the windows but has its own current
+// window, and goes away when that terminal detaches.
+func attachShellCommand(workspacePath string, shell attachShell) string {
+	env := "BROWSER=" + browser.ClientPath + " "
 	if !shell.Tmux {
 		return env + "exec ${SHELL:-/bin/bash} -l"
 	}
-	create := env + "exec tmux new-session -A -s " + tmuxSession + " -c " + workspacePath
-	if browserSet {
-		create += " ';' set-environment -t " + tmuxSession + " BROWSER " + browser.ClientPath
-	}
-	if !shell.Secondary {
-		return create
-	}
+	create := env + "exec tmux new-session -A -s " + tmuxSession + " -c " + workspacePath +
+		" ';' set-environment -t " + tmuxSession + " BROWSER " + browser.ClientPath
 	join := "exec tmux new-session -t " + tmuxSession + " -c " + workspacePath + " ';' set-option destroy-unattached on"
-	return "if tmux has-session -t " + tmuxSession + " 2>/dev/null; then " + join + "; else " + create + "; fi"
+	return "if tmux has-session -t " + tmuxSession + " 2>/dev/null && [ -n \"$(tmux list-clients -t " + tmuxSession + ")\" ]; then " + join + "; else " + create + "; fi"
 }
 
 // deleteChildren removes the VM's child VMs and the firewall rules of any
@@ -1708,6 +1229,11 @@ func (a *App) runDown(args []string) error {
 		default:
 			return fmt.Errorf("instance %s is %s; wait for it to settle before `isotty down`", state.InstanceName, status)
 		}
+		// The opeco session the VM kept dies with it; closing it takes its
+		// card off the devices now instead of a day later.
+		if err := a.auditTarget(conn).Run(opeco.SessionCommand("close"), a.debug); err != nil {
+			fmt.Fprintf(a.stderr, "warning: the VM's opeco session was not closed; its card stays until it expires: %v\n", err)
+		}
 		if err := a.saveAgentAuth(state); err != nil {
 			if !*force {
 				return fmt.Errorf("%w\nhint: `isotty down --force` removes the VM without saving; sync is stopped until the next `isotty up`", err)
@@ -1751,6 +1277,21 @@ func (a *App) runDown(args []string) error {
 		return DeleteState(state.ProjectHash)
 	}); err != nil {
 		return fmt.Errorf("remove state: %w", err)
+	}
+	// The daemon lets go of a project whose state is gone; told now, it
+	// does so at once instead of at its next look. The project's wakes go:
+	// the conversations they would resume went with the VM.
+	homeDir, err := isottyHome()
+	if err != nil {
+		return err
+	}
+	if err := wake.Forget(homeDir, state.ProjectHash); err != nil {
+		return err
+	}
+	if _, err := daemonStatus(homeDir); err == nil {
+		if err := reloadProject(homeDir, state.ProjectHash); err != nil {
+			fmt.Fprintf(a.stderr, "warning: the isotty daemon was not told the project is gone; it lets go at its next look: %v\n", err)
+		}
 	}
 
 	fmt.Fprintf(a.stdout, "IsoTTY environment removed.\n")
@@ -1812,6 +1353,9 @@ func (a *App) runStop(args []string) error {
 		return terminateMutagenSession(state)
 	}); err != nil {
 		return fmt.Errorf("terminate sync session: %w", err)
+	}
+	if err := a.auditTarget(conn).Run(opeco.SessionCommand("status", "VM stopped (isotty stop)"), a.debug); err != nil {
+		fmt.Fprintf(a.stderr, "warning: the VM's opeco session was not told of the stop: %v\n", err)
 	}
 	if err := a.runPhase("Stopping VM %s", func() error {
 		return vmcfg.StopGCPInstance(conn, a.debug)
@@ -2027,7 +1571,7 @@ func (a *App) ensureEnvironment(cfg Config, syncMode string, ignoreRunning bool)
 		return State{}, fmt.Errorf("check instance: %w", err)
 	}
 	if !hasState && status != "" {
-		return State{}, fmt.Errorf("instance %s already exists but no local IsoTTY state was found; use `isotty attach --target <id>` or remove the VM explicitly", state.InstanceName)
+		return State{}, fmt.Errorf("instance %s already exists but no local IsoTTY state was found; remove the VM explicitly", state.InstanceName)
 	}
 	switch status {
 	case "", vmcfg.GCPStatusRunning, vmcfg.GCPStatusTerminated:

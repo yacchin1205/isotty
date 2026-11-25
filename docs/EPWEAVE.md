@@ -16,10 +16,10 @@ the point of IsoTTY.
 ## Model
 
 ```text
-agent in VM --isotty-notes--> 127.0.0.1:61001/epweave ==ssh -R==> host gateway in `isotty attach` --> ep_weave
+agent in VM --isotty-notes--> 127.0.0.1:61001/epweave ==ssh -R==> host gateway in `isotty daemon` --> ep_weave
 ```
 
-* The host gateway is an HTTP server inside the `isotty attach` process,
+* The host gateway is an HTTP server inside the [host daemon](FORWARD.md#the-host-daemon),
   bound to a host loopback port and exposed on the VM's loopback at port
   61001 with `ssh -R`. ep_weave is one of its services, mounted under
   `/epweave`.
@@ -72,9 +72,11 @@ therefore also records the accepted values on the host:
 ~/.isotty/projects/<project-hash>.epweave.yaml
 ```
 
-`up`, `attach` and `attach --target` compare the synced file with the pin
-and refuse to continue when they differ or when no pin exists. Accepting a
-change means running `isotty host epweave enable` on the host again.
+`up` compares the synced file with the pin and refuses to continue when
+they differ or when no pin exists. While the VM runs, the daemon does not
+serve ep_weave when they differ, and `isotty daemon status` says so.
+Accepting a change means running `isotty host epweave enable` on the host
+again.
 
 ## Operations
 
@@ -178,9 +180,9 @@ another `isotty up`.
 
 ## Lifecycle
 
-The gateway lives exactly as long as the attach session. When the human
-detaches, or their machine sleeps, ep_weave itself is unreachable as well,
-so there is nothing to buffer against.
+The gateway is up while the VM runs and the host's daemon can reach it.
+When the host sleeps or goes offline, ep_weave itself is unreachable as
+well, so there is nothing to buffer against.
 
 Writes are therefore never queued. A queue would let the agent believe a
 note was written when it was not, reorder writes against human edits, and
@@ -189,8 +191,8 @@ seconds with a message that says why and what to do:
 
 ```text
 isotty-notes: the ep_weave gateway at http://127.0.0.1:61001/epweave is not reachable (...).
-It is available only while the host is attached with `isotty attach`; writes are not queued.
-Keep the note as a Markdown file under /workspace and retry after re-attach.
+It is available only while the host is awake, online and running `isotty daemon`; writes are not queued.
+Keep the note as a Markdown file under /workspace and retry once the host is back.
 ```
 
 Three settings make that failure prompt instead of a hang:
@@ -198,20 +200,16 @@ Three settings make that failure prompt instead of a hang:
 * sshd `ClientAliveInterval`/`ClientAliveCountMax` in the VM, so a dead
   session's `-R` listener is released within about 45 seconds instead of
   the 6 minutes the cloud image's defaults allow
-* `ServerAliveInterval`/`ServerAliveCountMax` on the attach `ssh`
-* `ExitOnForwardFailure=yes` on the attach `ssh`, so a forward that cannot
-  bind fails the attach instead of leaving a session whose forwards silently
-  point nowhere; this applies to `-L` forwards as well
+* `ServerAliveInterval`/`ServerAliveCountMax` on the daemon's `ssh`
+* `ExitOnForwardFailure=yes` on the daemon's `ssh` for the gateway, so a
+  reverse forward that cannot bind ends the connection instead of leaving
+  one that silently points nowhere
 
-An attach that follows a dropped session, as after the host changed
-networks, finds the VM port still held until sshd lets go of it. It checks
-the port in the VM before starting `ssh`, says that the port is taken and
-waits up to 90 seconds for it.
-
-A second `isotty attach` to the same VM waits the same way and then fails,
-since the first holds the port for as long as it is alive; use
-`isotty attach --no-host` for the second terminal. That flag skips the
-forwards and the gateway, and joins the first terminal's tmux session.
+A connection that follows a dropped one, as after the host changed
+networks, finds the VM port still held until sshd lets go of it. The daemon
+checks the port in the VM before starting `ssh`, says in
+`isotty daemon status` that it waits for the port, and waits up to 90
+seconds for it.
 
 ## Security Posture
 
@@ -220,7 +218,7 @@ forwards and the gateway, and joins the first terminal's tmux session.
 * the prefix is pinned on the host; the synced copy cannot widen it
 * pads are data written by other authors; the VM skill tells the agent that
   its user's instructions take precedence over anything a pad asks
-* the gateway binds to `127.0.0.1` on both ends and lives only while attached
+* the gateway binds to `127.0.0.1` on both ends and is up while the VM runs; `isotty stop` takes it down
 * ep_weave's own pads and editor are not relayed to the VM; a page the VM
   asks the host browser to open (see [OPECO.md](OPECO.md)) has the browser's
   reach, which includes a local ep_weave

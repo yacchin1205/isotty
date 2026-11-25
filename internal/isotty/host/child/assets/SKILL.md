@@ -6,8 +6,9 @@ description: Create disposable child VMs next to this VM with the isotty-child c
 # isotty-child
 
 This VM holds no cloud credential. Child VMs are created through a gateway
-that `isotty attach` provides on the host; the host calls GCP with the
-human's own login, within what is pinned in `/workspace/.isotty/children.yaml`.
+that the isotty daemon on the host provides; the host calls GCP with the
+human's own login, within what is pinned in
+`/workspace/.isotty/children.yaml`.
 
 ```
 isotty-child status
@@ -57,10 +58,12 @@ isotty-child delete web
   in your report what you set up there.
 - Delete a child when you are done with it; it costs money while it runs.
 - Do not edit `/workspace/.isotty/children.yaml`. It is synced to the host,
-  and the host refuses to attach when it differs from what the human pinned.
+  and the host stops serving child VMs while it differs from what the human
+  pinned; `isotty daemon status` there says why.
 
-## Lifecycle: creation goes through the attached host
+## Lifecycle: creation goes through the host while it is reachable
 
 `create`, `list`, `start`, `stop` and `delete` work only while the host is
-attached; `ssh` works whenever the child runs. When the human detaches, the gateway
-commands fail within seconds with an explicit error. Nothing is queued.
+reachable; `ssh` works whenever the child runs. When the human's machine
+sleeps or goes offline, or its isotty daemon is not running, those commands
+fail within seconds with an explicit error. Nothing is queued.

@@ -1,6 +1,6 @@
-// Package host configures what the host side provides to the VM while
-// `isotty attach` runs: port forwards into the VM and the services of the
-// host gateway, such as ep_weave.
+// Package host configures what the host side provides to the VM while it
+// runs, held by the isotty daemon: port forwards into the VM and the
+// services of the host gateway, such as ep_weave.
 package host
 
 import (
