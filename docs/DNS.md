@@ -21,7 +21,7 @@ the agreement has to be enforced by IsoTTY.
 ## Model
 
 ```text
-agent in VM --isotty-dns--> 127.0.0.1:61001/dns ==ssh -R==> host gateway in `isotty attach` --> Cloud DNS
+agent in VM --isotty-dns--> 127.0.0.1:61001/dns ==ssh -R==> host gateway in `isotty daemon` --> Cloud DNS
 ```
 
 * The relay is one service of the host gateway, mounted under `/dns`.
@@ -84,9 +84,11 @@ therefore also record the accepted agreement on the host:
 ~/.isotty/projects/<project-hash>.dns.yaml
 ```
 
-`up`, `attach` and `attach --target` compare the synced file with the pin
-and refuse to continue when they differ or when no pin exists. Accepting a
-change means running `isotty host dns add` or `remove` on the host again.
+`up` compares the synced file with the pin and refuses to continue when
+they differ or when no pin exists. While the VM runs, the daemon does not
+serve the relay when they differ, and `isotty daemon status` says so.
+Accepting a change means running `isotty host dns add` or `remove` on the
+host again.
 
 ## VM Side
 
@@ -122,9 +124,9 @@ still answers after `down`.
 
 ## Lifecycle
 
-The relay lives exactly as long as the attach session, like the other
-services. Nothing is queued: a change either reached Cloud DNS while the
-host was attached, or the client failed within seconds and says so.
+The relay is up while the VM runs and the host's daemon can reach it, like
+the other services. Nothing is queued: a change either reached Cloud DNS
+while the host was there, or the client failed within seconds and says so.
 
 ## Security Posture
 

@@ -18,7 +18,7 @@ import (
 // it and makes the sync session again.
 const (
 	IdleClientPath  = "/usr/local/bin/isotty-idle"
-	idleStateDir    = "/var/lib/isotty/idle"
+	IdleStateDir    = "/var/lib/isotty/idle"
 	idleConfigPath  = "/etc/isotty/idle-stop.json"
 	idleLastWork    = "/var/lib/isotty/idle-last-work.json"
 	idleServicePath = "/etc/systemd/system/isotty-idle.service"
@@ -54,15 +54,15 @@ WantedBy=timers.target
 // after which the VM powers off (0 never), and each agent's hooks that tell
 // isotty-idle when a session has work. Writing the time counts as work, so
 // the VM does not power off right after an up.
-func IdleStopCommand(agents []string, after time.Duration) string {
+func IdleStopCommand(agents []string, after time.Duration, opecoSession, opecoDir string) string {
 	config, err := json.Marshal(map[string]int{"seconds": int(after.Seconds())})
 	if err != nil {
 		panic(err)
 	}
 	parts := append([]string{"set -euo pipefail"}, gateway.MergeScriptCommands()...)
 	parts = append(parts,
-		gateway.WriteFileCommand(IdleClientPath, renderIdleClient(idleClient), true), "sudo chmod 755 "+IdleClientPath,
-		fmt.Sprintf(`sudo install -d -m 755 -o "$(id -un)" -g "$(id -gn)" %s`, idleStateDir),
+		gateway.WriteFileCommand(IdleClientPath, renderIdleClient(idleClient, opecoSession, opecoDir), true), "sudo chmod 755 "+IdleClientPath,
+		fmt.Sprintf(`sudo install -d -m 755 -o "$(id -un)" -g "$(id -gn)" %s`, IdleStateDir),
 		"sudo mkdir -p /etc/isotty",
 		gateway.WriteFileCommand(idleConfigPath, string(config)+"\n", true),
 		gateway.WriteFileCommand(idleServicePath, idleService, true),
@@ -124,12 +124,14 @@ func idleHooks(agent string) (string, []byte) {
 	return file, data
 }
 
-func renderIdleClient(template string) string {
+func renderIdleClient(template, opecoSession, opecoDir string) string {
 	return strings.NewReplacer(
-		"__ISOTTY_IDLE_STATE__", idleStateDir,
+		"__ISOTTY_IDLE_STATE__", IdleStateDir,
 		"__ISOTTY_IDLE_CONFIG__", idleConfigPath,
 		"__ISOTTY_IDLE_LAST_WORK__", idleLastWork,
 		"__ISOTTY_EVENTS__", vmEventLogPath,
 		"__ISOTTY_KERNEL_STAT__", "/proc/stat",
+		"__ISOTTY_OPECO_SESSION__", opecoSession,
+		"__ISOTTY_OPECO_DIR__", opecoDir,
 	).Replace(template)
 }

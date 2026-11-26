@@ -4,6 +4,7 @@ minimum_version="__OPECO_MINIMUM_VERSION__"
 qr_port="__OPECO_QR_PORT__"
 install_claude="__INSTALL_CLAUDE__"
 install_codex="__INSTALL_CODEX__"
+persist="__PERSIST__"
 repository="https://github.com/yacchin1205/opeco-link"
 marker=/usr/local/share/isotty/opeco-version
 open_client="__OPEN_CLIENT__"
@@ -62,4 +63,26 @@ if [ "$install_codex" = 1 ]; then
   python3 "$merge" hooks "$HOME/.codex/hooks.json" "$tmp/codex-hooks.json" opeco-link
   printf %s "__CODEX_PAIRING_HOOKS__" | base64 -d > "$tmp/codex-pairing-hooks.json"
   python3 "$merge" hooks "$HOME/.codex/hooks.json" "$tmp/codex-pairing-hooks.json" opeco-link
+fi
+
+# One session for the VM, kept on its disk, when the host asked for it: the
+# agents started after a power-off, or by a wake, use the session the human
+# already paired instead of asking for another pairing.
+session_dir="__SESSION_DIR__"
+session_client="__SESSION_CLIENT__"
+boot_unit=/etc/systemd/system/isotty-opeco-boot.service
+if [ "$persist" = 1 ]; then
+  sudo install -d -m 700 -o "$(id -un)" -g "$(id -gn)" "$session_dir"
+  install -d -m 700 "$HOME/.opeco"
+  printf '{"session_dir": "%s"}\n' "$session_dir" > "$HOME/.opeco/config.json"
+  chmod 600 "$HOME/.opeco/config.json"
+  printf %s "__SESSION_SCRIPT__" | base64 -d | sudo tee "$session_client" >/dev/null
+  sudo chmod 755 "$session_client"
+  printf '%s\n' "# Written by isotty up." "[Unit]" "Description=Tell the paired device that the VM started (isotty)" \
+    "Wants=network-online.target" "After=network-online.target" "" "[Service]" "Type=oneshot" "User=$(id -un)" \
+    "ExecStart=$session_client status VM started" "" "[Install]" "WantedBy=multi-user.target" | sudo tee "$boot_unit" >/dev/null
+  sudo systemctl daemon-reload
+  sudo systemctl enable isotty-opeco-boot.service
+else
+  __UNPERSIST__
 fi

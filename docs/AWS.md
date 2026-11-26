@@ -2,7 +2,7 @@
 
 IsoTTY can let the agent in the VM use AWS, in one account, as an IAM role
 the human chose, without the human's AWS credentials ever entering the VM.
-The host assumes the role with its own AWS login; the attach gateway hands
+The host assumes the role with its own AWS login; the host gateway hands
 the VM the role's short-lived credentials.
 
 ## Problem
@@ -24,7 +24,7 @@ without letting the human's out of the host.
 ```text
 agent in VM --isotty-aws exec-- tool --> AWS APIs
                  |
-                 +--GET /aws/credentials--> 127.0.0.1:61001 ==ssh -R==> host gateway in `isotty attach`
+                 +--GET /aws/credentials--> 127.0.0.1:61001 ==ssh -R==> host gateway in `isotty daemon`
                                                                           |
                                                           the host's aws CLI and its profile
 ```
@@ -80,13 +80,13 @@ gets a role that has both, and the human picks which one the agent is.
 
 The profile is which of the host's AWS logins assumes the role. It is the
 host's own matter, like a GitLab token, so it stays out of the synced file.
-Without `--profile` the `aws` CLI's default applies, as the shell that runs
-`isotty attach` sets it; the role is the pinned one either way.
+Without `--profile` the `aws` CLI's default applies, as the environment the
+host daemon runs in sets it; the role is the pinned one either way.
 
 `enable` assumes the role once and checks with `sts get-caller-identity`
 that the account is the ARN's, and pins nothing when either fails, so a
-role that cannot be used is found at `enable` and not at the next
-`attach`. The failure, and `enable --help`, print how to make the role
+role that cannot be used is found at `enable` and not when the agent
+first asks for credentials. The failure, and `enable --help`, print how to make the role
 ready: a trust policy that lets the host's identity assume it. What the
 role may do is the policies the human attaches, and the guide says only
 that.
@@ -100,9 +100,10 @@ that.
 ~/.isotty/projects/<project-hash>.aws.yaml
 ```
 
-`up`, `attach` and `attach --target` compare the synced file with the pin
-and refuse to continue when they differ or when no pin exists. Accepting a
-change means running `isotty host aws enable` on the host again.
+`up` compares the synced file with the pin and refuses to continue when
+they differ or when no pin exists. While the VM runs, the daemon issues no
+credentials when they differ, and `isotty daemon status` says so. Accepting
+a change means running `isotty host aws enable` on the host again.
 
 ## VM Side
 
@@ -131,9 +132,10 @@ did, under the session name.
 
 ## Lifecycle
 
-Credentials are issued only while the host is attached. Credentials already
-in hand keep working until they expire, at most one hour after the human
-detached; after that every call fails until the next attach.
+Credentials are issued while the VM runs and the host's daemon can be
+reached. Credentials already in hand keep working until they expire, at
+most one hour after the host went away; after that every call fails until
+the host is back.
 
 ## Security Posture
 

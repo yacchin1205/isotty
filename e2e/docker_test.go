@@ -105,6 +105,7 @@ func TestDockerCarriesImagesBetweenTheVMAndAPinnedRegistry(t *testing.T) {
 	standIn := "#!/bin/sh\ncase \"$1\" in\n  version) echo " + platform + " ;;\n  load) cat > /tmp/loaded.tar ;;\n  save) cat /tmp/built.tar > \"$5\" ;;\n  *) echo \"unexpected docker $*\" >&2; exit 1 ;;\nesac\n"
 	h.mustVM("printf '%s' '" + standIn + "' | sudo tee /usr/local/bin/docker >/dev/null && sudo chmod 755 /usr/local/bin/docker")
 
+	h.waitForGateway()
 	s := h.attach()
 	h.waitFor("the attach to reach the session", 60*time.Second, func() bool {
 		select {

@@ -3,7 +3,7 @@
 IsoTTY can let the agent in the VM use Google APIs, Docs, Sheets, Forms,
 Google Cloud and the like, as a service account the human chose, without a
 credential of the service account ever entering the VM. The host keeps its
-key, or impersonates it with the human's gcloud login; the attach gateway
+key, or impersonates it with the human's gcloud login; the host gateway
 hands the VM short-lived access tokens for the scopes the human pinned.
 
 ## Problem
@@ -26,7 +26,7 @@ out of the host.
 ```text
 agent in VM --isotty-google exec-- tool --> googleapis.com
                  |
-                 +--GET /google/token--> 127.0.0.1:61001 ==ssh -R==> host gateway in `isotty attach`
+                 +--GET /google/token--> 127.0.0.1:61001 ==ssh -R==> host gateway in `isotty daemon`
                                                                        |
                                                  key in ~/.isotty/google/, or the human's gcloud login
 ```
@@ -94,8 +94,8 @@ its tokens. A `google.yaml` without it was written before impersonation and
 means `key`.
 
 `enable` issues one token and pins nothing when that fails, so a service
-account that cannot be used is found at `enable` and not at the next
-`attach`. The failure, and `enable --help`, print how to make the service
+account that cannot be used is found at `enable` and not when the agent
+first asks for a token. The failure, and `enable --help`, print how to make the service
 account ready: for a key, how to create one; for impersonation, the grant
 of `roles/iam.serviceAccountTokenCreator` on the service account to the
 human's account. The guide is not printed on every `enable`, which the
@@ -133,8 +133,9 @@ the accepted values on the host:
 ~/.isotty/projects/<project-hash>.google.yaml
 ```
 
-`up`, `attach` and `attach --target` compare the synced file with the pin
-and refuse to continue when they differ or when no pin exists. Accepting a
+`up` compares the synced file with the pin and refuses to continue when
+they differ or when no pin exists. While the VM runs, the daemon issues no
+tokens when they differ, and `isotty daemon status` says so. Accepting a
 change means running `isotty host google enable` on the host again.
 
 ## VM Side
@@ -171,9 +172,10 @@ authoritative record of what the service account did.
 
 ## Lifecycle
 
-Tokens are issued only while the host is attached. A token already in hand
-keeps working until it expires, at most one hour after the human detached;
-after that every call fails until the next attach. Nothing is queued.
+Tokens are issued while the VM runs and the host's daemon can be reached.
+A token already in hand keeps working until it expires, at most one hour
+after the host went away; after that every call fails until the host is
+back. Nothing is queued.
 
 ## Security Posture
 
@@ -185,6 +187,6 @@ after that every call fails until the next attach. Nothing is queued.
   widen them
 * the VM has no attached GCE service account, so no other Google credential
   is reachable from it
-* the gateway binds to `127.0.0.1` on both ends and lives only while attached
+* the gateway binds to `127.0.0.1` on both ends and is up while the VM runs; `isotty stop` takes it down
 * a token that leaks out of the VM is useful for at most an hour and only
   within the same bounds

@@ -18,6 +18,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 )
 
 const vmUser = "isotty"
@@ -70,6 +72,12 @@ func newHarness(t *testing.T) *harness {
 	h.container = fmt.Sprintf("isotty-e2e-%d", os.Getpid())
 	h.run(root, "docker", "run", "-d", "--rm", "--name", h.container, "-p", "127.0.0.1:0:22", "-e", "AUTHORIZED_KEY="+strings.TrimSpace(string(publicKey)), "isotty-e2e-vm")
 	t.Cleanup(func() {
+		// The daemon `up` started holds the VM; it goes before the VM does.
+		daemonStop := exec.Command(h.bin, "daemon", "stop")
+		daemonStop.Env = h.env
+		if out, err := daemonStop.CombinedOutput(); err != nil {
+			t.Errorf("isotty daemon stop: %v\n%s", err, out)
+		}
 		_ = exec.Command("docker", "rm", "-f", h.container).Run()
 		stop := exec.Command("mutagen", "daemon", "stop")
 		stop.Env = append(os.Environ(), "MUTAGEN_DATA_DIRECTORY="+filepath.Join(h.home, "mutagen"))
@@ -236,4 +244,33 @@ func (s *session) wait(t *testing.T, timeout time.Duration) error {
 		t.Fatalf("the attach did not end within %s\n%s", timeout, s.output.String())
 		return nil
 	}
+}
+
+// gatewayHeld tells whether the daemon holds the gateway's VM port.
+func (h *harness) gatewayHeld() bool {
+	_, err := h.vm(gateway.PortFreeCommand(0))
+	return err != nil
+}
+
+// waitForGateway waits for the daemon to say it holds the project's
+// gateway, and checks the VM agrees. The port alone is no sign: the daemon
+// binds it for a moment as it checks that it is free.
+func (h *harness) waitForGateway() {
+	h.t.Helper()
+	h.waitFor("the daemon to hold the gateway", 90*time.Second, func() bool {
+		return strings.Contains(h.daemonStatus(), "gateway: connected")
+	})
+	if !h.gatewayHeld() {
+		h.t.Fatalf("the daemon says it holds the gateway, but the VM port is free:\n%s", h.daemonStatus())
+	}
+}
+
+func (h *harness) daemonStatus() string {
+	cmd := exec.Command(h.bin, "daemon", "status")
+	cmd.Env = h.env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }

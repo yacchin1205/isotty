@@ -17,7 +17,7 @@ of time.
 ## Model
 
 ```text
-agent in VM: ssh pi --ProxyCommand isotty-ssh pi--> 127.0.0.1:61001/ssh/pi ==ssh -R==> host gateway in `isotty attach` --> raspberrypi.local:22
+agent in VM: ssh pi --ProxyCommand isotty-ssh pi--> 127.0.0.1:61001/ssh/pi ==ssh -R==> host gateway in `isotty daemon` --> raspberrypi.local:22
 ```
 
 * The host relays TCP only, to the machine the human named and nowhere
@@ -27,7 +27,7 @@ agent in VM: ssh pi --ProxyCommand isotty-ssh pi--> 127.0.0.1:61001/ssh/pi ==ssh
   VM's `ssh` reaches it through a `ProxyCommand` that turns the request
   into a byte stream with an HTTP upgrade. It needs no port of its own in
   the VM, and it exists exactly while the gateway does, that is while
-  `isotty attach` runs.
+  the VM runs and the host's daemon can reach it.
 * Each machine gets a key of its own for the project, made on the host at
   `add` and given to the VM, as a [child VM](CHILD.md)'s key is: it opens
   that one machine, under the account the human named. It is ed25519, or

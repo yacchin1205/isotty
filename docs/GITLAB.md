@@ -11,7 +11,7 @@ same and are not repeated.
 ## Model
 
 ```text
-agent in VM --isotty-gitlab--> 127.0.0.1:61001/gitlab ==ssh -R==> host gateway in `isotty attach` --> the instance
+agent in VM --isotty-gitlab--> 127.0.0.1:61001/gitlab ==ssh -R==> host gateway in `isotty daemon` --> the instance
 ```
 
 * The relay is mounted under `/gitlab`. It shares its mechanics with the

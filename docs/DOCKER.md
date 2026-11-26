@@ -16,10 +16,10 @@ has a second problem: the host is on the VPN and the VM is not.
 ## Model
 
 ```text
-agent in VM --isotty-docker pull--> 127.0.0.1:61001/docker ==ssh -R==> host gateway in `isotty attach` --> the host's `docker pull`
+agent in VM --isotty-docker pull--> 127.0.0.1:61001/docker ==ssh -R==> host gateway in `isotty daemon` --> the host's `docker pull`
                  `docker load` in the VM <-- blobs the VM lacks
 
-agent in VM --isotty-docker push--> 127.0.0.1:61001/docker ==ssh -R==> host gateway in `isotty attach` --> the host's `docker push`
+agent in VM --isotty-docker push--> 127.0.0.1:61001/docker ==ssh -R==> host gateway in `isotty daemon` --> the host's `docker push`
                   `docker save` in the VM --> blobs the host lacks
 ```
 
@@ -100,7 +100,8 @@ would leave it: without the tag.
 
 One operation runs at a time, since each moves references and puts them
 back. When putting back fails, the VM already has its answer, so the failure
-is reported when the attach ends, with the reference that was left.
+is reported in `isotty daemon status` and `~/.isotty/daemon.log`, with the
+reference that was left.
 
 ## What travels, and what each side keeps of it
 
@@ -139,12 +140,12 @@ The blobs are all that either operation leaves behind. On the host:
 * they are kept per project, so a VM can only have pushed blobs it sent
   itself and only receives what was pulled for it
 * a blob is removed `keep` (four hours unless `~/.isotty/docker.yaml` says
-  otherwise) after its last use; an attach removes what has expired when it
-  begins and every ten minutes while it is open
+  otherwise) after its last use; the host daemon removes what has expired
+  when it connects to the running VM and every ten minutes while the VM runs
 * `isotty down` removes the project's blobs
 * they live under the OS's temporary directory (`$TMPDIR`, else `/tmp`), in
-  `isotty-<uid>/docker/<project-hash>/`, so the OS clears what no attach
-  came back for; the `isotty-<uid>` directory is entered by its owner only,
+  `isotty-<uid>/docker/<project-hash>/`, so the OS clears what no running
+  VM came back for; the `isotty-<uid>` directory is entered by its owner only,
   and a directory of that name that someone else made is refused
 
 In the VM, the client keeps what it received under the same rules and the
@@ -190,9 +191,9 @@ the host's login may not read or write, shows up at the first pull or push,
 with what the host's Docker said.
 
 The accepted list is also kept on the host, in
-`~/.isotty/projects/<project-hash>.docker.yaml`, and `up` and `attach`
-refuse to continue when the synced file differs from it, as described for
-GitHub in [GITHUB.md](GITHUB.md#pin).
+`~/.isotty/projects/<project-hash>.docker.yaml`; `up` refuses to continue
+when the synced file differs from it, and the daemon does not serve the
+relay then, as described for GitHub in [GITHUB.md](GITHUB.md#pin).
 
 There is no credential file. The host needs a running Docker that is logged
 in to the registries of the pinned repositories.
@@ -248,8 +249,9 @@ sides read the archive layout Docker has written since version 25.
 
 ## Lifecycle
 
-The relay lives as long as the attach session. A pull or a push while
-detached fails within seconds with an error that says so. A pull that
+The relay is up while the VM runs and the host's daemon can reach it. A
+pull or a push while the host is away fails within seconds with an error
+that says so. A pull that
 breaks off, when the host sleeps or goes away mid-way, fails with nothing
 loaded; the blobs that arrived whole are kept, and pulling again fetches the
 rest. A push whose host goes away before answering fails without knowing
@@ -272,4 +274,4 @@ what the host no longer holds.
   does not run it; which repository and tag it goes to is the host's
   decision, never the archive's
 * every push is in the audit log with the digest the registry has
-* the gateway binds to `127.0.0.1` on both ends and lives only while attached
+* the gateway binds to `127.0.0.1` on both ends and is up while the VM runs; `isotty stop` takes it down

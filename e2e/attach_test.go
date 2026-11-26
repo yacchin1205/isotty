@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/yazawa/isotty/internal/isotty/host/gateway"
 )
 
 // typedReaches types a command into the attach and waits for the file it
@@ -59,7 +57,7 @@ func TestAttachKeepsTheSessionInTmux(t *testing.T) {
 
 	// A second terminal works in the same session and leaves nothing
 	// behind when it goes.
-	second := h.attach("--no-host")
+	second := h.attach()
 	typedReaches(t, h, second, "touch second-terminal", "second-terminal")
 	sessions := h.mustVM("tmux list-sessions -F '#{session_name} #{session_group}'")
 	if strings.Count(sessions, "isotty\n") != 2 || strings.Count(sessions, "\n") != 2 {
@@ -130,19 +128,19 @@ func TestAttachWithTmuxOffIsAPlainShell(t *testing.T) {
 	h.isotty("down")
 }
 
-// TestAttachWaitsOutASessionThatDropped guards the attach after the host
-// changed networks: the session that dropped holds the gateway's VM port
-// until sshd notices, and the attach says so and waits for the port instead
-// of failing on the forward.
-func TestAttachWaitsOutASessionThatDropped(t *testing.T) {
+// TestDaemonHoldsTheGatewayWithoutATerminal guards the host daemon: it
+// holds the gateway once `up` has handed it the project, with no terminal
+// open; it waits out a connection that dropped and still holds the
+// gateway's VM port until sshd notices, instead of failing on the forward;
+// and an attach starts it when it is not running.
+func TestDaemonHoldsTheGatewayWithoutATerminal(t *testing.T) {
 	h := newHarness(t)
 	h.isotty("up", "--no-attach")
+	h.waitForGateway()
 
-	gatewayPortHeld := func() bool {
-		_, err := h.vm(gateway.PortFreeCommand(0))
-		return err != nil
-	}
-	// To the VM, a dropped session is an ssh that still holds the port.
+	h.isotty("daemon", "stop")
+	h.waitFor("the gateway to go with the daemon", 60*time.Second, func() bool { return !h.gatewayHeld() })
+	// To the VM, a dropped connection is an ssh that still holds the port.
 	dropped := exec.Command("ssh", "-p", h.port, "-i", filepath.Join(h.root, "key"),
 		"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
 		"-o", "ExitOnForwardFailure=yes", "-N", "-R", "127.0.0.1:61001:127.0.0.1:9", vmUser+"@127.0.0.1")
@@ -150,32 +148,18 @@ func TestAttachWaitsOutASessionThatDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = dropped.Process.Kill() })
-	h.waitFor("the dropped session to hold the gateway port", 30*time.Second, gatewayPortHeld)
+	h.waitFor("the dropped connection to hold the gateway port", 30*time.Second, h.gatewayHeld)
 
+	// The attach starts the daemon, which waits for the port.
 	s := h.attach()
-	h.waitFor("the attach to say it waits for the port", 60*time.Second, func() bool {
-		return strings.Contains(s.output.String(), "VM port 61001 is still taken")
+	h.waitFor("the daemon to wait for the VM port", 60*time.Second, func() bool {
+		return strings.Contains(h.daemonStatus(), "waiting for the VM port")
 	})
-	if _, err := h.vm("tmux has-session -t isotty"); err == nil {
-		t.Fatal("the attach reached the session while the gateway port was held")
-	}
-
-	// sshd notices: the port is free, and the attach goes on to hold it.
+	// sshd notices: the port is free, and the daemon goes on to hold it.
 	if err := dropped.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	h.waitFor("the attach to reach the session", 60*time.Second, func() bool {
-		select {
-		case err := <-s.done:
-			t.Fatalf("the attach ended before reaching the session: %v\n%s", err, s.output.String())
-		default:
-		}
-		out, err := h.vm("tmux list-sessions -F '#{session_name} #{session_attached}'")
-		return err == nil && strings.TrimSpace(out) == "isotty 1"
-	})
-	if !gatewayPortHeld() {
-		t.Fatal("the attach should forward the gateway on the port it waited for")
-	}
+	h.waitForGateway()
 	h.mustVM("tmux detach-client -s isotty")
 	if err := s.wait(t, 30*time.Second); err != nil {
 		t.Fatalf("attach: %v", err)
@@ -187,7 +171,7 @@ func TestAttachWaitsOutASessionThatDropped(t *testing.T) {
 // TestAttachReconnectsAfterADrop guards an attach through a network that is
 // gone for a while: the session that ran for minutes drops, the tries that
 // follow fail while the VM cannot be reached, and a later one returns to
-// the same tmux session with the gateway forwarded again. The timings are
+// the same tmux session, while the daemon holds the gateway again. The timings are
 // the real ones, so it takes some four minutes.
 func TestAttachReconnectsAfterADrop(t *testing.T) {
 	h := newHarness(t)
@@ -228,9 +212,9 @@ func TestAttachReconnectsAfterADrop(t *testing.T) {
 	if strings.Contains(out, "(3/5)") {
 		t.Fatalf("tried more than it needed:\n%s", out)
 	}
-	if _, err := h.vm(gateway.PortFreeCommand(0)); err == nil {
-		t.Fatal("the attach that came back should forward the gateway again")
-	}
+	// The daemon's connection was cut with the terminal's and comes back
+	// on its own.
+	h.waitForGateway()
 	typedReaches(t, h, s, "touch after-drop", "after-drop")
 
 	h.mustVM("tmux detach-client -s isotty")

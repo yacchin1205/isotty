@@ -52,7 +52,7 @@ func TestSyncClient(t *testing.T) {
 	}
 
 	write(`{"status":"scanning","done":false}`, 2*time.Minute)
-	if out, err := runSyncClient(t, state, "status"); err != nil || !strings.Contains(out, "syncing: scanning; not updated for 1") || !strings.Contains(out, "the host is not attached") {
+	if out, err := runSyncClient(t, state, "status"); err != nil || !strings.Contains(out, "syncing: scanning; not updated for 1") || !strings.Contains(out, "the host is not reachable") {
 		t.Fatalf("status of an old state = %q, %v", out, err)
 	}
 

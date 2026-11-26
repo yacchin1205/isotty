@@ -5,9 +5,9 @@ description: Read the issues, wiki pages and attachments of this project's Redmi
 
 # isotty-redmine
 
-This VM holds no Redmine credential. The Redmine is reached through a
-relay that `isotty attach` provides on the host, for the projects pinned
-in `/workspace/.isotty/redmine.yaml` only, and for reading only.
+This VM holds no Redmine credential. The Redmine is reached through a relay
+that the isotty daemon on the host provides, for the projects pinned in
+`/workspace/.isotty/redmine.yaml` only, and for reading only.
 
 ```
 isotty-redmine status

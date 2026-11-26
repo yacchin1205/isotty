@@ -18,10 +18,26 @@ import (
 )
 
 // minimumVersion is the oldest opeco-link release whose CLI offers what
-// the setup relies on: `--qr-port`, `BROWSER`, and hook tools that take the
-// words for an agent without a session. The VM gets the latest release,
-// which is the one opeco keeps compatible with its service.
-const minimumVersion = "2026.11.0"
+// the setup relies on: `--qr-port`, `BROWSER`, hook tools that take the
+// words for an agent without a session, and `session_dir`. The VM gets the
+// latest release, which is the one opeco keeps compatible with its service.
+const minimumVersion = "2026.11.1"
+
+// SessionDir keeps the VM's one opeco session when the host asks for it
+// (persist in ~/.isotty/opeco.yaml): on the VM's disk, outside the synced
+// workspace and the agents' saved homes, so it lives and dies with the VM.
+const SessionDir = "/var/lib/isotty/opeco"
+
+// SessionClientPath tells the session that the VM starts or stops, or
+// closes it; see assets/isotty-opeco-session.sh.
+const SessionClientPath = "/usr/local/bin/isotty-opeco-session"
+
+// unpersist closes the kept session and removes what keeping it installed,
+// for a VM whose host no longer asks for it.
+const unpersist = `if [ -x "$session_client" ]; then "$session_client" close; fi
+rm -f "$HOME/.opeco/config.json"
+sudo rm -rf "$session_dir" "$session_client"
+if [ -f "$boot_unit" ]; then sudo systemctl disable isotty-opeco-boot.service; sudo rm -f "$boot_unit"; sudo systemctl daemon-reload; fi`
 
 // pairingReminder is what an agent is told as a request arrives while it
 // has no opeco session. It excuses only a quick question: asked to judge by
@@ -66,6 +82,9 @@ var setupScript string
 //go:embed assets/opeco-remove.sh
 var removeScript string
 
+//go:embed assets/isotty-opeco-session.sh
+var sessionScript string
+
 // Active reports whether the VM gets opeco: unless it is turned off, once
 // there is an agent to use it.
 func Active(agents []string, settings Settings) bool {
@@ -78,7 +97,7 @@ func Active(agents []string, settings Settings) bool {
 // BROWSER, and installs opeco's skill. qrPort is the port the project state holds for opeco. The script
 // travels base64-encoded so no shell quoting applies to it, after the
 // commands that put the merge script it runs in the VM.
-func SetupCommand(agents []string, qrPort int) string {
+func SetupCommand(agents []string, qrPort int, persist bool) string {
 	flag := func(agent string) string {
 		if slices.Contains(agents, agent) {
 			return "1"
@@ -94,6 +113,11 @@ func SetupCommand(agents []string, qrPort int) string {
 		"__CLAUDE_PAIRING_HOOKS__", base64.StdEncoding.EncodeToString([]byte(pairingHooks("claude"))),
 		"__CODEX_PAIRING_HOOKS__", base64.StdEncoding.EncodeToString([]byte(pairingHooks("codex"))),
 		"__MERGE_SCRIPT__", gateway.MergeScriptPath,
+		"__PERSIST__", boolFlag(persist),
+		"__SESSION_SCRIPT__", base64.StdEncoding.EncodeToString([]byte(renderSession(sessionScript))),
+		"__UNPERSIST__", unpersist,
+		"__SESSION_DIR__", SessionDir,
+		"__SESSION_CLIENT__", SessionClientPath,
 	).Replace(setupScript)
 	return runWithMergeScript(script)
 }
@@ -102,7 +126,33 @@ func SetupCommand(agents []string, qrPort int) string {
 // agent: the saved state of an agent brings the registration back into a
 // new VM, so turning opeco off means removing it on every `up`.
 func RemoveCommand() string {
-	return runWithMergeScript(strings.ReplaceAll(removeScript, "__MERGE_SCRIPT__", gateway.MergeScriptPath))
+	return runWithMergeScript(strings.NewReplacer(
+		"__MERGE_SCRIPT__", gateway.MergeScriptPath,
+		"__UNPERSIST__", unpersist,
+		"__SESSION_DIR__", SessionDir,
+		"__SESSION_CLIENT__", SessionClientPath,
+	).Replace(removeScript))
+}
+
+func renderSession(template string) string {
+	return strings.NewReplacer("__SESSION_DIR__", SessionDir, "__EVENT_LOG__", gateway.VMEventLogPath).Replace(template)
+}
+
+func boolFlag(on bool) string {
+	if on {
+		return "1"
+	}
+	return "0"
+}
+
+// SessionCommand runs isotty-opeco-session as the VM user, when the VM has
+// it: status with the text, or close.
+func SessionCommand(args ...string) string {
+	quoted := make([]string, len(args))
+	for i, arg := range args {
+		quoted[i] = "'" + strings.ReplaceAll(arg, "'", `'"'"'`) + "'"
+	}
+	return fmt.Sprintf("if [ -x %s ]; then %s %s; fi", SessionClientPath, SessionClientPath, strings.Join(quoted, " "))
 }
 
 func runWithMergeScript(script string) string {

@@ -36,12 +36,16 @@ func newIdleVM(t *testing.T, seconds int) *idleVM {
 		"__ISOTTY_EVENTS__", vm.events,
 		// Booted long ago: a runner may have booted minutes before the test.
 		"__ISOTTY_KERNEL_STAT__", filepath.Join(dir, "stat"),
+		"__ISOTTY_OPECO_SESSION__", filepath.Join(dir, "opeco-session"),
+		"__ISOTTY_OPECO_DIR__", dir,
 	).Replace(idleClient)
 	bin := filepath.Join(dir, "bin")
 	for path, content := range map[string]string{
 		vm.script:                       script,
 		filepath.Join(dir, "stat"):      "cpu 0 0 0 0\nbtime 1000000000\n",
 		filepath.Join(bin, "systemctl"): "#!/bin/sh\necho \"$@\" >> " + vm.poweroffs + "\n",
+		// sudo -u <owner> -H runs the rest as the owner; here, as the test.
+		filepath.Join(bin, "sudo"): "#!/bin/sh\nshift 3\nexec \"$@\"\n",
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -280,10 +284,41 @@ func TestIdleHooks(t *testing.T) {
 			t.Errorf("%s hooks: %s", agent, hooks)
 		}
 	}
-	command := IdleStopCommand([]string{"claude"}, 30*time.Minute)
+	command := IdleStopCommand([]string{"claude"}, 30*time.Minute, "/usr/local/bin/isotty-opeco-session", "/var/lib/isotty/opeco")
 	for _, w := range []string{"enable --now isotty-idle.timer", "hooks \"$HOME\"/.claude/settings.json", "'" + IdleClientPath + " hook claude'"} {
 		if !strings.Contains(command, w) {
 			t.Errorf("command lacks %s", w)
 		}
+	}
+}
+
+// A VM that keeps an opeco session says on its card why it powers off.
+func TestIdleStopTellsTheOpecoSession(t *testing.T) {
+	vm := newIdleVM(t, 1800)
+	told := filepath.Join(filepath.Dir(vm.script), "told")
+	if err := os.WriteFile(filepath.Join(filepath.Dir(vm.script), "opeco-session"), []byte("#!/bin/sh\necho \"$@\" > "+told+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	vm.age(time.Hour)
+	vm.check()
+	data, err := os.ReadFile(told)
+	if err != nil || !strings.HasPrefix(string(data), "status VM powered off: no agent work for") {
+		t.Fatalf("told %q %v", data, err)
+	}
+	if !vm.poweredOff() {
+		t.Fatal("did not power off")
+	}
+}
+
+// An opeco session that cannot be told holds up nothing: the VM powers off.
+func TestIdleStopGoesOnWhenOpecoFails(t *testing.T) {
+	vm := newIdleVM(t, 1800)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(vm.script), "opeco-session"), []byte("#!/bin/sh\necho offline >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	vm.age(time.Hour)
+	vm.check()
+	if !vm.poweredOff() {
+		t.Fatal("a failing opeco session held the power-off up")
 	}
 }

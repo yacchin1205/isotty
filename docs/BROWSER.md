@@ -1,6 +1,6 @@
 # Browser Design
 
-The VM has no display, but the human attached to it has a browser. IsoTTY
+The VM has no display, but the human on the host has a browser. IsoTTY
 lets the agent open a URL there: `isotty-open <url>` in the VM asks the host
 gateway, which runs the host desktop's opener. The shell `isotty attach`
 opens has `BROWSER` set to the command, so `gh`, Python's `webbrowser`
@@ -23,7 +23,7 @@ Any `http` or `https` URL. The tab appears in front of the human, who is
 the one to judge it and the one who can close it; a URL that should not have
 been opened is a mistake that ends there. Other schemes are refused, since
 the host's opener would hand them to other applications (`file:`,
-`vscode:`, `mailto:`). A refusal, like a host that is not attached, tells
+`vscode:`, `mailto:`). A refusal, like a host that cannot be reached, tells
 the agent to put the URL in its report instead.
 
 Every accepted open is recorded in the VM event log as `open-url`, so
@@ -35,9 +35,9 @@ Every accepted open is recorded in the VM event log as `open-url`, so
 same browser. The workspace is synced to the host (see [SYNC.md](SYNC.md)),
 so the file is on the human's machine already: the gateway flushes the sync
 session, maps the path onto the project directory, and opens an `http` URL
-under which the attach serves the host's copy. No server runs in the VM and
-nothing leaves the machine, which is why the agent is told to show figures
-and reports this way rather than through a service.
+under which the host daemon serves the host's copy. No server runs in the
+VM and nothing leaves the machine, which is why the agent is told to show
+figures and reports this way rather than through a service.
 
 The file is served, not handed to the desktop opener: a `file:` URL would
 be a double-click, and the VM chooses the file's name, content and mode,
@@ -81,8 +81,8 @@ there: a widget is shown by its text, and an interactive plot's HTML shows
 only what it holds without one. The file server listens on a loopback port
 of its own that is not forwarded into the VM, answers only requests
 addressed to that port, and puts a random prefix in its paths; it lives as
-long as the attach. The VM cannot open that server by `url`, only a file
-by its path.
+long as the daemon's connection to the VM. The VM cannot open that server
+by `url`, only a file by its path.
 
 The path must be under the workspace as the VM names it, and the file must
 be a regular file under the project as the host finds it: a symlink that
@@ -92,9 +92,8 @@ again and serves the file it checked. A file the sync keeps on the host
 (see the ignores in [SYNC.md](SYNC.md): `.env`, keys, `.ssh/`, the audit
 archives and the like) is not on the VM's side and is reported as not on
 the host, so the VM learns nothing about it. No refusal names a host path.
-`attach --target` has no project directory on the host, so it opens URLs
-only. The event log records the file's real path as the VM names it,
-never the server's URL.
+The event log records the file's real path as the VM names it, never the
+server's URL.
 
 ## Review
 
@@ -125,9 +124,9 @@ It names the place as the file was then; `file_sha256` says whether the
 file has changed since, and the quote finds the place again when it has.
 
 `.isotty/` is synced, so the comments reach the VM as files and no channel
-of their own is needed; they reach it after a detach too, with the next
-sync. `isotty-open reviews [--all] [<path>]` in the VM lists them by file
-and place, says when the file changed since and where the quoted text is
+of their own is needed; they reach it with the next sync.
+`isotty-open reviews [--all] [<path>]` in the VM lists them by file and
+place, says when the file changed since and where the quoted text is
 now, and leaves resolved ones out unless asked. The host writes these
 files, through the viewer; the agent's skill tells it to read them and
 leave them alone, so that the two never edit the same file and the sync
@@ -148,13 +147,11 @@ human's words and are not in the audit log, which records what the VM did.
 ## Setup
 
 `isotty up` installs `/usr/local/bin/isotty-open` and the `isotty-open`
-skill for each configured agent. `isotty attach` serves `/open` on the
-gateway and starts the session shell with `BROWSER=/usr/local/bin/isotty-open`,
-so the variable exists exactly when the opener works; `attach --no-host`
-has no gateway, no opener and no `BROWSER`. In tmux the attach that holds
-the gateway also sets `BROWSER` in the session environment, for the windows
-opened later; a shell that was already running keeps what it had, and a
-click there fails plainly while no gateway attach is alive.
+skill for each configured agent. The host daemon serves `/open` on the
+gateway while the VM runs, and `isotty attach` starts the session shell with
+`BROWSER=/usr/local/bin/isotty-open`; in tmux it also sets `BROWSER` in the
+session environment, for the windows opened later. A click while the
+host's daemon cannot reach the VM fails plainly, as `isotty-open` does.
 
 [opeco](OPECO.md) pairs its device through the same path: the QR page it
 serves in the VM is one more URL `isotty-open` opens on the host.

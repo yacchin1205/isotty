@@ -3,7 +3,7 @@
 the IsoTTY gateway.
 
 `ssh <name>` runs `isotty-ssh connect <name>` as its ProxyCommand: the
-gateway, which runs on the host inside `isotty attach`, opens a TCP
+gateway, which runs in the host's isotty daemon, opens a TCP
 connection to the machine and this command carries the SSH session over it
 on its standard input and output. `isotty-ssh list` names the machines.
 """
@@ -38,7 +38,7 @@ def connect(name):
         sock = socket.create_connection(GATEWAY, timeout=30)
     except OSError as e:
         fail(f'the gateway at {GATEWAY[0]}:{GATEWAY[1]} is not reachable ({e}); '
-             'it is there only while the host is attached with `isotty attach`')
+             'the host is asleep or offline, or its isotty daemon is not running; tell the human')
     sock.sendall((f'GET /ssh/{name} HTTP/1.1\r\nHost: {GATEWAY[0]}:{GATEWAY[1]}\r\n'
                   'Connection: Upgrade\r\nUpgrade: isotty-ssh\r\n\r\n').encode())
     head, rest = read_response(sock)

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Tell how the sync of /workspace from the host stands.
 
-The attach that holds the host gateway writes the state to
-__ISOTTY_SYNC_STATE__ every __ISOTTY_SYNC_INTERVAL__ seconds until the first
-sync is done. While no such attach runs, nobody writes it, and a state older
-than __ISOTTY_SYNC_STALE__ seconds says only how it stood then.
+The host's isotty daemon writes the state to __ISOTTY_SYNC_STATE__ every
+__ISOTTY_SYNC_INTERVAL__ seconds while it holds this VM, until the first sync
+is done. While the host is asleep or offline, or its daemon is not running,
+nobody writes it, and a state older than __ISOTTY_SYNC_STALE__ seconds says
+only how it stood then.
 """
 import argparse
 import json
@@ -35,7 +36,8 @@ def describe(state, age):
     if state.get('expected_files'):
         line += f" ({state['received_files']}/{state['expected_files']} files staged)"
     if age > STALE:
-        line += f'; not updated for {int(age)} seconds, since the host is not attached; waiting for it to attach again'
+        line += (f'; not updated for {int(age)} seconds, since the host is not reachable '
+                 '(asleep, offline, or its isotty daemon not running); waiting for it to come back')
     return line
 
 

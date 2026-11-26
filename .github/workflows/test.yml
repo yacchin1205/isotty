@@ -60,6 +60,6 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run end-to-end tests
-        run: go test -tags e2e -count=1 -v -timeout 20m ./e2e/
+        run: go test -tags e2e -count=1 -v -timeout 30m ./e2e/
         env:
           ISOTTY_E2E: "1"

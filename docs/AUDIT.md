@@ -117,4 +117,4 @@ archive as `audit logs` renders a running VM.
 The archive is a copy of what the VM held at that moment, not evidence
 against the VM: its user has `sudo`, so the log could have been changed
 before `down`. Keeping a trail the VM cannot touch would mean streaming it
-to the host during `attach`, which this does not do.
+to the host while the VM runs, which this does not do.

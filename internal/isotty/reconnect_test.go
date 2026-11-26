@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	runtimecfg "github.com/yazawa/isotty/internal/isotty/runtime"
 	vmcfg "github.com/yazawa/isotty/internal/isotty/vm"
 )
 
@@ -58,7 +57,7 @@ func runFakeSession(t *testing.T) (error, string) {
 // as vmStatus does.
 func runFakeSessionOn(t *testing.T, vmStatus func() (string, error)) (error, string) {
 	var out bytes.Buffer
-	err := (&App{stdout: &out}).runSession(nil, runtimecfg.RemoteTarget{}, false, vmStatus)
+	err := (&App{stdout: &out}).runSession(interactiveSSH, nil, vmStatus)
 	return err, out.String()
 }
 

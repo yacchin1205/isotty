@@ -16,5 +16,6 @@ isotty-sync wait     # returns once the first sync is done
 
 While the sync is not done, each prompt carries a line saying so. Do not
 conclude a file is missing, and do not create one in its place, before
-`isotty-sync wait` has returned. `wait` keeps waiting while the host is not
-attached and says so; if your command runner times out, run it again.
+`isotty-sync wait` has returned. `wait` keeps waiting while the host is
+asleep or offline, or its isotty daemon is not running, and says so; if your
+command runner times out, run it again.

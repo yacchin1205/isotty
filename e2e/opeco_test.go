@@ -111,35 +111,20 @@ func (h *harness) holdBusyQRPorts() {
 	}
 }
 
-// attachBinds reports whether an attach holds the host port: it attaches,
-// tries the port and detaches.
-func (h *harness) attachBinds(port string) bool {
-	h.t.Helper()
-	s := h.attach()
-	h.waitFor("the attach to reach the session", 60*time.Second, func() bool {
-		select {
-		case err := <-s.done:
-			h.t.Fatalf("the attach ended before reaching the session: %v\n%s", err, s.output.String())
-		default:
-		}
-		out, err := h.vm("tmux list-sessions -F '#{session_name} #{session_attached}'")
-		return err == nil && strings.TrimSpace(out) == "isotty 1"
-	})
-	conn, dialErr := net.DialTimeout("tcp", "127.0.0.1:"+port, 5*time.Second)
-	if dialErr == nil {
-		conn.Close()
+// binds tells whether something holds the host port: the daemon's forward.
+func binds(port string) bool {
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+port, 5*time.Second)
+	if err != nil {
+		return false
 	}
-	h.mustVM("tmux detach-client -s isotty")
-	if err := s.wait(h.t, 30*time.Second); err != nil {
-		h.t.Fatalf("attach: %v", err)
-	}
-	return dialErr == nil
+	conn.Close()
+	return true
 }
 
 // TestOpecoDisableTakesItOutOfTheVM guards the switch: opeco comes with an
 // agent unless the project turns it off, and with it the reminder to pair
 // that an agent without a session gets as a request arrives. Turning it off
-// takes away what an earlier up installed, in the VM and on the host's side of the attach,
+// takes away what an earlier up installed, in the VM and on the host's side, the daemon's forward,
 // while what else is in the agents' settings stays. Turning it on again
 // brings it back.
 func TestOpecoDisableTakesItOutOfTheVM(t *testing.T) {
@@ -164,9 +149,7 @@ func TestOpecoDisableTakesItOutOfTheVM(t *testing.T) {
 			t.Fatalf("%s: an agent without a session is told %q as a request arrives, want to be told to pair", settings, said)
 		}
 	}
-	if !h.attachBinds(qrPort) {
-		t.Fatalf("the attach should forward the QR port %s", qrPort)
-	}
+	h.waitFor("the daemon to forward the QR port "+qrPort, 90*time.Second, func() bool { return binds(qrPort) })
 	// A server of the human's own, beside opeco's.
 	h.mustVM("python3 /usr/local/share/isotty/mcp-merge.py mcp-json " + vmHome + "/.claude.json mine '{}' /bin/true")
 
@@ -178,9 +161,7 @@ func TestOpecoDisableTakesItOutOfTheVM(t *testing.T) {
 		}
 	}
 	h.mustVM(`grep -q '"mine"' ` + vmHome + "/.claude.json")
-	if h.attachBinds(qrPort) {
-		t.Fatalf("the attach still forwards the QR port %s", qrPort)
-	}
+	h.waitFor("the daemon to stop forwarding the QR port "+qrPort, 90*time.Second, func() bool { return !binds(qrPort) })
 
 	h.isotty("host", "opeco", "enable")
 	h.isotty("up", "--no-attach")

@@ -5,8 +5,8 @@ description: Create, change and delete DNS records under this project's names wi
 
 # isotty-dns
 
-This VM holds no cloud credential. DNS records change through a gateway
-that `isotty attach` provides on the host; the host calls Cloud DNS with the
+This VM holds no cloud credential. DNS records change through a gateway that
+the isotty daemon on the host provides; the host calls Cloud DNS with the
 human's own login, only under the names pinned in
 `/workspace/.isotty/dns.yaml`.
 
@@ -45,10 +45,12 @@ as one change; the values you give are the whole record. `list` prints
   after the project. Delete what you no longer need and say in your report
   which records you left.
 - Do not edit `/workspace/.isotty/dns.yaml`. It is synced to the host, and
-  the host refuses to attach when it differs from what the human pinned.
+  the host stops serving DNS changes while it differs from what the human
+  pinned; `isotty daemon status` there says why.
 
-## Lifecycle: changes go through the attached host
+## Lifecycle: changes go through the host while it is reachable
 
-Changes work only while the host is attached. When the human detaches or
-their machine sleeps, every command fails within seconds with an explicit
-error. Nothing is queued; retry after re-attach, and say so in your report.
+Changes work only while the host is reachable. When the human's machine
+sleeps or goes offline, or its isotty daemon is not running, every command
+fails within seconds with an explicit error. Nothing is queued; retry once
+the host is back, and say so in your report.

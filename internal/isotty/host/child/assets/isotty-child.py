@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create and use child VMs through the IsoTTY gateway.
 
-The gateway runs on the host inside `isotty attach` and creates VMs next to
+The gateway runs in the host's isotty daemon and creates VMs next to
 this one with the human's gcloud login, within what is pinned in
 .isotty/children.yaml. A child is reachable over SSH from this VM only, with
 a key that exists only here, and is deleted when this VM stops or goes down.
@@ -20,8 +20,8 @@ KEY_DIR = os.path.expanduser('~/.ssh/isotty-child')
 
 UNREACHABLE = (
     'isotty-child: the child VM gateway at {gateway} is not reachable ({reason}). '
-    'It is available only while the host is attached with `isotty attach`. '
-    'Retry after re-attach.'
+    'The host is asleep or offline, or its isotty daemon is not running; nothing is queued. '
+    'Keep your work under /workspace, retry once the host is back, and tell the human.'
 )
 
 

@@ -68,13 +68,15 @@ Prepare the environment without attaching:
 isotty up --no-attach
 ```
 
-Attach later when you are ready to work in the VM. This also enables any configured port forwards:
+Attach later when you are ready to work in the VM:
 
 ```bash
 isotty attach
 ```
 
-The shell runs in a tmux session named `isotty`, so detaching (`C-b d`) or losing the connection leaves the agents running, and the next `isotty attach` returns to them. `tmux: false` in `~/.isotty/attach.yaml` gives a plain shell instead.
+The shell runs in a tmux session named `isotty`, so detaching (`C-b d`) or losing the connection leaves the agents running, and the next `isotty attach` returns to them. `tmux: false` in `~/.isotty/attach.yaml` gives a plain shell instead. Any number of terminals can attach at once.
+
+The port forwards and the services the host offers the agent, ep_weave, GitHub and the others below, are held by `isotty daemon`, one per host user, which `up` starts (on a Mac as a launchd agent). They are up while the VM runs, attached or not, as long as the host is awake and online; `isotty stop` takes them down. `isotty daemon status` shows how each project is held and what went wrong last, and the daemon logs to `~/.isotty/daemon.log`. See [Forward design](docs/FORWARD.md#the-host-daemon).
 
 Stop the VM for the night and keep everything else:
 
@@ -85,6 +87,16 @@ isotty stop
 The VM stays on its disk with the workspace, the installed tools and the agents' sessions, but it no longer costs compute time. Running processes, a tmux session say, end as on a reboot. The next `isotty up` starts it again.
 
 A VM with agents does this by itself once no agent has had work for 30 minutes; `stop_after` in `~/.isotty/idle.yaml` on the host changes the time, and `0` turns it off. See [VM design](docs/VM.md#idle-stop).
+
+An agent can stop and be woken later in the same conversation, with the VM off in between: it asks with `isotty-wake in 1h "<prompt>"`, and the host starts the VM and resumes the conversation at that time, or at each time of a cron schedule with `isotty-wake every "0 6 * * *" "<prompt>"`. Allow it per project, on the host:
+
+```bash
+isotty schedule enable    # the host's daemon starts the VM for the wakes
+isotty schedule show
+isotty schedule disable
+```
+
+See [Wake design](docs/WAKE.md).
 
 Destroy the environment:
 
@@ -100,21 +112,12 @@ It also archives the VM's audit log into `.isotty/audit/`, sealed the same way; 
 ```bash
 isotty status
 isotty list                               # every isotty VM, with the project it belongs to
+isotty daemon status                      # what the host serves each project, and what went wrong
 isotty audit logs
 isotty audit logs -f
 isotty audit archive                      # keep the VM's audit log with the project, sealed
 isotty audit logs --archive .isotty/audit/<time>.tar.gz.enc
 isotty --debug up
-```
-
-## Remote Attach
-
-`isotty id` prints a stable VM target id for the current environment, and `isotty list` prints the ids of every isotty VM in the GCP projects this host knows, including VMs brought up from another host.
-Use `isotty attach --target ...` to attach from outside the original project directory.
-
-```bash
-isotty id
-isotty attach --target <isotty-id>
 ```
 
 ## Project Config
@@ -157,7 +160,7 @@ templates, and organizing submitted documents. See [Tools design](docs/TOOLS.md)
 
 Port forwards:
 
-These forwards are applied while attached, so services running in the VM are reachable on local `localhost` ports.
+These forwards are up while the VM runs, so services running in the VM are reachable on local `localhost` ports.
 
 ```bash
 isotty host forward add web --local-port 8080 --remote-port 8080
@@ -172,7 +175,7 @@ Stored in:
 
 ep_weave notes:
 
-The agent in the VM can read and write pads in the [ep_weave](https://github.com/NII-cloud-operation/ep_weave) running on the host, through a gateway that `isotty attach` provides.
+The agent in the VM can read and write pads in the [ep_weave](https://github.com/NII-cloud-operation/ep_weave) running on the host, through a gateway that the host's daemon provides.
 Run ep_weave from the `isotty` branch of [yacchin1205/ep_weave](https://github.com/yacchin1205/ep_weave/tree/isotty), which bundles the API endpoints and the MCP plugin the gateway uses.
 The VM never sees ep_weave itself or its credentials, and can write only under the project's title prefix.
 
@@ -200,7 +203,7 @@ See [ep_weave design](docs/EPWEAVE.md).
 
 GitHub:
 
-The agent in the VM can push, fetch and work with pull requests, issues, workflow runs and repository settings of the repositories you name, through a relay that `isotty attach` provides with your GitHub token.
+The agent in the VM can push, fetch and work with pull requests, issues, workflow runs and repository settings of the repositories you name, through a relay that the host's daemon provides with your GitHub token.
 The VM never holds the token and cannot reach any other repository. Each repository is pinned as `read`, `comment`, `write` or `admin`.
 
 ```bash
@@ -301,7 +304,7 @@ See [Redmine design](docs/REDMINE.md).
 Google:
 
 The agent in the VM can use Google Docs, Sheets, Forms, Google Cloud and other Google APIs as a service account you choose, for what is shared with that account or granted to it and the scopes you pin.
-The host keeps the account's key, or impersonates it with your gcloud login; `isotty attach` hands the VM one-hour tokens.
+The host keeps the account's key, or impersonates it with your gcloud login; the host's daemon hands the VM one-hour tokens.
 
 ```bash
 isotty host google enable --key ~/Downloads/my-project-1234.json --scope documents.readonly
@@ -326,7 +329,7 @@ See [Google design](docs/GOOGLE.md).
 AWS:
 
 The agent in the VM can use AWS as an IAM role you choose, in its account, for what the role's policies allow.
-The host assumes the role with your aws CLI; `isotty attach` hands the VM one-hour credentials.
+The host assumes the role with your aws CLI; the host's daemon hands the VM one-hour credentials.
 
 ```bash
 isotty host aws enable --role-arn arn:aws:iam::123456789012:role/isotty-agent [--profile <name>]
@@ -349,7 +352,7 @@ See [AWS design](docs/AWS.md).
 
 Apps Script:
 
-The agent in the VM can run functions of the Google Apps Script projects you name, as you, through a relay that `isotty attach` provides with your login.
+The agent in the VM can run functions of the Google Apps Script projects you name, as you, through a relay that the host's daemon provides with your login.
 The VM never holds the token and cannot reach any other script.
 
 ```bash
@@ -374,7 +377,7 @@ See [Apps Script design](docs/GAS.md).
 
 DNS:
 
-The agent in the VM can create, change and delete DNS records under the names you pin, through a relay that `isotty attach` provides with your gcloud login.
+The agent in the VM can create, change and delete DNS records under the names you pin, through a relay that the host's daemon provides with your gcloud login.
 The VM never holds a credential, sees only the records under the pinned names, and every change is recorded with the record before and after.
 
 ```bash
@@ -426,7 +429,7 @@ See [Child VM design](docs/CHILD.md).
 
 SSH hosts:
 
-The agent in the VM can log in over SSH to a machine on your network, a Raspberry Pi on your LAN for one, while you are attached.
+The agent in the VM can log in over SSH to a machine on your network, a Raspberry Pi on your LAN for one, while your host is on that network.
 `add` logs in once with your own credentials: you confirm the machine's host key there, and a key made for this project and this machine goes into its `authorized_keys`. Your own keys never enter the VM, and the audit log records when the agent was connected to which machine.
 
 ```bash
@@ -453,7 +456,7 @@ See [SSH host design](docs/SSH.md).
 
 Browser:
 
-The agent can open a URL in your browser: `isotty-open <url>` in the VM shows it on the host while you are attached, and the attached session has `BROWSER` set to it, so a click in Codex or `gh` does the same. `http` and `https` only; every open is in the audit log. `isotty-open <path>` with a file under `/workspace` shows your synced copy of it in the browser, a Markdown report as a page with its figures, so what the agent wrote reaches you without a server and without leaving your machine. Click a line, a paragraph or a spot of an image there to leave a comment: it lands in `.isotty/reviews/` and the sync carries it to the agent, which reads it with `isotty-open reviews`.
+The agent can open a URL in your browser: `isotty-open <url>` in the VM shows it on the host while the VM runs, and the shell `isotty attach` opens has `BROWSER` set to it, so a click in Codex or `gh` does the same. `http` and `https` only; every open is in the audit log. `isotty-open <path>` with a file under `/workspace` shows your synced copy of it in the browser, a Markdown report as a page with its figures, so what the agent wrote reaches you without a server and without leaving your machine. Click a line, a paragraph or a spot of an image there to leave a comment: it lands in `.isotty/reviews/` and the sync carries it to the agent, which reads it with `isotty-open reviews`.
 
 See [Browser design](docs/BROWSER.md).
 
@@ -466,7 +469,7 @@ See [Docker design](docs/DOCKER.md).
 opeco notifications:
 
 When an agent is configured, `isotty up` also installs [opeco](https://github.com/yacchin1205/opeco-link) in the VM and registers it as the agent's `opeco-link` MCP server, so the agent can keep you informed on your phone while your machine sleeps.
-Pairing happens once while attached: the QR page opens in your browser through the attach session.
+Pairing happens once: the QR page opens in your browser through the host's daemon.
 The agent is reminded to pair as you hand it work, unless that is only a quick question.
 `isotty host opeco disable` keeps it out of a project's VM, and `enabled: false` in `~/.isotty/opeco.yaml` out of all of yours.
 
@@ -592,6 +595,7 @@ IsoTTY stores local state under:
 * [Browser design](docs/BROWSER.md)
 * [Docker design](docs/DOCKER.md)
 * [opeco design](docs/OPECO.md)
+* [Wake design](docs/WAKE.md)
 * [Audit design](docs/AUDIT.md)
 * [Agent design](docs/AGENT.md)
 * [Tools design](docs/TOOLS.md)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Read and write ep_weave pads through the IsoTTY gateway.
 
-The gateway runs on the host inside `isotty attach` and is reachable only
-while the host is attached. Writes are not queued: a failed write did not
+The gateway runs in the host's isotty daemon and is reachable only while
+the host is awake and online. Writes are not queued: a failed write did not
 happen.
 """
 import argparse
@@ -16,8 +16,8 @@ GATEWAY = 'http://127.0.0.1:__ISOTTY_GATEWAY_PORT__/epweave'
 
 UNREACHABLE = (
     'isotty-notes: the ep_weave gateway at {gateway} is not reachable ({reason}). '
-    'It is available only while the host is attached with `isotty attach`; writes are not queued. '
-    'Keep the note as a Markdown file under /workspace and retry after re-attach.'
+    'The host is asleep or offline, or its isotty daemon is not running; writes are not queued. '
+    'Keep the note as a Markdown file under /workspace, retry once the host is back, and tell the human.'
 )
 
 

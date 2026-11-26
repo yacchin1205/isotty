@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Read the project's Redmine through the IsoTTY relay.
 
-The relay runs on the host inside `isotty attach` and is reachable only
-while the host is attached. It reads issues, wiki pages and attachments of
+The relay runs in the host's isotty daemon and is reachable only while
+the host is awake and online. It reads issues, wiki pages and attachments of
 the projects pinned in .isotty/redmine.yaml with the host's key; this VM
 holds none. What comes back is filtered on the host: the people Redmine
 names are pseudonyms (Person- and six hex digits, the same for the same
@@ -20,8 +20,8 @@ RELAY = 'http://127.0.0.1:__ISOTTY_GATEWAY_PORT__/redmine'
 
 UNREACHABLE = (
     'isotty-redmine: the Redmine relay at {relay} is not reachable ({reason}). '
-    'It is available only while the host is attached with `isotty attach`; nothing is queued. '
-    'Retry after re-attach.'
+    'The host is asleep or offline, or its isotty daemon is not running; nothing is queued. '
+    'Retry once the host is back, and tell the human.'
 )
 
 

@@ -120,7 +120,7 @@ const awsGuide = `Make the role ready, in the account the agent should work in:
 
 func describeProfile(host aws.HostConfig) string {
 	if host.Profile == "" {
-		return "(the aws CLI's default in the shell that runs `isotty attach`)"
+		return "(the aws CLI's default in the environment the isotty daemon runs in)"
 	}
 	return host.Profile
 }

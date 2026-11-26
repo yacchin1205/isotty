@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Change DNS records through the IsoTTY gateway.
 
-The gateway runs on the host inside `isotty attach` and calls Cloud DNS with
+The gateway runs in the host's isotty daemon and calls Cloud DNS with
 the human's gcloud login, under the names pinned in
 .isotty/dns.yaml. No credential enters this VM.
 """
@@ -16,8 +16,8 @@ GATEWAY = 'http://127.0.0.1:__ISOTTY_GATEWAY_PORT__/dns'
 
 UNREACHABLE = (
     'isotty-dns: the DNS gateway at {gateway} is not reachable ({reason}). '
-    'It is available only while the host is attached with `isotty attach`. '
-    'Retry after re-attach.'
+    'The host is asleep or offline, or its isotty daemon is not running; nothing is queued. '
+    'Keep your work under /workspace, retry once the host is back, and tell the human.'
 )
 
 

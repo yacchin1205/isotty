@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run functions of the project's Apps Script through the IsoTTY gateway.
 
-The gateway runs on the host inside `isotty attach` and calls scripts.run as
+The gateway runs in the host's isotty daemon and calls scripts.run as
 the human, for the scripts pinned in .isotty/gas.yaml. The human's
 credential never enters this VM.
 """
@@ -17,8 +17,8 @@ RUN_TIMEOUT = 7 * 60 + 30
 
 UNREACHABLE = (
     'isotty-gas: the Apps Script gateway at {gateway} is not reachable ({reason}). '
-    'It is available only while the host is attached with `isotty attach`. '
-    'Retry after re-attach.'
+    'The host is asleep or offline, or its isotty daemon is not running; nothing is queued. '
+    'Keep your work under /workspace, retry once the host is back, and tell the human.'
 )
 
 

@@ -30,7 +30,7 @@ repositories.
 ## Model
 
 ```text
-agent in VM --isotty-github--> 127.0.0.1:61001/github ==ssh -R==> host gateway in `isotty attach` --> github.com
+agent in VM --isotty-github--> 127.0.0.1:61001/github ==ssh -R==> host gateway in `isotty daemon` --> github.com
 ```
 
 * The relay is one more service of the host gateway described in
@@ -161,8 +161,8 @@ umask 077 && printf 'token: %s\n' "$(gh auth token)" > ~/.isotty/github.yaml
 The token needs the `repo` scope, and `workflow` to push a commit that
 changes `.github/workflows/`; GitHub refuses such a push without it, whoever
 pushes. `admin` pins change settings the `repo` scope already covers. The
-token is read when `attach` starts, so a new value takes effect at the next
-attach.
+token is read when the daemon takes up the project, so a new value takes
+effect at the next `up`.
 
 Project config, synced with the rest of `.isotty/`:
 
@@ -215,8 +215,9 @@ host:
 ~/.isotty/projects/<project-hash>.github.yaml
 ```
 
-`up`, `attach` and `attach --target` compare the synced file with the pin
-and refuse to continue when they differ or when no pin exists. `add` and
+`up` compares the synced file with the pin and refuses to continue when
+they differ or when no pin exists; while the VM runs, the daemon does not
+serve the relay when they differ, and `isotty daemon status` says so. `add` and
 `remove` work from the pin, not from the synced file, so a change made in
 the VM is never accepted by accident; the human states each repository on
 the host.
@@ -275,7 +276,7 @@ The skill tells the agent: private fetch and push, pull requests, issues,
 workflow runs and repository settings go through `isotty-github`, everything else is plain `git`;
 which repositories it has and at which access level, from
 `.isotty/github.yaml`; and that the relay exists only while the host is
-attached.
+awake, online and running its daemon.
 
 ## Audit
 
@@ -294,9 +295,9 @@ used as intended.
 
 ## Lifecycle
 
-The relay lives exactly as long as the attach session, like the rest of the
-gateway. A call while detached fails within seconds with an error that says
-the relay is available only during `isotty attach`. Nothing is queued; a
+The relay is up while the VM runs and the host's daemon can reach it, like
+the rest of the gateway. A call while the host is away fails within seconds
+with an error that says the host is not reachable. Nothing is queued; a
 failed push or comment did not happen, and the commits and the text stay in
 `/workspace`.
 
@@ -310,6 +311,6 @@ failed push or comment did not happen, and the commits and the text stay in
   or absent repository outside the pin
 * the repository list and its access levels are pinned on the host; the
   synced copy cannot widen them
-* the gateway binds to `127.0.0.1` on both ends and lives only while attached
+* the gateway binds to `127.0.0.1` on both ends and is up while the VM runs; `isotty stop` takes it down
 * what is pushed or written is not inspected; branch protection and review
   on GitHub remain the control over content

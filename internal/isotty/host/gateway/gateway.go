@@ -21,6 +21,10 @@ import (
 // VM nor with outgoing connections.
 const VMPort = 61001
 
+// VMEventLogPath is the VM event log, which the host's relays and the VM's
+// own isotty clients write to.
+const VMEventLogPath = "/var/log/isotty/events.jsonl"
+
 type Gateway struct {
 	listener net.Listener
 	server   *http.Server
