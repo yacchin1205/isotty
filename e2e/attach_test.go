@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
 )
 
 // typedReaches types a command into the attach and waits for the file it

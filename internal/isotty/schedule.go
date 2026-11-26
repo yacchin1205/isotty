@@ -105,9 +105,9 @@ func (a *App) deliverWake(target runtimecfg.RemoteTarget, projectHash, homeDir s
 	result := strings.TrimSpace(out)
 	switch {
 	case busy && request.Cron != "":
-		result = "skipped: " + result
+		result = "skipped: the conversation still has work"
 	case busy:
-		result = fmt.Sprintf("postponed %d minutes: %s", int(wakeRetry.Minutes()), result)
+		result = fmt.Sprintf("postponed %d minutes: the conversation still has work", int(wakeRetry.Minutes()))
 	case err != nil:
 		result = err.Error()
 	}
