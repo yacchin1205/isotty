@@ -100,3 +100,10 @@ host-side services to the VM on port 61001: [ep_weave](EPWEAVE.md) under
 agents under `/wake` and the browser-open request of [opeco](OPECO.md) at
 `/open`. Each relay serves only what its pin allows; one whose synced file
 no longer matches its pin is not served, and `isotty daemon status` says so.
+
+The gateway's end on the host listens on the host's loopback, where a web
+page in the human's browser can find its port. It refuses what a browser
+sends, a Host that is not the loopback, as a name rebound to it is, or an
+Origin or Sec-Fetch header, since the VM's clients send neither. It asks
+nothing else of its callers: the processes in the VM that reach it run as
+the agent, and a token the agent can read they could read too.

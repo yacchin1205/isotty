@@ -40,13 +40,38 @@ func Serve(handler http.Handler) (*Gateway, error) {
 		listener: listener,
 		// The VM is not trusted; a connection that never sends its headers
 		// must not hold a goroutine for the rest of the session.
-		server: &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second},
+		server: &http.Server{Handler: notFromBrowser(handler), ReadHeaderTimeout: 5 * time.Second},
 		served: make(chan error, 1),
 	}
 	go func() {
 		gateway.served <- gateway.server.Serve(listener)
 	}()
 	return gateway, nil
+}
+
+// notFromBrowser refuses what a web page in a browser on the host can send.
+// The gateway listens on the host's loopback, so a page in the human's
+// browser can find its port; it holds the host's authority and has no
+// credentials of its own. A page that rebinds a name to the loopback sends
+// that name as the Host, and a page's request carries an Origin or the
+// Sec-Fetch headers, which the VM's clients never send. The VM's clients
+// name the loopback, whichever port they reach it by.
+func notFromBrowser(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !loopbackHost(r.Host) || r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "" {
+			WriteError(w, http.StatusForbidden, "the gateway serves the VM's clients, not a browser")
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
+}
+
+func loopbackHost(host string) bool {
+	name, _, err := net.SplitHostPort(host)
+	if err != nil {
+		return false
+	}
+	return name == "127.0.0.1" || name == "localhost"
 }
 
 func (g *Gateway) Port() int {
