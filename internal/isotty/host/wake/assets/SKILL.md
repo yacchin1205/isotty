@@ -22,6 +22,12 @@ server or a tail, are not.
 Write the prompt for yourself as you will be then: what to check and what
 to do next.
 
+When you are woken, the human is likely not watching this chat, and the
+prompt you get says so. Tell them through opeco, a notification, or a
+request when you need their answer, rather than only here: a question
+asked in this chat, or a failure you stop at, a host service not reachable
+say, is otherwise left unseen until they attach.
+
 For work that comes back, a morning check say, ask once with `every`
 instead of asking for the next wake each time: `isotty-wake every
 "0 6 * * *" "<prompt>"` wakes this conversation at 06:00 every day until
@@ -33,5 +39,9 @@ the human rather than wait. The host must be awake at the time: a wake
 whose time passed while it slept runs once it wakes. Asking needs the host,
 so it works only while the host is reachable.
 
-Your own scheduled prompts (CronCreate, `/loop`) keep the VM running until
-they fire; use them for minutes, and isotty-wake for longer.
+A wake is for a wait the VM should not stay up through: at least one and a
+half times the time the VM stays up without agent work, 45 minutes by
+default; `isotty-wake` refuses a shorter one and says why. Wait shorter in
+this session: your own scheduled prompts (CronCreate, `/loop` in Claude
+Code) keep the VM running until they fire, and so does a command that
+waits as part of your turn.

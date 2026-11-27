@@ -42,6 +42,10 @@ host:  isotty daemon at the time:
   work as for any session, an approval the agent waits for keeps the VM up
   until a human answers, and a human who attaches later finds the
   conversation.
+* The prompt ends with a note that the human is likely not watching the
+  chat and is told through opeco. A woken conversation runs in a window
+  nobody may be attached to, and an agent that asks there, or stops there
+  when a host service is not reachable, otherwise waits unseen.
 * A wake is one time, or recurring: `isotty-wake every "0 6 * * *"
   "<prompt>"` wakes the conversation at each time five cron fields name, in
   the host's local time, as Claude Code's own CronCreate takes them. An
@@ -63,6 +67,11 @@ host:  isotty daemon at the time:
   an agent's wakes. `isotty down` forgets them too: the conversations they
   would resume go with the VM.
 * A prompt is at most 8 KiB, since it goes to the VM in one command.
+* A one-time wake is for a wait the VM should not stay up through: at
+  least one and a half times the idle stop's time, 45 minutes by default.
+  A shorter one would race the power-off, and a wait that short is kept in
+  the session, by the agent's own scheduled prompt or a command that waits;
+  `isotty-wake` refuses it and says so.
 * Claude Code and Codex are woken alike, each with its own way to resume a
   conversation with a first message: `claude --resume <id> "<prompt>"` and
   `codex resume --no-daemon <id> "<prompt>"`. Codex runs without its

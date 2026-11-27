@@ -19,7 +19,7 @@ import (
 const (
 	IdleClientPath  = "/usr/local/bin/isotty-idle"
 	IdleStateDir    = "/var/lib/isotty/idle"
-	idleConfigPath  = "/etc/isotty/idle-stop.json"
+	IdleConfigPath  = "/etc/isotty/idle-stop.json"
 	idleLastWork    = "/var/lib/isotty/idle-last-work.json"
 	idleServicePath = "/etc/systemd/system/isotty-idle.service"
 	idleTimerPath   = "/etc/systemd/system/isotty-idle.timer"
@@ -64,7 +64,7 @@ func IdleStopCommand(agents []string, after time.Duration, opecoSession, opecoDi
 		gateway.WriteFileCommand(IdleClientPath, renderIdleClient(idleClient, opecoSession, opecoDir), true), "sudo chmod 755 "+IdleClientPath,
 		fmt.Sprintf(`sudo install -d -m 755 -o "$(id -un)" -g "$(id -gn)" %s`, IdleStateDir),
 		"sudo mkdir -p /etc/isotty",
-		gateway.WriteFileCommand(idleConfigPath, string(config)+"\n", true),
+		gateway.WriteFileCommand(IdleConfigPath, string(config)+"\n", true),
 		gateway.WriteFileCommand(idleServicePath, idleService, true),
 		gateway.WriteFileCommand(idleTimerPath, idleTimer, true),
 		"sudo systemctl daemon-reload",
@@ -127,7 +127,7 @@ func idleHooks(agent string) (string, []byte) {
 func renderIdleClient(template, opecoSession, opecoDir string) string {
 	return strings.NewReplacer(
 		"__ISOTTY_IDLE_STATE__", IdleStateDir,
-		"__ISOTTY_IDLE_CONFIG__", idleConfigPath,
+		"__ISOTTY_IDLE_CONFIG__", IdleConfigPath,
 		"__ISOTTY_IDLE_LAST_WORK__", idleLastWork,
 		"__ISOTTY_EVENTS__", vmEventLogPath,
 		"__ISOTTY_KERNEL_STAT__", "/proc/stat",
