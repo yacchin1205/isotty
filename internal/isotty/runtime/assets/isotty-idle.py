@@ -158,14 +158,15 @@ def cmd_check(_args):
 
 
 def tell_opeco(text):
-    """Shows text on the card of the opeco session the VM keeps, as its
-    owner, when it keeps one. The client records what it could not send and
+    """Tells the devices of the opeco session the VM keeps, as its owner,
+    when it keeps one: a notification, so the agent's last status stays on
+    the card. The client records what it could not send and
     never fails, so the power-off goes on whatever happens here."""
     if not os.path.exists(OPECO_SESSION) or not os.path.isdir(OPECO_DIR):
         return
     owner = pwd.getpwuid(os.stat(OPECO_DIR).st_uid).pw_name
     try:
-        subprocess.run(['sudo', '-u', owner, '-H', OPECO_SESSION, 'status', text], check=True, timeout=60)
+        subprocess.run(['sudo', '-u', owner, '-H', OPECO_SESSION, 'notify', text], check=True, timeout=60)
     except (subprocess.SubprocessError, OSError) as e:
         # The power-off goes on; what could not be told is in the journal.
         print(f'isotty-idle: the opeco session was not told: {e}', file=sys.stderr)

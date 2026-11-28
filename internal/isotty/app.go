@@ -1354,7 +1354,7 @@ func (a *App) runStop(args []string) error {
 	}); err != nil {
 		return fmt.Errorf("terminate sync session: %w", err)
 	}
-	if err := a.auditTarget(conn).Run(opeco.SessionCommand("status", "VM stopped (isotty stop)"), a.debug); err != nil {
+	if err := a.auditTarget(conn).Run(opeco.SessionCommand("notify", "VM stopped (isotty stop)"), a.debug); err != nil {
 		fmt.Fprintf(a.stderr, "warning: the VM's opeco session was not told of the stop: %v\n", err)
 	}
 	if err := a.runPhase("Stopping VM %s", func() error {

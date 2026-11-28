@@ -211,14 +211,15 @@ func TestDeliverSkipsABusyConversation(t *testing.T) {
 }
 
 // A conversation whose agent is gone is resumed with that agent's own
-// command, Codex's as Claude's.
+// command, Codex's as Claude's, and told that the human may not be
+// watching.
 func TestDeliverResumesWithTheAgentsOwnCommand(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is not available")
 	}
 	for agent, want := range map[string]string{
-		"claude": "claude --resume conv-1 'go on'",
-		"codex":  "codex resume --no-daemon conv-1 'go on'",
+		"claude": "claude --resume conv-1 'go on (isotty wake: the human is likely not watching this chat.",
+		"codex":  "codex resume --no-daemon conv-1 'go on (isotty wake: the human is likely not watching this chat.",
 	} {
 		dir := t.TempDir()
 		bin := filepath.Join(dir, "bin")
@@ -243,5 +244,33 @@ func TestDeliverResumesWithTheAgentsOwnCommand(t *testing.T) {
 		if !strings.Contains(string(data), "new-window") || !strings.Contains(string(data), "bash -lc "+want) {
 			t.Errorf("%s: tmux was asked\n%s\nwant bash -lc %s", agent, data, want)
 		}
+	}
+}
+
+// A wake shorter than one and a half times the idle stop is refused before
+// it reaches the host: it would race the power-off.
+func TestClientRefusesAWakeShorterThanTheIdleStop(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not available")
+	}
+	dir := t.TempDir()
+	config := filepath.Join(dir, "idle-stop.json")
+	if err := os.WriteFile(config, []byte(`{"seconds": 1800}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := strings.NewReplacer("__ISOTTY_IDLE_CONFIG__", config, "__ISOTTY_IDLE_STATE__", filepath.Join(dir, "none"),
+		"http://127.0.0.1:__ISOTTY_GATEWAY_PORT__/wake", "http://127.0.0.1:9/wake").Replace(clientScript)
+	path := filepath.Join(dir, "isotty-wake")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("python3", path, "in", "30m", "go on").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "too short for a wake") || !strings.Contains(string(out), "45 minutes") {
+		t.Fatalf("30m: %v\n%s", err, out)
+	}
+	// 45 minutes passes the check and goes on to look for its session.
+	out, err = exec.Command("python3", path, "in", "45m", "go on").CombinedOutput()
+	if err == nil || strings.Contains(string(out), "too short") || !strings.Contains(string(out), "not run by an agent session") {
+		t.Fatalf("45m: %v\n%s", err, out)
 	}
 }

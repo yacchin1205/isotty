@@ -109,13 +109,16 @@ keeping it installed.
 The session tells the paired devices how the VM stands:
 
 * a status as the VM starts, from a systemd unit
-* a status as it stops, from the idle stop and from `isotty stop`
+* a notification as it stops, from the idle stop and from `isotty stop`:
+  a status would take the place of the agent's last one, which says where
+  its work stood
 * `isotty down` closes it, since the VM that holds its keys goes
 
-These statuses are also what keeps the session from expiring, a day after
-its last use: a VM started daily keeps it. A status that cannot be sent, the
+These are also what keeps the session from expiring, a day after
+its last use: a VM started daily keeps it. One that cannot be sent, the
 session having expired among the reasons, goes into the VM event log as
-`opeco-status` and holds up neither the start nor the stop.
+`opeco-status` or `opeco-notify` and holds up neither the start nor the
+stop.
 
 The agents share the session and one cursor of responses, so a response
 goes to the first agent that reads it.

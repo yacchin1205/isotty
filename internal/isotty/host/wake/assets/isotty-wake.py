@@ -23,6 +23,7 @@ import urllib.request
 
 GATEWAY = 'http://127.0.0.1:__ISOTTY_GATEWAY_PORT__/wake'
 IDLE_STATE = '__ISOTTY_IDLE_STATE__'
+IDLE_CONFIG = '__ISOTTY_IDLE_CONFIG__'
 WORKSPACE = '/workspace'
 TMUX_SESSION = 'isotty'
 BROWSER = '__ISOTTY_OPEN_CLIENT__'
@@ -88,10 +89,35 @@ def call(method, path, body=None):
                          'Ask again once the host is back, or tell the human rather than wait')
 
 
+def idle_stop_seconds():
+    """How long the VM stays up without agent work, or 0 when it does not
+    power itself off."""
+    try:
+        with open(IDLE_CONFIG, encoding='utf-8') as f:
+            return json.load(f)['seconds']
+    except FileNotFoundError:
+        return 0
+
+
+def check_long_enough(after):
+    """A wake is for a wait the VM should not stay up through: one well past
+    the idle stop. A shorter one races the power-off, and a wait that short
+    is kept in the session instead."""
+    idle = idle_stop_seconds()
+    if idle and after < idle * 3 // 2:
+        raise SystemExit(
+            f'isotty-wake: {after // 60} minutes is too short for a wake: the VM stays up {idle // 60} minutes '
+            f'without agent work, and a wake is for waits of at least {idle * 3 // 2 // 60} minutes. '
+            'Wait in this session instead: your own scheduled prompt (CronCreate or /loop in Claude Code), '
+            'or a command that waits, such as sleep, as part of your turn.')
+
+
 def cmd_in(args):
+    after = parse_after(args.after)
+    check_long_enough(after)
     session = own_session()
     wake = call('POST', '/wakes', {'agent': session['agent'], 'session': session['session'],
-                                   'after_seconds': parse_after(args.after), 'prompt': args.prompt})
+                                   'after_seconds': after, 'prompt': args.prompt})
     print(f"wake {wake['id']} at {wake['at']}: this conversation resumes with the prompt then. "
           'End the turn now; the VM may power off meanwhile.')
 
@@ -137,6 +163,14 @@ def alive(state):
     return stat[stat.rindex(')') + 2:].split()[19] == state['pid_start']
 
 
+# What a woken conversation is told with its prompt. Nobody may be watching
+# its window: an agent that asks in the chat, or stops there when a service
+# fails, is left waiting unseen.
+WOKEN_NOTE = ('(isotty wake: the human is likely not watching this chat. Tell them through opeco, '
+              'a notification, or a request when you need their answer, what you did and, when you '
+              'cannot go on, why, before you end the turn.)')
+
+
 def resume_command(agent, session, prompt):
     """The agent's own way to resume a conversation with a first message.
     Codex runs without its shared background server: the one it left
@@ -152,7 +186,7 @@ def cmd_deliver(args):
     """Run by the host: give the prompt to the conversation, typed into its
     pane when its agent still runs, else to the agent resumed in a new
     window."""
-    prompt = base64.b64decode(args.prompt).decode()
+    prompt = base64.b64decode(args.prompt).decode() + ' ' + WOKEN_NOTE
     for state in sessions().values():
         if state['session'] == args.session and state['state'] in ('working', 'waiting') and alive(state):
             # The conversation still has work, or waits for the human to

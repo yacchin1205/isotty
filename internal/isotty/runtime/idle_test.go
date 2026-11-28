@@ -302,7 +302,7 @@ func TestIdleStopTellsTheOpecoSession(t *testing.T) {
 	vm.age(time.Hour)
 	vm.check()
 	data, err := os.ReadFile(told)
-	if err != nil || !strings.HasPrefix(string(data), "status VM powered off: no agent work for") {
+	if err != nil || !strings.HasPrefix(string(data), "notify VM powered off: no agent work for") {
 		t.Fatalf("told %q %v", data, err)
 	}
 	if !vm.poweredOff() {

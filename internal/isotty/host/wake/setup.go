@@ -37,6 +37,7 @@ func render(template string) string {
 	return strings.NewReplacer(
 		"__ISOTTY_GATEWAY_PORT__", strconv.Itoa(gateway.VMPort),
 		"__ISOTTY_IDLE_STATE__", runtimecfg.IdleStateDir,
+		"__ISOTTY_IDLE_CONFIG__", runtimecfg.IdleConfigPath,
 		"__ISOTTY_OPEN_CLIENT__", browser.ClientPath,
 	).Replace(template)
 }
